@@ -410,6 +410,16 @@ CREATE TABLE IF NOT EXISTS service_account_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_service_account_keys_prefix ON service_account_keys(prefix);
 
+-- 23c. Tenant Slack notification settings
+CREATE TABLE IF NOT EXISTS tenant_slack_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE UNIQUE,
+    webhook_secret_path VARCHAR(255) NOT NULL, -- Slack incoming-webhook URL (secret reference)
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 24. Tenant ServiceNow Settings (CMDB / ITOM / ITSM integration)
 CREATE TABLE IF NOT EXISTS tenant_servicenow_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

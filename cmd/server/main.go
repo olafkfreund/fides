@@ -16,6 +16,7 @@ import (
 	"fides/pkg/events"
 	"fides/pkg/gitstatus"
 	"fides/pkg/servicenow"
+	"fides/pkg/slack"
 	"fides/pkg/storage"
 	"fides/pkg/vault"
 	"fides/pkg/webhooks"
@@ -141,6 +142,7 @@ func main() {
 			gitstatus.NewSink(gitstatus.NewDBLoader(db, secrets), os.Getenv("FIDES_PUBLIC_URL")),
 			servicenow.NewITOMSink(servicenow.NewDBLoader(db, secrets)),
 			servicenow.NewCMDBSink(servicenow.NewDBLoader(db, secrets)),
+			slack.NewSink(slack.NewDBLoader(db, secrets)),
 		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
 		log.Printf("Event dispatcher enabled (webhook, git-commit-status, ServiceNow ITOM + CMDB sinks)")
