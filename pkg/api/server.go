@@ -106,6 +106,11 @@ func (s *Server) Routes() http.Handler {
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
 	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
+	mux.HandleFunc("GET /api/v1/tenant/servicenow/events", s.handleServiceNowEvents)
+
+	// ServiceNow admin UI: a Go-served page (the page shell is public; its API
+	// calls are authenticated by the session cookie, like the rest of the portal).
+	mux.HandleFunc("GET /servicenow", s.handleServiceNowAdminPage)
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
