@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -105,7 +106,7 @@ func printUsage() {
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
 	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy report (fides attest junit --file ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
-	fmt.Println("  snapshot         Snapshot running container runtimes and send to Fides")
+	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
@@ -360,6 +361,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 	envID := cmd.String("env", "", "Environment UUID")
 	containerName := cmd.String("container", "", "Target single container name (optional)")
 	namespace := cmd.String("namespace", "", "Target namespace to filter pods (optional)")
+	cluster := cmd.String("cluster", "", "ECS cluster name (required for 'ecs')")
 
 	cmd.Parse(args[1:])
 
@@ -446,6 +448,72 @@ func handleSnapshot(config CLIConfig, args []string) {
 				}
 			} else {
 				fmt.Printf("Failed to parse kubectl json: %v\n", err)
+			}
+		}
+	}
+
+	if runtimeType == "lambda" {
+		fmt.Println("Ingesting AWS Lambda functions...")
+		out, err := exec.Command("aws", "lambda", "list-functions", "--output", "json").Output() // #nosec G204 -- fixed 'aws' binary; args are constants
+		if err != nil {
+			fmt.Printf("Failed to query Lambda: %v\n", err)
+			os.Exit(1)
+		}
+		var fl struct {
+			Functions []struct {
+				FunctionName string `json:"FunctionName"`
+				CodeSha256   string `json:"CodeSha256"`
+			} `json:"Functions"`
+		}
+		json.Unmarshal(out, &fl)
+		for _, f := range fl.Functions {
+			digest := f.CodeSha256
+			if b, derr := base64.StdEncoding.DecodeString(f.CodeSha256); derr == nil && len(b) == 32 {
+				digest = hex.EncodeToString(b)
+			}
+			reportedArtifacts = append(reportedArtifacts, map[string]string{"sha256": digest, "service_name": f.FunctionName})
+		}
+	}
+
+	if runtimeType == "ecs" {
+		if *cluster == "" {
+			fmt.Println("Error: --cluster is required for 'ecs'")
+			os.Exit(1)
+		}
+		fmt.Println("Ingesting AWS ECS tasks...")
+		listOut, err := exec.Command("aws", "ecs", "list-tasks", "--cluster", *cluster, "--output", "json").Output() // #nosec G204 -- fixed 'aws' binary
+		if err != nil {
+			fmt.Printf("Failed to list ECS tasks: %v\n", err)
+			os.Exit(1)
+		}
+		var tl struct {
+			TaskArns []string `json:"taskArns"`
+		}
+		json.Unmarshal(listOut, &tl)
+		if len(tl.TaskArns) > 0 {
+			descArgs := append([]string{"ecs", "describe-tasks", "--cluster", *cluster, "--tasks"}, tl.TaskArns...)
+			descArgs = append(descArgs, "--output", "json")
+			descOut, err := exec.Command("aws", descArgs...).Output() // #nosec G204 -- fixed 'aws' binary; task arns come from AWS
+			if err != nil {
+				fmt.Printf("Failed to describe ECS tasks: %v\n", err)
+				os.Exit(1)
+			}
+			var dt struct {
+				Tasks []struct {
+					Containers []struct {
+						Name        string `json:"name"`
+						ImageDigest string `json:"imageDigest"`
+					} `json:"containers"`
+				} `json:"tasks"`
+			}
+			json.Unmarshal(descOut, &dt)
+			for _, task := range dt.Tasks {
+				for _, c := range task.Containers {
+					reportedArtifacts = append(reportedArtifacts, map[string]string{
+						"sha256":       strings.TrimPrefix(c.ImageDigest, "sha256:"),
+						"service_name": c.Name,
+					})
+				}
 			}
 		}
 	}
