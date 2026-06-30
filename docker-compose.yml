@@ -98,8 +98,9 @@ services:
       - STORAGE_S3_USE_SSL=false
       - STORAGE_S3_REGION=us-east-1
 
-      # Secrets Configuration
-      - SECRETS_PROVIDER=env
+      # Secrets Configuration: 'env' (default) or 'aws' (AWS Secrets Manager,
+      # region from AWS_REGION). secret_path values become Secrets Manager ids.
+      - SECRETS_PROVIDER=${SECRETS_PROVIDER:-env}
 
       # Evidence encryption key (32 random bytes, base64-encoded)
       - FIDES_ENCRYPTION_KEY=${FIDES_ENCRYPTION_KEY:?FIDES_ENCRYPTION_KEY must be set}

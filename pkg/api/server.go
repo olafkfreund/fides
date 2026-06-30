@@ -51,7 +51,7 @@ func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Serv
 		Storage:      store,
 		PolicyEngine: policy.NewPolicyEngine(),
 		LLM:          llm,
-		Secrets:      vault.NewEnvSecretsProvider(),
+		Secrets:      vault.NewProvider(context.Background()),
 		States:       auth.NewStateStore(),
 		Sessions:     auth.NewSessionStore(),
 		httpClient:   &http.Client{Timeout: 15 * time.Second},
