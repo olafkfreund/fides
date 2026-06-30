@@ -86,6 +86,7 @@ func (s *Server) Routes() http.Handler {
 	// Compliance and Drift API
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
+	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
@@ -189,17 +190,49 @@ const sessionCookieName = "fides_session"
 // must never trust an org_id from the request body or query (see H2 / IDOR).
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isPublicPath(r.URL.Path) {
+		portalUser := os.Getenv("PORTAL_USERNAME")
+		portalPass := os.Getenv("PORTAL_PASSWORD")
+
+		// System paths bypass authentication
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/swagger" || r.URL.Path == "/api/v1/swagger.json" || r.URL.Path == "/llms.txt" || r.URL.Path == "/llms-full.txt" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// 1. Interactive session cookie.
+		// 1. Basic Auth check if portal credentials are set
+		if portalUser != "" && portalPass != "" {
+			username, password, ok := r.BasicAuth()
+			if ok && username == portalUser && password == portalPass {
+				orgIDStr := os.Getenv("FIDES_API_ORG_ID")
+				if orgIDStr == "" {
+					orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
+				}
+				orgID, _ := uuid.Parse(orgIDStr)
+				principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "session", Email: "admin@fides.internal"}
+				s.serveAuthenticated(w, r, principal, next)
+				return
+			}
+		}
+
+		// 2. Standard public path bypass (only when portal credentials are not set or not protecting static files)
+		if portalUser == "" && isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 3. Interactive session cookie.
 		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
 			if p, ok := s.Sessions.Get(c.Value, time.Now()); ok {
 				s.serveAuthenticated(w, r, &p, next)
 				return
 			}
+		}
+
+		// If portal credentials are set and we got here, it's unauthorized for static files
+		if portalUser != "" && !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Fides Portal"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
 		}
 
 		// 2. Static service bearer token.
@@ -1126,6 +1159,146 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	envIDStr := r.URL.Query().Get("environment_id")
+	if envIDStr == "" {
+		http.Error(w, "missing environment_id parameter", http.StatusBadRequest)
+		return
+	}
+	envID, err := uuid.Parse(envIDStr)
+	if err != nil {
+		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+
+	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE id = $1 AND org_id = $2`
+	var id, name, envType, description string
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&id, &name, &envType, &description)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("environment not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Complete detailed Environment view model mapping
+	type RuntimeArtifact struct {
+		Service    string `json:"service"`
+		SHA256     string `json:"sha256"`
+		Registered bool   `json:"registered"`
+		Name       string `json:"name"`
+	}
+
+	type EnvironmentView struct {
+		ID            string             `json:"id"`
+		Name          string             `json:"name"`
+		Type          string             `json:"type"`
+		Description   string             `json:"description"`
+		LastSnapshot  string             `json:"lastSnapshot"`
+		Running       []RuntimeArtifact  `json:"running"`
+		Drifts        []string           `json:"drifts"`
+		ShadowChanges []string           `json:"shadowChanges"`
+	}
+
+	ev := EnvironmentView{
+		ID:            id,
+		Name:          name,
+		Type:          envType,
+		Description:   description,
+		LastSnapshot:  "No snapshot reported yet",
+		Running:       []RuntimeArtifact{},
+		Drifts:        []string{},
+		ShadowChanges: []string{},
+	}
+
+	// Fetch latest snapshot ID
+	var latestSnapID string
+	var snapTime time.Time
+	querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
+	err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, envID).Scan(&latestSnapID, &snapTime)
+	
+	if err == nil {
+		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
+		
+		// Query running artifacts in snapshot
+		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
+		            FROM snapshot_artifacts sa
+		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
+		            WHERE sa.snapshot_id = $1`
+		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
+		if err == nil {
+			defer saRows.Close()
+			for saRows.Next() {
+				var ra RuntimeArtifact
+				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
+					ev.Running = append(ev.Running, ra)
+					
+					if !ra.Registered {
+						ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
+					} else {
+						// Check if registered artifact has drift (failing controls)
+						var trailID sql.NullString
+						s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+						if trailID.Valid {
+							var compliantCount, totalCount int
+							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+							if totalCount > 0 && compliantCount < totalCount {
+								ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fetch MCP servers configured for this environment
+	type MCPServerView struct {
+		ID            string             `json:"id"`
+		Name          string             `json:"name"`
+		Transport     string             `json:"transport"`
+		Command       string             `json:"command"`
+		Args          []string           `json:"args"`
+		URL           string             `json:"url"`
+		AuthHeader    string             `json:"auth_header"`
+	}
+	var mcpServers []MCPServerView
+	queryMcp := `SELECT id, name, transport, COALESCE(command, ''), args, COALESCE(url, ''), COALESCE(auth_header, '') 
+	             FROM environment_mcp_servers WHERE environment_id = $1`
+	mcpRows, err := s.q(r.Context()).QueryContext(r.Context(), queryMcp, envID)
+	if err == nil {
+		defer mcpRows.Close()
+		for mcpRows.Next() {
+			var m MCPServerView
+			var args pq.StringArray
+			if err := mcpRows.Scan(&m.ID, &m.Name, &m.Transport, &m.Command, &args, &m.URL, &m.AuthHeader); err == nil {
+				m.Args = []string(args)
+				mcpServers = append(mcpServers, m)
+			}
+		}
+	}
+
+	// Build the report struct
+	report := struct {
+		Environment EnvironmentView `json:"environment"`
+		MCPServers  []MCPServerView `json:"mcp_servers"`
+		ExportedAt  string          `json:"exported_at"`
+	}{
+		Environment: ev,
+		MCPServers:  mcpServers,
+		ExportedAt:  time.Now().Format(time.RFC3339),
+	}
+
+	fileName := fmt.Sprintf("audit-report-%s.json", name)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	json.NewEncoder(w).Encode(report)
 }
 
 func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {

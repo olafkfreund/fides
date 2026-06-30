@@ -315,6 +315,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("snapshot", flag.ExitOnError)
 	envID := cmd.String("env", "", "Environment UUID")
 	containerName := cmd.String("container", "", "Target single container name (optional)")
+	namespace := cmd.String("namespace", "", "Target namespace to filter pods (optional)")
 
 	cmd.Parse(args[1:])
 
@@ -370,6 +371,10 @@ func handleSnapshot(config CLIConfig, args []string) {
 					ns := pod.Metadata.Namespace
 					// Filter out system namespaces
 					if ns == "kube-system" || ns == "kube-public" || ns == "kube-node-lease" || ns == "ingress-nginx" || ns == "cert-manager" || ns == "external-secrets" || ns == "argocd" || ns == "gitlab" {
+						continue
+					}
+					// Filter by namespace if requested
+					if *namespace != "" && ns != *namespace {
 						continue
 					}
 					for _, container := range pod.Status.ContainerStatuses {
