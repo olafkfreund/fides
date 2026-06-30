@@ -102,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/tenant/settings", s.handleSaveTenantSettings)
 	mux.HandleFunc("GET /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/callback", s.handleAuthCallback)
+	mux.HandleFunc("POST /api/v1/auth/local-login", s.handleLocalLogin)
 
 	// User Management and SSO group mappings API
 	mux.HandleFunc("GET /api/v1/tenant/users", s.handleListUsers)
@@ -162,14 +163,15 @@ func limitBody(next http.Handler) http.Handler {
 // Everything else under /api/v1 requires a valid bearer token.
 func isPublicPath(path string) bool {
 	publicExact := map[string]bool{
-		"/healthz":              true,
-		"/metrics":              true,
-		"/api/v1/auth/login":    true,
-		"/api/v1/auth/callback": true,
-		"/api/v1/swagger.json":  true,
-		"/swagger":              true,
-		"/llms.txt":             true,
-		"/llms-full.txt":        true,
+		"/healthz":                  true,
+		"/metrics":                  true,
+		"/api/v1/auth/login":        true,
+		"/api/v1/auth/callback":     true,
+		"/api/v1/auth/local-login":  true,
+		"/api/v1/swagger.json":      true,
+		"/swagger":                  true,
+		"/llms.txt":                 true,
+		"/llms-full.txt":            true,
 	}
 	if publicExact[path] {
 		return true
@@ -214,8 +216,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// 2. Standard public path bypass (only when portal credentials are not set or not protecting static files)
-		if portalUser == "" && isPublicPath(r.URL.Path) {
+		// 2. Standard public path bypass (static files and public auth routes)
+		if isPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -228,14 +230,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// If portal credentials are set and we got here, it's unauthorized for static files
-		if portalUser != "" && !strings.HasPrefix(r.URL.Path, "/api/v1/") {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Fides Portal"`)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-
-		// 2. Static service bearer token.
+		// 4. Static service bearer token.
 		expected := os.Getenv("FIDES_API_TOKEN")
 		if expected == "" {
 			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
@@ -1831,6 +1826,85 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	})
 
 	http.Redirect(w, r, "/?login=success", http.StatusTemporaryRedirect)
+}
+
+type localLoginReq struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	portalUser := os.Getenv("PORTAL_USERNAME")
+	portalPass := os.Getenv("PORTAL_PASSWORD")
+
+	if portalUser == "" || portalPass == "" {
+		http.Error(w, "local authentication is not configured", http.StatusForbidden)
+		return
+	}
+
+	var req localLoginReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+
+	if req.Username != portalUser || req.Password != portalPass {
+		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	orgIDStr := os.Getenv("FIDES_API_ORG_ID")
+	if orgIDStr == "" {
+		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
+	}
+	orgID, err := uuid.Parse(orgIDStr)
+	if err != nil {
+		orgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	}
+
+	principal := auth.Principal{
+		OrgID: orgID,
+		Email: req.Username,
+		Role:  auth.RoleAdmin,
+		Kind:  "session",
+	}
+
+	if s.DB != nil {
+		var userID uuid.UUID
+		var role string
+		err = s.DB.QueryRowContext(r.Context(),
+			`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, req.Username,
+		).Scan(&userID, &role)
+		if err == nil {
+			principal.UserID = userID
+			principal.Role = role
+		}
+	}
+
+	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
+	if err != nil {
+		http.Error(w, "failed to establish session", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((12 * time.Hour).Seconds()),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 type generatePolicyReq struct {
