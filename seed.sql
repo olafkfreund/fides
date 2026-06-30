@@ -48,3 +48,15 @@ INSERT INTO sso_group_mappings (org_id, external_group, role) VALUES
 ('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'gitlab:developers', 'Writer')
 ON CONFLICT (org_id, external_group) DO NOTHING;
 
+-- 8. Insert tenant LLM settings seed
+INSERT INTO tenant_llm_settings (org_id, provider_name, model_name, endpoint_url)
+VALUES ('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'ollama', 'llama3:8b', 'http://localhost:11434')
+ON CONFLICT (org_id) DO NOTHING;
+
+-- 9. Insert mock environment MCP server connection seed
+INSERT INTO environment_mcp_servers (environment_id, name, transport, command, args, env_vars)
+VALUES ('9f3c7ea1-420a-4288-ae31-716d1ba1f021', 'k8s-sensor', 'stdio', 'echo', ARRAY['{"pods": [{"name": "auth-service-5b6c", "status": "Ready", "replicas": 3, "readyReplicas": 3}]}'], '{}'::jsonb)
+ON CONFLICT (environment_id, name) DO NOTHING;
+
+
+

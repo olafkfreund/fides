@@ -1,0 +1,136 @@
+---
+---
+body {
+  background-color: #282828;
+  color: #ebdbb2;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 40px 20px;
+}
+
+.header {
+  border-bottom: 2px solid #504945;
+  padding-bottom: 20px;
+  margin-bottom: 30px;
+}
+
+.header h1 {
+  color: #fe8019;
+  font-size: 2.5rem;
+  margin: 0;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+}
+
+.header .tagline {
+  color: #a89984;
+  font-size: 1.1rem;
+  margin: 10px 0 15px 0;
+}
+
+.nav a {
+  color: #8ec07c;
+  text-decoration: none;
+  font-weight: 600;
+  margin: 0 10px;
+}
+
+.nav a:hover {
+  color: #b8bb26;
+  text-decoration: underline;
+}
+
+.content {
+  font-size: 1.05rem;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #fe8019;
+  font-weight: 700;
+  margin-top: 1.8rem;
+  margin-bottom: 1rem;
+}
+
+h1 { font-size: 2.2rem; }
+h2 { font-size: 1.6rem; border-bottom: 1px solid #3c3836; padding-bottom: 8px; }
+h3 { font-size: 1.3rem; }
+
+a {
+  color: #8ec07c;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+a:hover {
+  color: #b8bb26;
+}
+
+code {
+  background-color: #3c3836;
+  color: #fabd2f;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-size: 0.9em;
+}
+
+pre {
+  background-color: #1d2021;
+  border: 1px solid #504945;
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 20px 0;
+}
+
+pre code {
+  background-color: transparent;
+  color: #ebdbb2;
+  padding: 0;
+  border-radius: 0;
+}
+
+blockquote {
+  border-left: 4px solid #fe8019;
+  padding-left: 20px;
+  margin-left: 0;
+  color: #a89984;
+  font-style: italic;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 20px 0;
+}
+
+th, td {
+  border: 1px solid #504945;
+  padding: 12px;
+  text-align: left;
+}
+
+th {
+  background-color: #3c3836;
+  color: #fe8019;
+}
+
+tr:nth-child(even) {
+  background-color: #32302f;
+}
+
+.footer {
+  margin-top: 50px;
+  border-top: 1px solid #504945;
+  padding-top: 20px;
+  text-align: center;
+  color: #928374;
+  font-size: 0.85rem;
+}

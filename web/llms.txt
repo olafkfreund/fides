@@ -1,0 +1,14 @@
+# Fides: Trust, Provenance & Evidence Tracking System
+
+> Fides is a self-hosted, multi-cloud compatible compliance tracking system. It records and evaluates every state change in the software delivery lifecycle (SDLC) in real-time, acting as an audit-ready single source of truth to satisfy strict compliance frameworks such as SOC 2, ISO 27001, and FDA 21 CFR Part 11.
+
+## Core Documentation
+
+- [Getting Started Guide](/getting_started.md): Walkthrough of local setup, Docker compose services, CLI bootstrapping, and production CI/CD integrations for GitHub Actions and GitLab CI/CD.
+- [Architecture & Design](/architecture_proposal.md): Detailed proposal covering threat models, database layouts, cryptographic controls, storage providers, and multi-tenant security architecture.
+- [Model Context Protocol (MCP) Server](/mcp_integration.md): Details on configuring the Fides MCP server (`fides-mcp`) and integrating it with Claude Desktop or other LLM clients.
+- [API Reference](/api_reference.md): Detailed JSON endpoints, request-response schemas, and Swagger OpenAPI descriptions.
+
+## Full Documentation
+
+- [Fides Full Documentation](/llms-full.txt): Concatenated version of all documentation, configuration templates, database schemas, and integration guides for direct LLM ingestion.

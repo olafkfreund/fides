@@ -13,6 +13,7 @@ import (
 
 	"fides/pkg/ai"
 	"fides/pkg/crypto"
+	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
 	"fides/pkg/storage"
@@ -48,6 +49,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Flow API
 	mux.HandleFunc("POST /api/v1/flows", s.handleCreateFlow)
+	mux.HandleFunc("PUT /api/v1/flows", s.handleUpdateFlow)
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
 
 	// Trail API
@@ -70,7 +72,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
+	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
+
+	// Environment MCP Connections API
+	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
+	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
+	mux.HandleFunc("POST /api/v1/environments/mcp/query", s.handleQueryEnvironmentMCPServer)
+	mux.HandleFunc("POST /api/v1/environments/mcp/verify", s.handleVerifyEnvironmentCompliance)
 
 	// Tenant Settings & SSO APIs
 	mux.HandleFunc("GET /api/v1/tenant/settings", s.handleGetTenantSettings)
@@ -100,6 +109,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
+	})
+
+	// LLM Documentation Endpoints
+	mux.HandleFunc("GET /llms.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.ServeFile(w, r, "./web/llms.txt")
+	})
+	mux.HandleFunc("GET /llms-full.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		http.ServeFile(w, r, "./web/llms-full.txt")
 	})
 
 	// Static Web Portal Interface
@@ -222,6 +241,37 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(flow)
+}
+
+type updateFlowReq struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Tags        map[string]string `json:"tags"`
+}
+
+func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
+	var req updateFlowReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	flowID, err := uuid.Parse(req.ID)
+	if err != nil {
+		http.Error(w, "invalid flow id", http.StatusBadRequest)
+		return
+	}
+
+	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
+	_, err = s.DB.ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("database update error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
@@ -903,6 +953,32 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(list)
 }
 
+type savePolicyReq struct {
+	ID   string `json:"id"`
+	YAML string `json:"yaml"`
+}
+
+func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
+	var req savePolicyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	policyID, err := uuid.Parse(req.ID)
+	if err != nil {
+		http.Error(w, "invalid policy id", http.StatusBadRequest)
+		return
+	}
+	_, err = s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2", req.YAML, policyID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to save policy: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
+}
+
+
 func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
 	          FROM llm_assessments la
@@ -944,6 +1020,7 @@ type tenantSettingsResp struct {
 	Auth    *models.TenantAuthConfig      `json:"auth"`
 	Storage *models.TenantStorageSettings `json:"storage"`
 	Vault   *models.TenantVaultSettings   `json:"vault"`
+	LLM     *models.TenantLLMSettings     `json:"llm"`
 }
 
 func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request) {
@@ -960,6 +1037,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 	var authConfig models.TenantAuthConfig
 	var storageConfig models.TenantStorageSettings
 	var vaultConfig models.TenantVaultSettings
+	var llmConfig models.TenantLLMSettings
 
 	// 1. Fetch SSO/Auth Settings
 	queryAuth := `SELECT id, org_id, provider_name, client_id, client_secret_path, COALESCE(auth_url, ''), COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled 
@@ -1009,12 +1087,29 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// 4. Fetch LLM Settings
+	queryLLM := `SELECT id, org_id, provider_name, model_name, COALESCE(endpoint_url, ''), COALESCE(api_key_path, ''), COALESCE(aws_region, ''), COALESCE(azure_deployment, '')
+	             FROM tenant_llm_settings WHERE org_id = $1 LIMIT 1`
+	err = s.DB.QueryRowContext(r.Context(), queryLLM, orgID).Scan(
+		&llmConfig.ID, &llmConfig.OrgID, &llmConfig.ProviderName, &llmConfig.ModelName,
+		&llmConfig.EndpointURL, &llmConfig.APIKeyPath, &llmConfig.AWSRegion, &llmConfig.AzureDeployment,
+	)
+	if err == sql.ErrNoRows {
+		llmConfig.OrgID = orgID
+		llmConfig.ProviderName = "ollama"
+		llmConfig.ModelName = "llama3:8b"
+	} else if err != nil {
+		http.Error(w, fmt.Sprintf("database error (llm): %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(tenantSettingsResp{
 		OrgID:   orgIDStr,
 		Auth:    &authConfig,
 		Storage: &storageConfig,
 		Vault:   &vaultConfig,
+		LLM:     &llmConfig,
 	})
 }
 
@@ -1023,7 +1118,9 @@ type saveTenantSettingsReq struct {
 	Auth    *models.TenantAuthConfig      `json:"auth"`
 	Storage *models.TenantStorageSettings `json:"storage"`
 	Vault   *models.TenantVaultSettings   `json:"vault"`
+	LLM     *models.TenantLLMSettings     `json:"llm"`
 }
+
 
 func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request) {
 	var req saveTenantSettingsReq
@@ -1110,6 +1207,28 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 		)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to save vault settings: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if req.LLM != nil {
+		queryLLMUpsert := `
+			INSERT INTO tenant_llm_settings (org_id, provider_name, model_name, endpoint_url, api_key_path, aws_region, azure_deployment, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP)
+			ON CONFLICT (org_id) DO UPDATE SET
+				provider_name = EXCLUDED.provider_name,
+				model_name = EXCLUDED.model_name,
+				endpoint_url = EXCLUDED.endpoint_url,
+				api_key_path = EXCLUDED.api_key_path,
+				aws_region = EXCLUDED.aws_region,
+				azure_deployment = EXCLUDED.azure_deployment,
+				updated_at = CURRENT_TIMESTAMP`
+		_, err = tx.ExecContext(r.Context(), queryLLMUpsert,
+			orgID, req.LLM.ProviderName, req.LLM.ModelName, req.LLM.EndpointURL,
+			req.LLM.APIKeyPath, req.LLM.AWSRegion, req.LLM.AzureDeployment,
+		)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to save llm settings: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
@@ -1464,4 +1583,216 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
+}
+
+func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.Request) {
+	envIDStr := r.URL.Query().Get("environment_id")
+	if envIDStr == "" {
+		http.Error(w, "missing environment_id query param", http.StatusBadRequest)
+		return
+	}
+	envID, err := uuid.Parse(envIDStr)
+	if err != nil {
+		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+
+	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at 
+	          FROM environment_mcp_servers WHERE environment_id = $1`
+	rows, err := s.DB.QueryContext(r.Context(), query, envID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var list []models.EnvironmentMCPServer
+	for rows.Next() {
+		var srv models.EnvironmentMCPServer
+		var args pq.StringArray
+		var envVarsBytes []byte
+		err := rows.Scan(
+			&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
+			&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
+			&srv.CreatedAt, &srv.UpdatedAt,
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		srv.Args = []string(args)
+		json.Unmarshal(envVarsBytes, &srv.EnvVars)
+		list = append(list, srv)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
+	var req models.EnvironmentMCPServer
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.Transport == "" {
+		http.Error(w, "name and transport are required", http.StatusBadRequest)
+		return
+	}
+
+	envVarsJSON, err := json.Marshal(req.EnvVars)
+	if err != nil {
+		http.Error(w, "invalid env_vars", http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		INSERT INTO environment_mcp_servers (environment_id, name, transport, command, args, env_vars, url, auth_header, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+		ON CONFLICT (environment_id, name) DO UPDATE SET
+			transport = EXCLUDED.transport,
+			command = EXCLUDED.command,
+			args = EXCLUDED.args,
+			env_vars = EXCLUDED.env_vars,
+			url = EXCLUDED.url,
+			auth_header = EXCLUDED.auth_header,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING id, created_at, updated_at`
+
+	err = s.DB.QueryRowContext(r.Context(), query,
+		req.EnvironmentID, req.Name, req.Transport, req.Command, pq.Array(req.Args), envVarsJSON, req.URL, req.AuthHeader,
+	).Scan(&req.ID, &req.CreatedAt, &req.UpdatedAt)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to save environment mcp server: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(req)
+}
+
+type queryMCPReq struct {
+	EnvironmentID string                 `json:"environment_id"`
+	ServerName    string                 `json:"server_name"`
+	ToolName      string                 `json:"tool_name"`
+	Arguments     map[string]interface{} `json:"arguments"`
+}
+
+func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
+	var req queryMCPReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	envID, err := uuid.Parse(req.EnvironmentID)
+	if err != nil {
+		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch MCP server configuration
+	var srv models.EnvironmentMCPServer
+	var args pq.StringArray
+	var envVarsBytes []byte
+	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, '')
+	          FROM environment_mcp_servers WHERE environment_id = $1 AND name = $2 LIMIT 1`
+	err = s.DB.QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
+		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
+		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
+	)
+	if err == sql.ErrNoRows {
+		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	srv.Args = []string(args)
+	json.Unmarshal(envVarsBytes, &srv.EnvVars)
+
+	if srv.Transport != "stdio" {
+		http.Error(w, "Only stdio transport is supported currently in this environment", http.StatusBadRequest)
+		return
+	}
+
+	// Execute tool call on MCP server
+	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("MCP execution failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(fmt.Sprintf(`{"result": %q}`, output)))
+}
+
+type verifyEnvReq struct {
+	EnvironmentID string                 `json:"environment_id"`
+	ServerName    string                 `json:"server_name"`
+	ToolName      string                 `json:"tool_name"`
+	Arguments     map[string]interface{} `json:"arguments"`
+	Rules         []string               `json:"rules"`
+}
+
+func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *http.Request) {
+	var req verifyEnvReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	envID, err := uuid.Parse(req.EnvironmentID)
+	if err != nil {
+		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+
+	// Fetch MCP server configuration
+	var srv models.EnvironmentMCPServer
+	var args pq.StringArray
+	var envVarsBytes []byte
+	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, '')
+	          FROM environment_mcp_servers WHERE environment_id = $1 AND name = $2 LIMIT 1`
+	err = s.DB.QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
+		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
+		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
+	)
+	if err == sql.ErrNoRows {
+		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
+		return
+	} else if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	srv.Args = []string(args)
+	json.Unmarshal(envVarsBytes, &srv.EnvVars)
+
+	if srv.Transport != "stdio" {
+		http.Error(w, "Only stdio transport is supported currently in this environment", http.StatusBadRequest)
+		return
+	}
+
+	// Execute tool call on MCP server
+	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("MCP tool execution failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Evaluate rules deterministically using PolicyEngine
+	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to evaluate policy rules: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"compliant":     compliant,
+		"failed_rules":  failedRules,
+		"raw_response":  output,
+	})
 }

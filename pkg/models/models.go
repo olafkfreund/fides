@@ -184,6 +184,19 @@ type TenantVaultSettings struct {
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
 
+type TenantLLMSettings struct {
+	ID              uuid.UUID `json:"id" db:"id"`
+	OrgID           uuid.UUID `json:"org_id" db:"org_id"`
+	ProviderName    string    `json:"provider_name" db:"provider_name"`
+	ModelName       string    `json:"model_name" db:"model_name"`
+	EndpointURL     string    `json:"endpoint_url" db:"endpoint_url"`
+	APIKeyPath      string    `json:"api_key_path" db:"api_key_path"`
+	AWSRegion       string    `json:"aws_region" db:"aws_region"`
+	AzureDeployment string    `json:"azure_deployment" db:"azure_deployment"`
+	CreatedAt       time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at" db:"updated_at"`
+}
+
 type User struct {
 	ID        uuid.UUID `json:"id" db:"id"`
 	OrgID     uuid.UUID `json:"org_id" db:"org_id"`
@@ -200,5 +213,19 @@ type SSOGroupMapping struct {
 	ExternalGroup string    `json:"external_group" db:"external_group"`
 	Role          string    `json:"role" db:"role"`
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+}
+
+type EnvironmentMCPServer struct {
+	ID            uuid.UUID         `json:"id" db:"id"`
+	EnvironmentID uuid.UUID         `json:"environment_id" db:"environment_id"`
+	Name          string            `json:"name" db:"name"`
+	Transport     string            `json:"transport" db:"transport"`
+	Command       string            `json:"command" db:"command"`
+	Args          []string          `json:"args" db:"args"`
+	EnvVars       map[string]string `json:"env_vars" db:"env_vars"`
+	URL           string            `json:"url" db:"url"`
+	AuthHeader    string            `json:"auth_header" db:"auth_header"`
+	CreatedAt     time.Time         `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at" db:"updated_at"`
 }
 

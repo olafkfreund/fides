@@ -32,9 +32,10 @@
   # 4. Custom Helper Scripts
   scripts = {
     build-all.exec = ''
-      echo "Building Fides Server and CLI..."
+      echo "Building Fides Server, CLI, and MCP..."
       go build -o fides-server cmd/server/main.go
       go build -o fides cmd/cli/main.go
+      go build -o fides-mcp cmd/mcp/main.go
       echo "Build complete."
     '';
     
@@ -56,7 +57,7 @@
     echo "⚡ Welcome to Fides Compliance Development Shell ⚡"
     echo "============================================="
     echo "Available commands:"
-    echo "  - build-all : Compile server and CLI binaries"
+    echo "  - build-all : Compile server, CLI, and MCP binaries"
     echo "  - run-dev   : Run server directly via go run"
     echo "  - test-all  : Run tests and vet linters"
     echo ""

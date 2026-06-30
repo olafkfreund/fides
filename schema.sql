@@ -244,3 +244,39 @@ CREATE TABLE IF NOT EXISTS sso_group_mappings (
 CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);
 CREATE INDEX IF NOT EXISTS idx_sso_group_mappings_org_id ON sso_group_mappings(org_id);
 
+-- 19. Tenant LLM / AI Configuration
+CREATE TABLE IF NOT EXISTS tenant_llm_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE UNIQUE,
+    provider_name VARCHAR(50) NOT NULL DEFAULT 'ollama', -- 'google', 'aws', 'azure', 'ollama', 'llamacpp'
+    model_name VARCHAR(100) NOT NULL DEFAULT 'llama3:8b',
+    endpoint_url VARCHAR(512),
+    api_key_path VARCHAR(255), -- Vault path for Gemini API key, AWS secret, or Azure key
+    aws_region VARCHAR(100),
+    azure_deployment VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_llm_settings_org_id ON tenant_llm_settings(org_id);
+
+-- 20. Environment MCP Server Connections
+CREATE TABLE IF NOT EXISTS environment_mcp_servers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    environment_id UUID REFERENCES environments(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    transport VARCHAR(20) NOT NULL DEFAULT 'stdio', -- 'stdio', 'sse'
+    command VARCHAR(512),
+    args TEXT[] DEFAULT '{}',
+    env_vars JSONB DEFAULT '{}'::jsonb,
+    url VARCHAR(512),
+    auth_header VARCHAR(255), -- Vault path or encrypted string reference
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(environment_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_environment_mcp_servers_env_id ON environment_mcp_servers(environment_id);
+
+
+
