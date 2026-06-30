@@ -125,7 +125,7 @@ func main() {
 	// registered by integration features (webhooks, ServiceNow, CI/CD gates);
 	// with none registered it idles, leaving events durably queued. Stops with ctx.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		secrets := vault.NewEnvSecretsProvider()
+		secrets := vault.NewProvider(ctx)
 		sinks := []events.Sink{
 			webhooks.NewSink(webhooks.NewDBLoader(db, secrets)),
 			gitstatus.NewSink(gitstatus.NewDBLoader(db, secrets), os.Getenv("FIDES_PUBLIC_URL")),
