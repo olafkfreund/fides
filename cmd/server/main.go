@@ -143,7 +143,7 @@ func main() {
 			servicenow.NewCMDBSink(servicenow.NewDBLoader(db, secrets)),
 		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
-		log.Printf("Event dispatcher enabled (webhook + git-commit-status sinks)")
+		log.Printf("Event dispatcher enabled (webhook, git-commit-status, ServiceNow ITOM + CMDB sinks)")
 	}
 
 	<-ctx.Done()
