@@ -114,6 +114,10 @@ services:
       # non-superuser DB role (see schema-rls.sql). Defaults off.
       - FIDES_RLS_ENABLED=${FIDES_RLS_ENABLED:-false}
 
+      # Enable the integration event outbox + dispatcher (webhooks, ServiceNow,
+      # CI/CD gates). Defaults off; sinks are registered by integration features.
+      - FIDES_EVENTS_ENABLED=${FIDES_EVENTS_ENABLED:-false}
+
       # AI Verification Gate Configuration
       - AI_PROVIDER=ollama
       - AI_OLLAMA_ENDPOINT=http://ollama:11434

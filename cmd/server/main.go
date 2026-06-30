@@ -12,6 +12,7 @@ import (
 
 	"fides/pkg/ai"
 	"fides/pkg/api"
+	"fides/pkg/events"
 	"fides/pkg/storage"
 
 	_ "github.com/lib/pq"
@@ -115,6 +116,15 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Outbound event dispatcher (opt-in via FIDES_EVENTS_ENABLED). Sinks are
+	// registered by integration features (webhooks, ServiceNow, CI/CD gates);
+	// with none registered it idles, leaving events durably queued. Stops with ctx.
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		go events.NewDispatcher(db).Run(ctx)
+		log.Printf("Event dispatcher enabled")
+	}
+
 	<-ctx.Done()
 
 	log.Printf("Shutdown signal received, draining connections...")

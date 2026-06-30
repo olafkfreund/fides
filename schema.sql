@@ -278,5 +278,29 @@ CREATE TABLE IF NOT EXISTS environment_mcp_servers (
 
 CREATE INDEX IF NOT EXISTS idx_environment_mcp_servers_env_id ON environment_mcp_servers(environment_id);
 
+-- 21. Integration Events (transactional outbox)
+-- Internal plumbing for at-least-once outbound delivery (webhooks, ServiceNow,
+-- CI/CD gates). Written in the same transaction as the originating change; a
+-- background dispatcher leases pending rows and delivers them to sinks.
+-- NOTE: intentionally NOT under RLS — the dispatcher reads across all orgs as a
+-- trusted infra component; org_id is supplied explicitly at enqueue time.
+CREATE TABLE IF NOT EXISTS integration_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    event_type VARCHAR(100) NOT NULL, -- e.g. 'snapshot.noncompliant', 'attestation.reported'
+    payload JSONB NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- 'pending', 'delivered', 'dead'
+    attempts INT NOT NULL DEFAULT 0,
+    last_error TEXT,
+    next_attempt_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    delivered_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Dispatch lookup: pending rows due for delivery, oldest first.
+CREATE INDEX IF NOT EXISTS idx_integration_events_dispatch
+    ON integration_events(next_attempt_at)
+    WHERE status = 'pending';
+
 
 
