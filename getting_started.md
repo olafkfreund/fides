@@ -80,6 +80,7 @@ on:
 env:
   FIDES_SERVER_URL: "https://fides.internal.company.com"
   FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
+  FIDES_ENCRYPTION_KEY: ${{ secrets.FIDES_ENCRYPTION_KEY }}
   ORG_ID: "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
   FLOW_ID: "f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122"
   TRAIL_ID: ${{ github.sha }}
@@ -135,14 +136,15 @@ jobs:
           CRITICAL_COUNT=$(jq '[.vulnerabilities[] | select(.severity == "critical")] | length' snyk-report.json)
           echo "{\"vulnerabilities\": {\"critical\": $CRITICAL_COUNT}}" > snyk-summary.json
           
-          # Attest to Fides, uploading the raw report into the Evidence Vault
+          # Attest to Fides, encrypting the payload and uploading the raw report into the Evidence Vault
           fides attest \
             --trail $TRAIL_ID \
             --artifact-sha $IMAGE_DIGEST \
             --name "snyk-vulnerabilities" \
             --type "snyk-scan" \
             --payload snyk-summary.json \
-            --attachments snyk-report.json
+            --attachments snyk-report.json \
+            --encrypt
 
       # 6. Run Secret Scanning (Gitleaks) & Attest
       - name: Run Secret Leak Scan
@@ -159,7 +161,8 @@ jobs:
             --name "credential-leak-check" \
             --type "secret-scan" \
             --payload leaks-summary.json \
-            --attachments leak-report.json
+            --attachments leak-report.json \
+            --encrypt
 
       # 7. Evaluate Policy Gate before Deployment
       - name: Compliance Policy Gate Check
@@ -198,6 +201,7 @@ stages:
 variables:
   FIDES_SERVER_URL: "https://fides.internal.company.com"
   FIDES_API_TOKEN: $SECURE_FIDES_TOKEN # Stored in GitLab Protected Variables
+  FIDES_ENCRYPTION_KEY: $SECURE_FIDES_ENCRYPTION_KEY # Stored in GitLab Protected Variables
   ORG_ID: "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
   FLOW_ID: "f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122"
   TRAIL_ID: $CI_COMMIT_SHA
@@ -254,7 +258,8 @@ run-security-scans:
         --name "trivy-scan" 
         --type "vulnerability-scan" 
         --payload trivy-summary.json 
-        --attachments trivy-report.json
+        --attachments trivy-report.json \
+        --encrypt
 
     # 2. Policy Assertion Check (Fails build if not compliant)
     - fides assert 
@@ -309,3 +314,17 @@ The response will include the detailed Markdown audit review:
 > * Analyzed SBOM attestation: 124 packages found. 
 > * The model identified `GPL-3.0` license present in `readline` package. Policy strictly forbids GPL copyleft packages.
 > * Compliance Score: **45/100** (Vulnerable licensing found).
+
+---
+
+## 7. End-to-End Payload Encryption & Security
+
+Fides prioritizes the secure flow of evidence. To prevent eavesdropping or tampering with compliance data in transit, the Fides CLI can symmetrically encrypt attestation payloads using **AES-256-GCM** before sending them to the API server.
+
+### Key Derivation & Configuration
+1. **Passphrase**: Configure the environment variable `FIDES_ENCRYPTION_KEY` on both the client (CI/CD environment) and the Fides server.
+2. **Key Derivation**: The server and client use a key derivation function to expand or format the secret into a standard 32-byte key.
+3. **Usage**:
+   - Provide the `--encrypt` flag when running `fides attest`.
+   - The CLI will automatically encrypt the payload, flag the request as encrypted, and transmit the ciphertext.
+   - The Fides server will decrypt the payload on receipt using the matching key, validate policies, and store the resulting compliance data.

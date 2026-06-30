@@ -8,9 +8,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"fides/pkg/ai"
+	"fides/pkg/crypto"
 	"fides/pkg/models"
 	"fides/pkg/policy"
 	"fides/pkg/storage"
@@ -474,6 +476,23 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			fileReaders = append(fileReaders, f)
 			fileNames = append(fileNames, fHeaders.Filename)
 		}
+	}
+
+	// Payload Decryption Step
+	isEncrypted := r.FormValue("encrypted") == "true" || r.Header.Get("X-Fides-Encrypted") == "true"
+	if isEncrypted {
+		encryptionKey := os.Getenv("FIDES_ENCRYPTION_KEY")
+		if encryptionKey == "" {
+			http.Error(w, "server error: decryption key not configured on server", http.StatusInternalServerError)
+			return
+		}
+		key := crypto.DeriveKey(encryptionKey)
+		decrypted, err := crypto.Decrypt(req.Payload, key)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("decryption failure: %v", err), http.StatusBadRequest)
+			return
+		}
+		req.Payload = string(decrypted)
 	}
 
 	trailID, err := uuid.Parse(req.TrailID)

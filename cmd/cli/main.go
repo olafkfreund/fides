@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"fides/pkg/crypto"
 )
 
 type CLIConfig struct {
@@ -181,6 +183,7 @@ func handleAttest(config CLIConfig, args []string) {
 	typeName := cmd.String("type", "", "Attestation Type Name (template check)")
 	payloadData := cmd.String("payload", "", "JSON string or path to JSON metadata file")
 	attachments := cmd.String("attachments", "", "Comma-separated list of evidence file attachments")
+	encryptFlag := cmd.Bool("encrypt", false, "Encrypt the attestation payload using FIDES_ENCRYPTION_KEY")
 
 	cmd.Parse(args)
 
@@ -203,13 +206,31 @@ func handleAttest(config CLIConfig, args []string) {
 		rawPayload = *payloadData
 	}
 
+	var isEncrypted bool
+	encryptionKeyEnv := os.Getenv("FIDES_ENCRYPTION_KEY")
+	if *encryptFlag || encryptionKeyEnv != "" {
+		if encryptionKeyEnv == "" {
+			fmt.Println("Error: Encryption requires FIDES_ENCRYPTION_KEY environment variable to be set")
+			os.Exit(1)
+		}
+		key := crypto.DeriveKey(encryptionKeyEnv)
+		encryptedPayload, err := crypto.Encrypt([]byte(rawPayload), key)
+		if err != nil {
+			fmt.Printf("Failed to encrypt payload: %v\n", err)
+			os.Exit(1)
+		}
+		rawPayload = encryptedPayload
+		isEncrypted = true
+		fmt.Println("Payload successfully encrypted using AES-256-GCM.")
+	}
+
 	// Make call
 	var files []string
 	if *attachments != "" {
 		files = strings.Split(*attachments, ",")
 	}
 
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, *typeName, rawPayload, files)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, *typeName, rawPayload, files, isEncrypted)
 	if err != nil {
 		fmt.Printf("Failed to report attestation: %v\n", err)
 		os.Exit(1)
@@ -361,7 +382,7 @@ func postRequest(config CLIConfig, path string, data interface{}) (string, error
 	return string(respBytes), nil
 }
 
-func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, payload string, filePaths []string) (string, error) {
+func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, payload string, filePaths []string, isEncrypted bool) (string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -370,6 +391,11 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 	writer.WriteField("name", name)
 	writer.WriteField("type_name", typeName)
 	writer.WriteField("payload", payload)
+	if isEncrypted {
+		writer.WriteField("encrypted", "true")
+	} else {
+		writer.WriteField("encrypted", "false")
+	}
 
 	for _, path := range filePaths {
 		file, err := os.Open(path)

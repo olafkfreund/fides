@@ -1,8 +1,11 @@
 # Binaries
 fides-server
 fides
+fides-cli
 fides.exe
+fides-cli.exe
 fides-server.exe
+
 
 # Local storage data directories
 data/
