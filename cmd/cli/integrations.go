@@ -49,14 +49,14 @@ func handleAttestEvidence(config CLIConfig, format string, args []string) {
 
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
-	req, err := http.NewRequest("GET", config.ServerURL+path, nil)
+	req, err := http.NewRequest("GET", config.ServerURL+path, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
 	if config.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
@@ -167,14 +167,14 @@ func handleWebhook(config CLIConfig, args []string) {
 
 // deleteRequest performs an authenticated DELETE.
 func deleteRequest(config CLIConfig, path string) (string, error) {
-	req, err := http.NewRequest("DELETE", config.ServerURL+path, nil)
+	req, err := http.NewRequest("DELETE", config.ServerURL+path, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
 	if config.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
@@ -234,6 +234,58 @@ func handleServiceAccount(config CLIConfig, args []string) {
 		fmt.Println(body)
 	default:
 		fmt.Println("Usage: fides service-account <create|list|issue-key|revoke-key> [flags]")
+		os.Exit(1)
+	}
+}
+
+// fides allowlist add|list|check|remove
+func handleAllowlist(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>] [--reason <r>]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("allowlist "+args[0], flag.ExitOnError)
+	env := cmd.String("env", "", "environment UUID")
+	sha := cmd.String("sha", "", "artifact SHA256")
+	reason := cmd.String("reason", "", "approval reason")
+	cmd.Parse(args[1:])
+	if *env == "" {
+		fmt.Println("Error: --env is required")
+		os.Exit(1)
+	}
+	base := "/api/v1/environments/" + *env + "/allowlist"
+	switch args[0] {
+	case "add":
+		if *sha == "" {
+			fmt.Println("Error: --sha is required")
+			os.Exit(1)
+		}
+		post(config, base, map[string]any{"artifact_sha256": *sha, "reason": *reason}, "Artifact approved for the environment")
+	case "list":
+		body, err := getRequest(config, base)
+		fail(err, "list allowlist")
+		fmt.Println(body)
+	case "check":
+		if *sha == "" {
+			fmt.Println("Error: --sha is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, base+"?sha="+*sha)
+		fail(err, "check allowlist")
+		fmt.Println(body)
+		if strings.Contains(body, "\"approved\":false") {
+			os.Exit(2) // non-zero so CI can gate a deploy on approval
+		}
+	case "remove":
+		if *sha == "" {
+			fmt.Println("Error: --sha is required")
+			os.Exit(1)
+		}
+		body, err := deleteRequest(config, base+"/"+*sha)
+		fail(err, "remove allowlist")
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>]")
 		os.Exit(1)
 	}
 }

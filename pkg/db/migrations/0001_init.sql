@@ -342,6 +342,18 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 23a. Environment artifact allow-list (explicit per-environment approvals)
+CREATE TABLE IF NOT EXISTS environment_allowlist (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    artifact_sha256 VARCHAR(64) NOT NULL, -- the approved running digest
+    approved_by VARCHAR(255),             -- principal that approved it
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(environment_id, artifact_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_environment_allowlist_env ON environment_allowlist(environment_id);
+
 -- 23b. Service Accounts (machine-to-machine auth) + their API keys
 CREATE TABLE IF NOT EXISTS service_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -71,6 +71,8 @@ func main() {
 		handleVerifyChain(config, os.Args[2:])
 	case "service-account":
 		handleServiceAccount(config, os.Args[2:])
+	case "allowlist":
+		handleAllowlist(config, os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -97,6 +99,7 @@ func printUsage() {
 	fmt.Println("  user             Manage users (set-password)")
 	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
+	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
@@ -291,7 +294,7 @@ func handleAssert(config CLIConfig, args []string) {
 	q.Set("sha256", *sha)
 	q.Set("policy", *policyName)
 	reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", config.ServerURL, q.Encode())
-	req, err := http.NewRequest("GET", reqURL, nil)
+	req, err := http.NewRequest("GET", reqURL, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		fmt.Printf("Failed to create request: %v\n", err)
 		os.Exit(1)
@@ -301,7 +304,7 @@ func handleAssert(config CLIConfig, args []string) {
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		fmt.Printf("Server check failed: %v\n", err)
 		os.Exit(1)
@@ -452,7 +455,7 @@ func postRequest(config CLIConfig, path string, data interface{}) (string, error
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", config.ServerURL+path, bytes.NewBuffer(body))
+	req, err := http.NewRequest("POST", config.ServerURL+path, bytes.NewBuffer(body)) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
@@ -461,7 +464,7 @@ func postRequest(config CLIConfig, path string, data interface{}) (string, error
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
@@ -515,7 +518,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", config.ServerURL+"/api/v1/attestations", body)
+	req, err := http.NewRequest("POST", config.ServerURL+"/api/v1/attestations", body) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
@@ -524,7 +527,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}
