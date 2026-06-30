@@ -96,6 +96,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/webhooks", s.handleListWebhooks)
 	mux.HandleFunc("POST /api/v1/tenant/webhooks", s.handleSaveWebhook)
 
+	// Tenant Git Providers (CI/CD commit-status gating)
+	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
+	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
+
 	// Environment MCP Connections API
 	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
 	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
@@ -881,6 +885,20 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		internalError(w, err)
 		return
+	}
+
+	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
+	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		if orgID, ok := principalOrg(r); ok {
+			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+				"trail_id":    attestation.TrailID.String(),
+				"attestation": attestation.Name,
+				"compliant":   attestation.IsCompliant,
+			}); err != nil {
+				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
+			}
+		}
 	}
 
 	// Upload attachments to Object Store and save mapping
@@ -2331,6 +2349,64 @@ func (s *Server) handleSaveWebhook(w http.ResponseWriter, r *http.Request) {
 		   url = EXCLUDED.url, secret_path = EXCLUDED.secret_path,
 		   event_types = EXCLUDED.event_types, enabled = EXCLUDED.enabled, updated_at = now()`,
 		orgID, wh.Name, wh.URL, wh.SecretPath, pq.StringArray(wh.EventTypes), wh.Enabled)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
+}
+
+func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT id, org_id, provider, host, api_base, token_path, enabled, created_at, updated_at
+		 FROM tenant_git_providers WHERE org_id = $1 ORDER BY host`, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	var list []models.TenantGitProvider
+	for rows.Next() {
+		var gp models.TenantGitProvider
+		if err := rows.Scan(&gp.ID, &gp.OrgID, &gp.Provider, &gp.Host, &gp.APIBase, &gp.TokenPath, &gp.Enabled, &gp.CreatedAt, &gp.UpdatedAt); err != nil {
+			internalError(w, err)
+			return
+		}
+		list = append(list, gp)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSaveGitProvider(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var gp models.TenantGitProvider
+	if err := json.NewDecoder(r.Body).Decode(&gp); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if (gp.Provider != "github" && gp.Provider != "gitlab") || gp.Host == "" || gp.APIBase == "" || gp.TokenPath == "" {
+		http.Error(w, "provider (github|gitlab), host, api_base, and token_path are required", http.StatusBadRequest)
+		return
+	}
+	_, err := s.q(r.Context()).ExecContext(r.Context(),
+		`INSERT INTO tenant_git_providers (org_id, provider, host, api_base, token_path, enabled, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, now())
+		 ON CONFLICT (org_id, host) DO UPDATE SET
+		   provider = EXCLUDED.provider, api_base = EXCLUDED.api_base,
+		   token_path = EXCLUDED.token_path, enabled = EXCLUDED.enabled, updated_at = now()`,
+		orgID, gp.Provider, gp.Host, gp.APIBase, gp.TokenPath, gp.Enabled)
 	if err != nil {
 		internalError(w, err)
 		return
