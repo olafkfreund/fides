@@ -168,6 +168,40 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 				},
 			},
 			{
+				Name:        "get_change_request_status",
+				Description: "Get the status of a ServiceNow change request (state, approval, risk, on_hold) by change number",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]SchemaProp{
+						"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
+					},
+					Required: []string{"change_number"},
+				},
+			},
+			{
+				Name:        "create_compliance_incident",
+				Description: "Open a ServiceNow incident (e.g. when a Fides compliance gate fails)",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]SchemaProp{
+						"short_description": {Type: "string", Description: "Incident title"},
+						"description":       {Type: "string", Description: "Incident details"},
+					},
+					Required: []string{"short_description"},
+				},
+			},
+			{
+				Name:        "search_cmdb_ci",
+				Description: "Search the ServiceNow CMDB for configuration items (owner, class, dependencies) by name",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]SchemaProp{
+						"name": {Type: "string", Description: "CI name or partial name to search for"},
+					},
+					Required: []string{"name"},
+				},
+			},
+			{
 				Name:        "create_flow",
 				Description: "Create a new pipeline or project flow stream in Fides",
 				InputSchema: InputSchema{
@@ -352,6 +386,57 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error checking compliance: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "get_change_request_status":
+		num, ok := args["change_number"].(string)
+		if !ok || num == "" {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: "Missing change_number parameter"}}
+			break
+		}
+		q := neturl.Values{}
+		q.Set("change_number", num)
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/servicenow/change-status?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error querying change request: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "create_compliance_incident":
+		short, ok := args["short_description"].(string)
+		if !ok || short == "" {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: "Missing short_description parameter"}}
+			break
+		}
+		desc, _ := args["description"].(string)
+		body, err := makePostRequest(fmt.Sprintf("%s/api/v1/servicenow/incident", serverURL),
+			map[string]string{"short_description": short, "description": desc})
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error creating incident: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "search_cmdb_ci":
+		name, ok := args["name"].(string)
+		if !ok || name == "" {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: "Missing name parameter"}}
+			break
+		}
+		q := neturl.Values{}
+		q.Set("name", name)
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/servicenow/cmdb?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error searching CMDB: %v", err)}}
 		} else {
 			result.Content = []TextContent{{Type: "text", Text: string(body)}}
 		}
