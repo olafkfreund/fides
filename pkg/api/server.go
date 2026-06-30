@@ -74,6 +74,7 @@ func (s *Server) Routes() http.Handler {
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
+	mux.HandleFunc("GET /api/v1/trails/{id}/audit-package", s.handleTrailAuditPackage)
 
 	// Search / query + snapshot diff
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
