@@ -163,6 +163,12 @@ spec:
           value: http://fides-ollama:11434
         - name: AI_MODEL
           value: gemma4:e2b
+        - name: STORAGE_DRIVER
+          value: s3
+        - name: AWS_S3_BUCKET
+          value: fides-evidence-synechron
+        - name: AWS_REGION
+          value: eu-west-2
 ---
 apiVersion: v1
 kind: Service

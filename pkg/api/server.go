@@ -884,7 +884,11 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		// path traversal (e.g. "../../etc/passwd") in the storage key.
 		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
 		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
-		path, err := s.Storage.Upload(r.Context(), "fides-evidence", key, reader, "application/octet-stream")
+		bucket := os.Getenv("AWS_S3_BUCKET")
+		if bucket == "" {
+			bucket = "fides-evidence"
+		}
+		path, err := s.Storage.Upload(r.Context(), bucket, key, reader, "application/octet-stream")
 		if err != nil {
 			internalError(w, err)
 			return
