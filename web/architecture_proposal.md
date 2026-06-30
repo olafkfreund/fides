@@ -2,6 +2,8 @@
 
 This document outlines the detailed architecture for **Fides**, a self-hosted, multi-cloud compatible compliance, provenance, and evidence-tracking system. Fides is designed to capture, secure, evaluate, and verify the software supply chain, security scans, and runtime state. It acts as an audit-ready single source of truth to meet strict compliance standards (SOC 2, ISO 27001, and FDA 21 CFR Part 11).
 
+> **Implementation status (2026-07):** This document is the system architecture and design rationale. The platform has since implemented (and in several areas surpassed) this design — a deep **ServiceNow** integration (CMDB/ITOM/ITSM/MCP), built-in evidence parsers, a **tamper-evident attestation hash chain**, **service accounts** with rotatable API keys, **environment policies** with tag conditions, per-environment **allow-lists**, an **event/outbox dispatcher** (webhooks, commit-status, ServiceNow, Slack), a **Kubernetes admission webhook**, **AWS Secrets Manager** (IRSA), **logical environments**, **audit packages**, search/diff, **DORA metrics**, and startup schema migrations. For the canonical surface see **[docs/features.md](docs/features.md)** and **[docs/cli-reference.md](docs/cli-reference.md)**; the live schema is **`schema.sql`** (31 tables).
+
 ---
 
 ## 1. Product Review: How Kosli Works
@@ -33,7 +35,7 @@ Fides consists of four main architectural blocks:
 1. **Fides CLI (`fides`)**: A lightweight, statically compiled command-line utility built in Go, ensuring cross-platform support (macOS, Windows, Linux) without dependencies. It runs inside CI/CD runners or host daemons.
 2. **Fides Core API Server**: The central gateway. Written in Go, it coordinates database operations, communicates with the Object Storage and Secret Vault engines, and evaluates compliance policy rules.
 3. **LLM Verification Gateway (Fides-AI)**: A pluggable intelligence layer. It translates natural language compliance requirements, parses large logs/reports (like SBOMs and compiler outputs), flags credential exposures, and assesses risk using both commercial and local models (Ollama, llama.cpp).
-4. **Management Web Portal (Fides Dashboard)**: A modern, read-write dashboard (Next.js/React) for compliance officers and engineers to manage policies, view software provenance trails, review drift/shadow changes, and export signed audit packages.
+4. **Management Web Portal (Fides Dashboard)**: A modern, read-write dashboard (Next.js/React) for compliance officers and engineers to manage policies, view software provenance trails, review drift/shadow changes, and export signed audit packages. The compiled SPA is served as static assets by the Go server; additional admin UI is delivered as **Go-served pages** embedded in the server binary (e.g. the ServiceNow admin page at `/servicenow`) — see `CLAUDE.md`.
 
 ```mermaid
 flowchart TD
@@ -66,6 +68,8 @@ flowchart TD
 ## 3. Database Schema Design (PostgreSQL)
 
 To track software supply chain provenance, secret exposures, and LLM evaluations, the relational schema incorporates advanced metadata, timestamped trails, and electronic signatures.
+
+> **Note:** The excerpt below shows the foundational tables. The implemented schema (canonical in **`schema.sql`**, applied/auto-migrated on startup via `pkg/db/migrations/*.sql`) now has **31 tables**, adding: `attestation_types`, `environment_policies`, `environment_allowlist`, `logical_environments` (+ members), `service_accounts` (+ `service_account_keys`), `tenant_servicenow_settings`, `tenant_slack_settings`, `tenant_webhooks`, `tenant_git_providers`, `integration_events` (the transactional outbox), `schema_migrations`, plus `content_hash`/`prev_hash` columns on `attestations` (the tamper-evidence chain) and `password_hash` on `users`.
 
 ```sql
 -- Enable UUID and Cryptographic Extensions
@@ -317,6 +321,41 @@ Fides acts as the central ingestion portal for external security tools. The CLI 
    - Tooling: **Gitleaks** or **Trufflehog**.
    - Input format: JSON.
    - Attested fields: Count of exposed keys, secret types (API keys, certificates), offending file names.
+
+### Built-in evidence parsers
+
+For common formats the CLI parses the report itself (no hand-built JSON):
+`fides attest junit|snyk|trivy --file <report>` normalizes the report into a
+`{format, compliant, summary{counts}, findings}` payload and attaches the raw
+file. JUnit is compliant with no failures/errors; Snyk/Trivy with no
+critical/high.
+
+### Platform integrations (event-driven)
+
+Beyond scanner ingestion, Fides ships outbound integrations driven by a
+**transactional outbox + dispatcher** (`pkg/events`, gated by
+`FIDES_EVENTS_ENABLED`). Compliance events (`compliance.evaluated`,
+`snapshot.reported`, `snapshot.noncompliant`) fan out to per-tenant sinks:
+
+- **ServiceNow** — CMDB reconciliation via IRE, ITOM `em_event` alerts on
+  shadow/drift, and an ITSM change-control gate (`servicenow-change`
+  attestation), plus MCP tools and a Go-served admin page at `/servicenow`.
+- **Signed webhooks** — HMAC-signed JSON to tenant-configured URLs (SSRF-guarded).
+- **GitHub/GitLab commit-status** — publishes the compliance verdict to the
+  commit, gating PR merges.
+- **Slack** — posts compliance events to an incoming webhook.
+- **Inbound CI/CD webhooks** — signed GitHub/GitLab push events auto-create trails.
+
+A **Kubernetes ValidatingAdmissionWebhook** additionally gates deploys at the
+cluster, rejecting unregistered/non-compliant images.
+
+### Tamper-evidence & machine identity
+
+- Every attestation is linked into a per-trail **append-only hash chain**
+  (`content_hash` over the canonical content + `prev_hash`), verifiable via
+  `fides verify-chain` — any later edit/deletion/reorder is detectable.
+- **Service accounts** hold hashed, rotatable API keys (prefix lookup, TTL,
+  revocation) for machine-to-machine auth, replacing the single static token.
 
 ---
 
@@ -587,12 +626,23 @@ volumes:
 
 The statically compiled cross-platform CLI tool handles operations in CI/CD pipeline jobs and runtime environment monitoring.
 
-| Command Group | Command Syntax | Description | Supported OS |
-| :--- | :--- | :--- | :--- |
-| **Authentication** | `fides login --token <t>` | Authenticates CLI to server, stores configs locally. | Linux, macOS, Win |
-| **Trails** | `fides trail start --flow <f> --trail <t>` | Initializes a new build trail. | Linux, macOS, Win |
-| **Artifacts** | `fides artifact report --sha256 <s> --name <n>` | Records build artifact fingerprint. | Linux, macOS, Win |
-| **Attestations** | `fides attest --type snyk --file results.json` | Posts security scans or test reports. | Linux, macOS, Win |
-| **Verification** | `fides assert --policy <p> --sha256 <s>` | Compliance gate check. Exits non-zero if invalid. | Linux, macOS, Win |
-| **Runtimes** | `fides snapshot k8s <env> --namespace <ns>` | Queries cluster pods and posts runtime snapshot. | Linux, macOS |
-| **Runtimes** | `fides snapshot docker <env>` | Queries Docker host and posts runtime snapshot. | Linux, macOS, Win |
+Authentication is via environment variables (`FIDES_SERVER_URL`, `FIDES_API_TOKEN` — a static token or a service-account key), not a `login` command. Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**.
+
+| Command Group | Command Syntax | Description |
+| :--- | :--- | :--- |
+| **Trails** | `fides trail start --flow <f> --trail <t>` | Initialize a build trail |
+| **Artifacts** | `fides artifact report --sha256 <s> --name <n>` | Record an artifact fingerprint |
+| **Attestations** | `fides attest --type <t> --payload <json>` | Generic attestation |
+| **Attestations (parsers)** | `fides attest junit\|snyk\|trivy --file <report>` | Parse a real report into a normalized attestation |
+| **Verification** | `fides assert --policy <p> --sha256 <s>` | Policy gate for an artifact |
+| **Tamper-evidence** | `fides verify-chain --trail <id>` | Verify the attestation hash chain (exit 2 if broken) |
+| **Audit** | `fides audit --trail <id> [--output <zip>]` | Download a trail audit package |
+| **Runtimes** | `fides snapshot docker\|k8s\|ecs\|lambda --env <id>` | Report a runtime snapshot |
+| **Approvals** | `fides allowlist add\|list\|check\|remove --env <id> --sha <s>` | Per-environment artifact approvals (check exits 2) |
+| **Policies** | `fides policy add\|list\|check --env <id>` | Environment policies (check exits 2 on non-compliance) |
+| **Environments** | `fides env diff --env <id>` · `fides logical-env create\|add-member\|state` | Snapshot diff · logical environments |
+| **Search** | `fides search artifacts\|attestations` | Query artifacts/attestations |
+| **Metrics** | `fides metrics --days N` | DORA delivery metrics |
+| **Service accounts** | `fides service-account create\|list\|issue-key\|revoke-key` | Machine credentials + key rotation |
+| **Integrations** | `fides servicenow\|slack\|git-provider\|webhook config ...` | Configure integrations |
+| **Users** | `fides user set-password --user <id> --password <pw>` | Set a local password |
