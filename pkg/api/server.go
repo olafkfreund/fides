@@ -86,6 +86,7 @@ func (s *Server) Routes() http.Handler {
 	// Compliance and Drift API
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
+	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
@@ -101,6 +102,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/tenant/settings", s.handleSaveTenantSettings)
 	mux.HandleFunc("GET /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/callback", s.handleAuthCallback)
+	mux.HandleFunc("POST /api/v1/auth/local-login", s.handleLocalLogin)
 
 	// User Management and SSO group mappings API
 	mux.HandleFunc("GET /api/v1/tenant/users", s.handleListUsers)
@@ -161,14 +163,15 @@ func limitBody(next http.Handler) http.Handler {
 // Everything else under /api/v1 requires a valid bearer token.
 func isPublicPath(path string) bool {
 	publicExact := map[string]bool{
-		"/healthz":              true,
-		"/metrics":              true,
-		"/api/v1/auth/login":    true,
-		"/api/v1/auth/callback": true,
-		"/api/v1/swagger.json":  true,
-		"/swagger":              true,
-		"/llms.txt":             true,
-		"/llms-full.txt":        true,
+		"/healthz":                 true,
+		"/metrics":                 true,
+		"/api/v1/auth/login":       true,
+		"/api/v1/auth/callback":    true,
+		"/api/v1/auth/local-login": true,
+		"/api/v1/swagger.json":     true,
+		"/swagger":                 true,
+		"/llms.txt":                true,
+		"/llms-full.txt":           true,
 	}
 	if publicExact[path] {
 		return true
@@ -189,12 +192,37 @@ const sessionCookieName = "fides_session"
 // must never trust an org_id from the request body or query (see H2 / IDOR).
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		portalUser := os.Getenv("PORTAL_USERNAME")
+		portalPass := os.Getenv("PORTAL_PASSWORD")
+
+		// System paths bypass authentication
+		if r.URL.Path == "/healthz" || r.URL.Path == "/metrics" || r.URL.Path == "/swagger" || r.URL.Path == "/api/v1/swagger.json" || r.URL.Path == "/llms.txt" || r.URL.Path == "/llms-full.txt" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 1. Basic Auth check if portal credentials are set
+		if portalUser != "" && portalPass != "" {
+			username, password, ok := r.BasicAuth()
+			if ok && constantTimeEquals(username, portalUser) && constantTimeEquals(password, portalPass) {
+				orgID, configured := portalTenant()
+				if !configured {
+					http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+					return
+				}
+				principal := s.resolvePortalPrincipal(r.Context(), orgID, username)
+				s.serveAuthenticated(w, r, principal, next)
+				return
+			}
+		}
+
+		// 2. Standard public path bypass (static files and public auth routes)
 		if isPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// 1. Interactive session cookie.
+		// 3. Interactive session cookie.
 		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
 			if p, ok := s.Sessions.Get(c.Value, time.Now()); ok {
 				s.serveAuthenticated(w, r, &p, next)
@@ -202,7 +230,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 		}
 
-		// 2. Static service bearer token.
+		// 4. Static service bearer token.
 		expected := os.Getenv("FIDES_API_TOKEN")
 		if expected == "" {
 			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
@@ -285,7 +313,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; frame-ancestors 'none'")
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
@@ -626,12 +654,45 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
 
-		// Fallback mock check to keep SBOM dynamic for testing
-		av.SBOMStatus = "Compliant"
-		av.SBOM = []interface{}{
-			map[string]string{"name": "libc-bin", "version": "2.36-9", "license": "LGPL-2.1", "vulnerabilities": "None"},
-			map[string]string{"name": "openssl", "version": "3.0.8-1", "license": "Apache-2.0", "vulnerabilities": "None"},
-			map[string]string{"name": "go-uuid", "version": "1.6.0", "license": "BSD-3-Clause", "vulnerabilities": "None"},
+		// Fetch actual SBOM from database attestations if present
+		var payloadBytes []byte
+		var isCompliant bool
+		querySBOM := `SELECT payload, is_compliant FROM attestations WHERE artifact_sha256 = $1 AND (name = 'sbom' OR type_name = 'sbom' OR type_name = 'sbom-scan') LIMIT 1`
+		err = s.q(r.Context()).QueryRowContext(r.Context(), querySBOM, av.SHA256).Scan(&payloadBytes, &isCompliant)
+		if err == nil {
+			if isCompliant {
+				av.SBOMStatus = "Compliant"
+			} else {
+				av.SBOMStatus = "Non-Compliant"
+			}
+
+			// Try to unmarshal payload as a list of packages
+			var packages []interface{}
+			if errUnmarshal := json.Unmarshal(payloadBytes, &packages); errUnmarshal == nil {
+				av.SBOM = packages
+			} else {
+				// If not a list, maybe it's an object with "packages" or "components" key
+				var obj map[string]interface{}
+				if errUnmarshalObj := json.Unmarshal(payloadBytes, &obj); errUnmarshalObj == nil {
+					if pkgs, ok := obj["packages"]; ok {
+						if pkgsList, ok := pkgs.([]interface{}); ok {
+							av.SBOM = pkgsList
+						}
+					} else if comps, ok := obj["components"]; ok {
+						if compsList, ok := comps.([]interface{}); ok {
+							av.SBOM = compsList
+						}
+					} else {
+						// Otherwise, just wrap the object in a slice
+						av.SBOM = []interface{}{obj}
+					}
+				} else {
+					av.SBOM = []interface{}{}
+				}
+			}
+		} else {
+			av.SBOMStatus = "Pending"
+			av.SBOM = []interface{}{}
 		}
 		list = append(list, &av)
 	}
@@ -823,7 +884,11 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		// path traversal (e.g. "../../etc/passwd") in the storage key.
 		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
 		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
-		path, err := s.Storage.Upload(r.Context(), "fides-evidence", key, reader, "application/octet-stream")
+		bucket := os.Getenv("AWS_S3_BUCKET")
+		if bucket == "" {
+			bucket = "fides-evidence"
+		}
+		path, err := s.Storage.Upload(r.Context(), bucket, key, reader, "application/octet-stream")
 		if err != nil {
 			internalError(w, err)
 			return
@@ -841,7 +906,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
 			assessment, score, err := s.LLM.EvaluateAttestation(ctx, attestation.Name, attestation.TypeName, attestation.Payload)
 			if err != nil {
@@ -1126,6 +1191,146 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	envIDStr := r.URL.Query().Get("environment_id")
+	if envIDStr == "" {
+		http.Error(w, "missing environment_id parameter", http.StatusBadRequest)
+		return
+	}
+	envID, err := uuid.Parse(envIDStr)
+	if err != nil {
+		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+
+	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE id = $1 AND org_id = $2`
+	var id, name, envType, description string
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&id, &name, &envType, &description)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("environment not found: %v", err), http.StatusNotFound)
+		return
+	}
+
+	// Complete detailed Environment view model mapping
+	type RuntimeArtifact struct {
+		Service    string `json:"service"`
+		SHA256     string `json:"sha256"`
+		Registered bool   `json:"registered"`
+		Name       string `json:"name"`
+	}
+
+	type EnvironmentView struct {
+		ID            string            `json:"id"`
+		Name          string            `json:"name"`
+		Type          string            `json:"type"`
+		Description   string            `json:"description"`
+		LastSnapshot  string            `json:"lastSnapshot"`
+		Running       []RuntimeArtifact `json:"running"`
+		Drifts        []string          `json:"drifts"`
+		ShadowChanges []string          `json:"shadowChanges"`
+	}
+
+	ev := EnvironmentView{
+		ID:            id,
+		Name:          name,
+		Type:          envType,
+		Description:   description,
+		LastSnapshot:  "No snapshot reported yet",
+		Running:       []RuntimeArtifact{},
+		Drifts:        []string{},
+		ShadowChanges: []string{},
+	}
+
+	// Fetch latest snapshot ID
+	var latestSnapID string
+	var snapTime time.Time
+	querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
+	err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, envID).Scan(&latestSnapID, &snapTime)
+
+	if err == nil {
+		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
+
+		// Query running artifacts in snapshot
+		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
+		            FROM snapshot_artifacts sa
+		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
+		            WHERE sa.snapshot_id = $1`
+		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
+		if err == nil {
+			defer saRows.Close()
+			for saRows.Next() {
+				var ra RuntimeArtifact
+				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
+					ev.Running = append(ev.Running, ra)
+
+					if !ra.Registered {
+						ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
+					} else {
+						// Check if registered artifact has drift (failing controls)
+						var trailID sql.NullString
+						s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+						if trailID.Valid {
+							var compliantCount, totalCount int
+							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+							if totalCount > 0 && compliantCount < totalCount {
+								ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Fetch MCP servers configured for this environment
+	type MCPServerView struct {
+		ID         string   `json:"id"`
+		Name       string   `json:"name"`
+		Transport  string   `json:"transport"`
+		Command    string   `json:"command"`
+		Args       []string `json:"args"`
+		URL        string   `json:"url"`
+		AuthHeader string   `json:"auth_header"`
+	}
+	var mcpServers []MCPServerView
+	queryMcp := `SELECT id, name, transport, COALESCE(command, ''), args, COALESCE(url, ''), COALESCE(auth_header, '') 
+	             FROM environment_mcp_servers WHERE environment_id = $1`
+	mcpRows, err := s.q(r.Context()).QueryContext(r.Context(), queryMcp, envID)
+	if err == nil {
+		defer mcpRows.Close()
+		for mcpRows.Next() {
+			var m MCPServerView
+			var args pq.StringArray
+			if err := mcpRows.Scan(&m.ID, &m.Name, &m.Transport, &m.Command, &args, &m.URL, &m.AuthHeader); err == nil {
+				m.Args = []string(args)
+				mcpServers = append(mcpServers, m)
+			}
+		}
+	}
+
+	// Build the report struct
+	report := struct {
+		Environment EnvironmentView `json:"environment"`
+		MCPServers  []MCPServerView `json:"mcp_servers"`
+		ExportedAt  string          `json:"exported_at"`
+	}{
+		Environment: ev,
+		MCPServers:  mcpServers,
+		ExportedAt:  time.Now().Format(time.RFC3339),
+	}
+
+	fileName := fmt.Sprintf("audit-report-%s.json", name)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	json.NewEncoder(w).Encode(report)
 }
 
 func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
@@ -1658,6 +1863,108 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	})
 
 	http.Redirect(w, r, "/?login=success", http.StatusTemporaryRedirect)
+}
+
+type localLoginReq struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// portalTenant returns the tenant for portal/basic auth. The org MUST be
+// configured via FIDES_API_ORG_ID — there is no hardcoded default (H2/IDOR).
+func portalTenant() (uuid.UUID, bool) {
+	id, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+	return id, true
+}
+
+// constantTimeEquals compares two strings without leaking length-independent
+// timing, used for credential checks.
+func constantTimeEquals(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// resolvePortalPrincipal builds the principal for an authenticated portal admin.
+// The role is read from the user's DB record resolved WITHIN the tenant's org
+// scope (so it is correct even when RLS is enabled). If the admin is not
+// provisioned as a user, they retain the bootstrap Admin role implied by holding
+// the configured PORTAL_PASSWORD secret.
+func (s *Server) resolvePortalPrincipal(ctx context.Context, orgID uuid.UUID, email string) *auth.Principal {
+	p := &auth.Principal{OrgID: orgID, Email: email, Role: auth.RoleAdmin, Kind: "session"}
+	if s.DB != nil {
+		_ = db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
+			var id uuid.UUID
+			var role string
+			if err := tx.QueryRowContext(ctx,
+				`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, email,
+			).Scan(&id, &role); err != nil {
+				return err
+			}
+			p.UserID = id
+			p.Role = role
+			return nil
+		})
+	}
+	return p
+}
+
+func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	portalUser := os.Getenv("PORTAL_USERNAME")
+	portalPass := os.Getenv("PORTAL_PASSWORD")
+
+	if portalUser == "" || portalPass == "" {
+		http.Error(w, "local authentication is not configured", http.StatusForbidden)
+		return
+	}
+
+	var req localLoginReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+
+	// Constant-time credential comparison.
+	userOK := constantTimeEquals(req.Username, portalUser)
+	passOK := constantTimeEquals(req.Password, portalPass)
+	if !userOK || !passOK {
+		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		return
+	}
+
+	orgID, configured := portalTenant()
+	if !configured {
+		http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	principal := *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
+
+	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
+	if err != nil {
+		http.Error(w, "failed to establish session", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((12 * time.Hour).Seconds()),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 type generatePolicyReq struct {

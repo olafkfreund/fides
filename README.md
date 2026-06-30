@@ -78,3 +78,44 @@ Add the following configuration to your `claude_desktop_config.json` (located at
 - `create_flow`: Converse with LLM to register new pipeline flow streams.
 - `create_trail` / `report_artifact` / `report_attestation`: Programmatic inputs to register pipeline activities and evidence.
 
+
+## Web Portal Tour
+
+Fides features a premium, state-of-the-art web portal for security auditors and DevSecOps controllers. Below is a tour of the portal pages:
+
+### 1. Overview Dashboard (Dark & Light Modes)
+The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs.
+- **Dark Mode:**
+  ![Fides Overview Dashboard - Dark Mode](assets/screenshots/screenshot_20260630_151424-region.png)
+- **Light Mode:**
+  ![Fides Overview Dashboard - Light Mode](assets/screenshots/screenshot_20260630_151711-region.png)
+
+### 2. Artifacts & SBOM Management
+Trace built software deliverables and verify SBOM package compatibility. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
+![Artifacts & SBOM Management](assets/screenshots/screenshot_20260630_151450-region.png)
+
+### 3. Environments & MCP Connections
+Monitor active deployment environments (EKS, ECS, etc.) and configure Model Context Protocol (MCP) sensors (e.g. `k8s-sensor`) to query and verify compliance rules directly.
+![Environments & MCP Connections](assets/screenshots/screenshot_20260630_151515-region.png)
+
+### 4. Policies & JQ Rule Configurator
+Configure deterministic compliance gates using JQ rules or let the **LLM Policy Wizard** automatically generate rule configurations based on text-described goals.
+![Policies & JQ Rule Configurator](assets/screenshots/screenshot_20260630_151532-region.png)
+
+### 5. AI Audits & LLM Evaluator Reports
+Review deep risk and compliance assessments generated asynchronously by local or cloud LLMs for every reported attestation.
+![AI Audits & LLM Evaluator Reports](assets/screenshots/screenshot_20260630_151543-region.png)
+
+### 6. Telemetry & OpenTelemetry Metrics
+Gain observability into the Fides API backend, request rates, error rates, DB connection pools, and export data directly to Prometheus `/metrics` or OpenTelemetry scrapers.
+![Telemetry & OpenTelemetry Metrics](assets/screenshots/screenshot_20260630_151558-region.png)
+
+### 7. Settings & SSO Group Mappings
+Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group claims), and define roles.
+![Settings & SSO Group Mappings](assets/screenshots/screenshot_20260630_151619-region.png)
+
+### 8. Help & Documentation Center
+A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
+![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
+
+

@@ -40,15 +40,28 @@ func main() {
 		log.Fatalf("Failed to establish database connection ping: %v", err)
 	}
 
-	storageDir := os.Getenv("STORAGE_LOCAL_DIR")
-	if storageDir == "" {
-		storageDir = "./data/evidence"
-	}
-
-	log.Printf("Initializing Fides local storage at %s...", storageDir)
-	store, err := storage.NewLocalStorage(storageDir)
-	if err != nil {
-		log.Fatalf("Failed to initialize storage: %v", err)
+	var store storage.StorageBackend
+	storageDriver := os.Getenv("STORAGE_DRIVER")
+	if storageDriver == "s3" {
+		region := os.Getenv("AWS_REGION")
+		if region == "" {
+			region = "eu-west-2"
+		}
+		log.Printf("Initializing Fides S3 storage in region %s...", region)
+		store, err = storage.NewS3Storage(context.Background(), region)
+		if err != nil {
+			log.Fatalf("Failed to initialize S3 storage: %v", err)
+		}
+	} else {
+		storageDir := os.Getenv("STORAGE_LOCAL_DIR")
+		if storageDir == "" {
+			storageDir = "./data/evidence"
+		}
+		log.Printf("Initializing Fides local storage at %s...", storageDir)
+		store, err = storage.NewLocalStorage(storageDir)
+		if err != nil {
+			log.Fatalf("Failed to initialize storage: %v", err)
+		}
 	}
 
 	// Dynamic LLM provider selection

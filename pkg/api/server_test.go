@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,5 +138,61 @@ func TestPublicPathsBypassAuth(t *testing.T) {
 		if isPublicPath(p) {
 			t.Errorf("expected %s to be protected", p)
 		}
+	}
+}
+
+func TestLocalLoginFlow(t *testing.T) {
+	// 1. Without credentials configured -> returns 403 Forbidden
+	t.Setenv("PORTAL_USERNAME", "")
+	t.Setenv("PORTAL_PASSWORD", "")
+	s := newTestServer()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/local-login", strings.NewReader(`{"username":"admin","password":"password"}`))
+	rec := httptest.NewRecorder()
+	s.handleLocalLogin(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", rec.Code)
+	}
+
+	// 2. With credentials configured, bad password -> returns 401 Unauthorized
+	t.Setenv("PORTAL_USERNAME", "admin")
+	t.Setenv("PORTAL_PASSWORD", "secret")
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/local-login", strings.NewReader(`{"username":"admin","password":"wrong"}`))
+	rec = httptest.NewRecorder()
+	s.handleLocalLogin(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+
+	// 3. Correct credentials -> returns 200 and sets cookie.
+	// The portal tenant must be configured (no hardcoded default org — H2).
+	t.Setenv("FIDES_API_ORG_ID", uuid.NewString())
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/local-login", strings.NewReader(`{"username":"admin","password":"secret"}`))
+	rec = httptest.NewRecorder()
+	s.handleLocalLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	cookies := rec.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == sessionCookieName {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("expected session cookie in response")
+	}
+
+	// Verify the session is in the store
+	principal, ok := s.Sessions.Get(sessionCookie.Value, time.Now())
+	if !ok {
+		t.Fatalf("session not found in store")
+	}
+	if principal.Email != "admin" {
+		t.Fatalf("expected session email 'admin', got '%s'", principal.Email)
 	}
 }

@@ -1,0 +1,210 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fides
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fides-ollama-pvc
+  namespace: fides
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 15Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fides-db
+  namespace: fides
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fides-db
+  template:
+    metadata:
+      labels:
+        app: fides-db
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        env:
+        - name: POSTGRES_DB
+          value: fides
+        - name: POSTGRES_USER
+          value: fides_user
+        - name: POSTGRES_PASSWORD
+          value: fides_password_secure
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: db-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: db-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fides-db
+  namespace: fides
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+  selector:
+    app: fides-db
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fides-ollama
+  namespace: fides
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fides-ollama
+  template:
+    metadata:
+      labels:
+        app: fides-ollama
+    spec:
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            ollama serve &
+            echo "Waiting for Ollama to start..."
+            until ollama list >/dev/null 2>&1; do
+              sleep 1
+            done
+            echo "Ollama started. Pulling gemma4:e2b model..."
+            ollama pull gemma4:e2b
+            echo "Model pulled successfully."
+            wait
+        env:
+        - name: OLLAMA_CUDA_VISIBLE_DEVICES
+          value: ""
+        - name: OLLAMA_CPU_ONLY
+          value: "1"
+        ports:
+        - containerPort: 11434
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama
+      volumes:
+      - name: ollama-data
+        persistentVolumeClaim:
+          claimName: fides-ollama-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fides-ollama
+  namespace: fides
+spec:
+  ports:
+  - port: 11434
+    targetPort: 11434
+  selector:
+    app: fides-ollama
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fides-server
+  namespace: fides
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fides-server
+  template:
+    metadata:
+      labels:
+        app: fides-server
+    spec:
+      containers:
+      - name: app
+        image: 796973489124.dkr.ecr.eu-west-2.amazonaws.com/fides-server:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PORT
+          value: "8080"
+        - name: DB_DRIVER
+          value: postgres
+        - name: DB_DSN
+          value: host=fides-db port=5432 user=fides_user password=fides_password_secure dbname=fides sslmode=disable
+        - name: FIDES_ENCRYPTION_KEY
+          value: passphrase-secret-passphrase-secret
+        - name: FIDES_API_TOKEN
+          value: passphrase-secret-passphrase-secret-api-token
+        - name: FIDES_API_ORG_ID
+          value: 5d57b8c7-4328-4e1b-93df-4161b9a918a3
+        - name: PORTAL_USERNAME
+          value: admin
+        - name: PORTAL_PASSWORD
+          value: admin12345
+        - name: AI_PROVIDER
+          value: ollama
+        - name: AI_OLLAMA_ENDPOINT
+          value: http://fides-ollama:11434
+        - name: AI_MODEL
+          value: gemma4:e2b
+        - name: STORAGE_DRIVER
+          value: s3
+        - name: AWS_S3_BUCKET
+          value: fides-evidence-synechron
+        - name: AWS_REGION
+          value: eu-west-2
+        - name: FIDES_MCP_ALLOWED_COMMANDS
+          value: "echo,/bin/echo,/usr/bin/echo"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fides-server
+  namespace: fides
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+  selector:
+    app: fides-server
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fides-ingress
+  namespace: fides
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    kubernetes.io/ingress.class: nginx
+spec:
+  tls:
+  - hosts:
+    - fides.13.134.88.9.nip.io
+    secretName: fides-tls
+  rules:
+  - host: fides.13.134.88.9.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fides-server
+            port:
+              number: 8080

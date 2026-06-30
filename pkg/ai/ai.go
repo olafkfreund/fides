@@ -129,7 +129,7 @@ func NewOllamaClient(endpoint, model string) *OllamaClient {
 	return &OllamaClient{
 		Endpoint: endpoint,
 		Model:    model,
-		Client:   &http.Client{Timeout: 60 * time.Second},
+		Client:   &http.Client{Timeout: 20 * time.Minute},
 	}
 }
 
@@ -259,7 +259,7 @@ type LlamaCppClient struct {
 func NewLlamaCppClient(endpoint string) *LlamaCppClient {
 	return &LlamaCppClient{
 		Endpoint: endpoint,
-		Client:   &http.Client{Timeout: 60 * time.Second},
+		Client:   &http.Client{Timeout: 20 * time.Minute},
 	}
 }
 
@@ -390,7 +390,7 @@ func NewGeminiClient(apiKey, model string) *GeminiClient {
 	return &GeminiClient{
 		APIKey: apiKey,
 		Model:  model,
-		Client: &http.Client{Timeout: 60 * time.Second},
+		Client: &http.Client{Timeout: 20 * time.Minute},
 	}
 }
 
