@@ -239,6 +239,49 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	}
 }
 
+// fides logical-env create|list|add-member|state
+func handleLogicalEnv(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides logical-env <create|list|add-member|state> [--name --id --env]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("logical-env "+args[0], flag.ExitOnError)
+	name := cmd.String("name", "", "logical environment name")
+	desc := cmd.String("description", "", "description")
+	id := cmd.String("id", "", "logical environment UUID")
+	env := cmd.String("env", "", "physical environment UUID")
+	cmd.Parse(args[1:])
+	switch args[0] {
+	case "create":
+		if *name == "" {
+			fmt.Println("Error: --name is required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/logical-environments", map[string]any{"name": *name, "description": *desc}, "")
+	case "list":
+		body, err := getRequest(config, "/api/v1/logical-environments")
+		fail(err, "list logical environments")
+		fmt.Println(body)
+	case "add-member":
+		if *id == "" || *env == "" {
+			fmt.Println("Error: --id and --env are required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/logical-environments/"+*id+"/members", map[string]any{"environment_id": *env}, "Member added")
+	case "state":
+		if *id == "" {
+			fmt.Println("Error: --id is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/logical-environments/"+*id+"/state")
+		fail(err, "logical env state")
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides logical-env <create|list|add-member|state>")
+		os.Exit(1)
+	}
+}
+
 // fides policy add|list|check --env <id> ...
 func handlePolicy(config CLIConfig, args []string) {
 	if len(args) < 1 {
