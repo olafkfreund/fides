@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -318,19 +319,74 @@ func handleSnapshot(config CLIConfig, args []string) {
 		fmt.Println("Ingesting running docker containers...")
 		
 		// Demo mock container digest report
-		mockDigest := "sha256:b1d830f367e9154ec5a6dc8634c01d6706e23b20757d59850c90c01067e23b20"
+		mockDigest := "b1d830f367e9154ec5a6dc8634c01d6706e23b20757d59850c90c01067e23b20"
 		reportedArtifacts = append(reportedArtifacts, map[string]string{
 			"sha256":       mockDigest,
 			"service_name": *containerName,
 		})
 	} else if runtimeType == "k8s" {
-		fmt.Println("Ingesting running Kubernetes namespaces...")
-		// Mock k8s integration
-		mockDigest := "sha256:3eb45c05c6d3df3634208a05c6d3df3634208a05c6d3df3634208a05c6d3df36"
-		reportedArtifacts = append(reportedArtifacts, map[string]string{
-			"sha256":       mockDigest,
-			"service_name": "kubernetes-pod-auth",
-		})
+		fmt.Println("Ingesting running Kubernetes namespaces dynamically...")
+		cmdK8s := exec.Command("kubectl", "get", "pods", "-A", "-o", "json")
+		var out bytes.Buffer
+		cmdK8s.Stdout = &out
+		err := cmdK8s.Run()
+		if err != nil {
+			fmt.Printf("Failed to query Kubernetes pods: %v. Falling back to mock data.\n", err)
+			mockDigest := "3eb45c05c6d3df3634208a05c6d3df3634208a05c6d3df3634208a05c6d3df36"
+			reportedArtifacts = append(reportedArtifacts, map[string]string{
+				"sha256":       mockDigest,
+				"service_name": "kubernetes-pod-auth",
+			})
+		} else {
+			var podList struct {
+				Items []struct {
+					Metadata struct {
+						Name      string `json:"name"`
+						Namespace string `json:"namespace"`
+					} `json:"metadata"`
+					Status struct {
+						ContainerStatuses []struct {
+							Name    string `json:"name"`
+							Image   string `json:"image"`
+							ImageID string `json:"imageID"`
+						} `json:"containerStatuses"`
+					} `json:"status"`
+				} `json:"items"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &podList); err == nil {
+				for _, pod := range podList.Items {
+					ns := pod.Metadata.Namespace
+					// Filter out system namespaces
+					if ns == "kube-system" || ns == "kube-public" || ns == "kube-node-lease" || ns == "ingress-nginx" || ns == "cert-manager" || ns == "external-secrets" || ns == "argocd" || ns == "gitlab" {
+						continue
+					}
+					for _, container := range pod.Status.ContainerStatuses {
+						digest := ""
+						parts := strings.Split(container.ImageID, "@sha256:")
+						if len(parts) == 2 {
+							digest = parts[1]
+						} else {
+							digest = container.ImageID
+						}
+						// Strip sha256: prefix if present
+						digest = strings.TrimPrefix(digest, "sha256:")
+						if digest == "" {
+							digest = container.Image
+						}
+						if len(digest) > 64 {
+							digest = digest[:64]
+						}
+
+						reportedArtifacts = append(reportedArtifacts, map[string]string{
+							"sha256":       digest,
+							"service_name": container.Name,
+						})
+					}
+				}
+			} else {
+				fmt.Printf("Failed to parse kubectl json: %v\n", err)
+			}
+		}
 	}
 
 	payload := map[string]interface{}{
