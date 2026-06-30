@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"fides/pkg/ai"
@@ -125,7 +128,89 @@ func (s *Server) Routes() http.Handler {
 	fs := http.FileServer(http.Dir("./web"))
 	mux.Handle("GET /", fs)
 
-	return telemetry.Middleware(mux)
+	return securityHeaders(limitBody(s.authMiddleware(telemetry.Middleware(mux))))
+}
+
+// maxRequestBody caps request body size to mitigate memory-exhaustion DoS.
+// It is generous enough to accommodate multipart evidence uploads.
+const maxRequestBody = 64 << 20 // 64 MiB
+
+// limitBody wraps every request body in http.MaxBytesReader.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isPublicPath reports whether a request path is reachable without authentication.
+// Everything else under /api/v1 requires a valid bearer token.
+func isPublicPath(path string) bool {
+	publicExact := map[string]bool{
+		"/healthz":              true,
+		"/metrics":              true,
+		"/api/v1/auth/login":    true,
+		"/api/v1/auth/callback": true,
+		"/api/v1/swagger.json":  true,
+		"/swagger":              true,
+		"/llms.txt":             true,
+		"/llms-full.txt":        true,
+	}
+	if publicExact[path] {
+		return true
+	}
+	// The static web portal and its assets are public; the API surface is not.
+	return !strings.HasPrefix(path, "/api/v1/")
+}
+
+// authMiddleware enforces bearer-token authentication on the API surface.
+// The expected token is read from FIDES_API_TOKEN; if it is unset the API
+// fails closed (returns 503) rather than serving unauthenticated requests.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		expected := os.Getenv("FIDES_API_TOKEN")
+		if expected == "" {
+			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
+			return
+		}
+
+		const prefix = "Bearer "
+		authz := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authz, prefix) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "missing or malformed Authorization header", http.StatusUnauthorized)
+			return
+		}
+
+		presented := strings.TrimPrefix(authz, prefix)
+		// Constant-time comparison to avoid token-timing leaks.
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
+			http.Error(w, "invalid API token", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// securityHeaders adds baseline hardening headers to every response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Helper JSONB conversion
@@ -418,8 +503,8 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	// Struct representation specifically decorated for UI rendering
 	type ArtifactView struct {
 		models.Artifact
-		TrailName  string `json:"trail_name"`
-		SBOMStatus string `json:"sbom_status"`
+		TrailName  string        `json:"trail_name"`
+		SBOMStatus string        `json:"sbom_status"`
 		SBOM       []interface{} `json:"sbom"`
 	}
 
@@ -432,7 +517,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
-		
+
 		// Fallback mock check to keep SBOM dynamic for testing
 		av.SBOMStatus = "Compliant"
 		av.SBOM = []interface{}{
@@ -552,10 +637,14 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "server error: decryption key not configured on server", http.StatusInternalServerError)
 			return
 		}
-		key := crypto.DeriveKey(encryptionKey)
+		key, err := crypto.DeriveKey(encryptionKey)
+		if err != nil {
+			http.Error(w, "server error: invalid decryption key configured", http.StatusInternalServerError)
+			return
+		}
 		decrypted, err := crypto.Decrypt(req.Payload, key)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("decryption failure: %v", err), http.StatusBadRequest)
+			http.Error(w, "decryption failure: payload could not be decrypted", http.StatusBadRequest)
 			return
 		}
 		req.Payload = string(decrypted)
@@ -620,7 +709,10 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Upload attachments to Object Store and save mapping
 	for i, reader := range fileReaders {
-		key := fmt.Sprintf("%s/%s", attestation.ID, fileNames[i])
+		// Use only the base name of the client-supplied filename to prevent
+		// path traversal (e.g. "../../etc/passwd") in the storage key.
+		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
+		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
 		path, err := s.Storage.Upload(r.Context(), "fides-evidence", key, reader, "application/octet-stream")
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to upload attachment: %v", err), http.StatusInternalServerError)
@@ -646,7 +738,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 				log.Printf("LLM Audit error: %v", err)
 				return
 			}
-			
+
 			// Save LLM assessment findings
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
@@ -672,10 +764,10 @@ type reportSnapshotReq struct {
 }
 
 type snapshotReportResponse struct {
-	SnapshotID uuid.UUID        `json:"snapshot_id"`
-	Compliant  bool             `json:"compliant"`
-	Drifts     []string         `json:"drifts"`
-	Shadows    []string         `json:"shadow_changes"`
+	SnapshotID uuid.UUID `json:"snapshot_id"`
+	Compliant  bool      `json:"compliant"`
+	Drifts     []string  `json:"drifts"`
+	Shadows    []string  `json:"shadow_changes"`
 }
 
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -715,12 +807,12 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		var dbSHA, dbTrailID string
 		queryArt := `SELECT sha256, trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`
 		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256).Scan(&dbSHA, &dbTrailID)
-		
+
 		if err == sql.ErrNoRows {
 			// Shadow deployment: digest is running but not registered in database
 			shadows = append(shadows, fmt.Sprintf("service %s running unregistered digest %s", a.ServiceName, a.SHA256))
 			isCompliant = false
-			
+
 			// Insert runtime record anyway
 			saID := uuid.New()
 			querySA := `INSERT INTO snapshot_artifacts (id, snapshot_id, artifact_sha256, service_name, runtime_digest, started_at)
@@ -827,10 +919,10 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sha256":      sha,
-		"name":        name,
-		"compliant":   isCompliant,
-		"violations":  reasons,
+		"sha256":     sha,
+		"name":       name,
+		"compliant":  isCompliant,
+		"violations": reasons,
 	})
 }
 
@@ -852,14 +944,14 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	}
 
 	type EnvironmentView struct {
-		ID            string             `json:"id"`
-		Name          string             `json:"name"`
-		Type          string             `json:"type"`
-		Description   string             `json:"description"`
-		LastSnapshot  string             `json:"lastSnapshot"`
-		Running       []RuntimeArtifact  `json:"running"`
-		Drifts        []string           `json:"drifts"`
-		ShadowChanges []string           `json:"shadowChanges"`
+		ID            string            `json:"id"`
+		Name          string            `json:"name"`
+		Type          string            `json:"type"`
+		Description   string            `json:"description"`
+		LastSnapshot  string            `json:"lastSnapshot"`
+		Running       []RuntimeArtifact `json:"running"`
+		Drifts        []string          `json:"drifts"`
+		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
 	var list []*EnvironmentView
@@ -879,10 +971,10 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		var snapTime time.Time
 		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
 		err = s.DB.QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
-		
+
 		if err == nil {
 			ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-			
+
 			// Query running artifacts in snapshot
 			querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
 			            FROM snapshot_artifacts sa
@@ -895,7 +987,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 					var ra RuntimeArtifact
 					if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
 						ev.Running = append(ev.Running, ra)
-						
+
 						if !ra.Registered {
 							ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
 						} else {
@@ -977,7 +1069,6 @@ func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
 }
-
 
 func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
@@ -1120,7 +1211,6 @@ type saveTenantSettingsReq struct {
 	Vault   *models.TenantVaultSettings   `json:"vault"`
 	LLM     *models.TenantLLMSettings     `json:"llm"`
 }
-
 
 func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request) {
 	var req saveTenantSettingsReq
@@ -1291,10 +1381,17 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 	provider := r.URL.Query().Get("provider")
-	log.Printf("Authentication callback code: %s for org: %s, provider: %s", code, state, provider)
+	// Do not log the OAuth authorization code — it is a short-lived credential.
+	log.Printf("Authentication callback received for org: %s, provider: %s", state, provider)
+
+	// SECURITY TODO (C3): this handler does NOT yet implement a real OAuth flow.
+	// Before production it must:
+	//   1. Validate `state` against a server-stored nonce (CSRF protection).
+	//   2. Exchange the authorization code for a token at the provider's token URL.
+	//   3. Verify the resulting identity and establish a signed server session,
+	//      from which the org_id is derived (never trust org_id from the client).
 	http.Redirect(w, r, fmt.Sprintf("/?login=success&org_id=%s&provider=%s", state, provider), http.StatusTemporaryRedirect)
 }
 
@@ -1791,8 +1888,8 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"compliant":     compliant,
-		"failed_rules":  failedRules,
-		"raw_response":  output,
+		"compliant":    compliant,
+		"failed_rules": failedRules,
+		"raw_response": output,
 	})
 }

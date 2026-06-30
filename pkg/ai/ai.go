@@ -5,9 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	neturl "net/url"
+	"strings"
 	"time"
 )
+
+// maxLLMResponse caps how much of an LLM HTTP response we will read, to prevent
+// a malfunctioning or adversarial model backend from exhausting memory.
+const maxLLMResponse = 10 << 20 // 10 MiB
 
 type ChatMessage struct {
 	Role    string `json:"role"`
@@ -85,7 +92,7 @@ COMPLIANCE_SCORE: <score>`, attestationName, payloadType, payloadData)
 	}
 
 	var parsed ollamaResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", 0, err
 	}
 
@@ -142,7 +149,7 @@ Output only the JSON block. Do not include any other markdown text.`, framework,
 	}
 
 	var parsed ollamaResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 	return parsed.Response, nil
@@ -184,7 +191,7 @@ func (c *OllamaClient) Chat(ctx context.Context, history []ChatMessage, message 
 	}
 
 	var parsed ollamaResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 	return parsed.Response, nil
@@ -251,7 +258,7 @@ COMPLIANCE_SCORE: <score>`, attestationName, payloadType, payloadData)
 	}
 
 	var parsed llamaCppResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", 0, err
 	}
 
@@ -307,7 +314,7 @@ Output only the JSON block. Do not include any other markdown text.`, framework,
 	}
 
 	var parsed llamaCppResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 	return parsed.Content, nil
@@ -348,7 +355,7 @@ func (c *LlamaCppClient) Chat(ctx context.Context, history []ChatMessage, messag
 	}
 
 	var parsed llamaCppResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 	return parsed.Content, nil
@@ -419,8 +426,12 @@ COMPLIANCE_SCORE: <score>`, attestationName, payloadType, payloadData)
 		return "", 0, err
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", neturl.PathEscape(c.Model))
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
+	if err == nil {
+		// Send the API key as a header, not a URL query param, to keep it out of logs.
+		req.Header.Set("x-goog-api-key", c.APIKey)
+	}
 	if err != nil {
 		return "", 0, err
 	}
@@ -437,7 +448,7 @@ COMPLIANCE_SCORE: <score>`, attestationName, payloadType, payloadData)
 	}
 
 	var parsed geminiResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", 0, err
 	}
 
@@ -486,8 +497,12 @@ Output only the JSON block. Do not include any other markdown text.`, framework,
 		return "", err
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", neturl.PathEscape(c.Model))
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
+	if err == nil {
+		// Send the API key as a header, not a URL query param, to keep it out of logs.
+		req.Header.Set("x-goog-api-key", c.APIKey)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -504,7 +519,7 @@ Output only the JSON block. Do not include any other markdown text.`, framework,
 	}
 
 	var parsed geminiResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 
@@ -517,7 +532,7 @@ Output only the JSON block. Do not include any other markdown text.`, framework,
 
 func (c *GeminiClient) Chat(ctx context.Context, history []ChatMessage, message string) (string, error) {
 	var geminiContents []geminiContent
-	
+
 	// Prepend system instructions
 	geminiContents = append(geminiContents, geminiContent{
 		Parts: []geminiPart{
@@ -546,8 +561,12 @@ func (c *GeminiClient) Chat(ctx context.Context, history []ChatMessage, message 
 		return "", err
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", c.Model, c.APIKey)
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent", neturl.PathEscape(c.Model))
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(reqBody))
+	if err == nil {
+		// Send the API key as a header, not a URL query param, to keep it out of logs.
+		req.Header.Set("x-goog-api-key", c.APIKey)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -564,7 +583,7 @@ func (c *GeminiClient) Chat(ctx context.Context, history []ChatMessage, message 
 	}
 
 	var parsed geminiResp
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLLMResponse)).Decode(&parsed); err != nil {
 		return "", err
 	}
 
@@ -575,20 +594,22 @@ func (c *GeminiClient) Chat(ctx context.Context, history []ChatMessage, message 
 	return parsed.Candidates[0].Content.Parts[0].Text, nil
 }
 
-// helper to parse "COMPLIANCE_SCORE: <score>" from the response
+// extractScore parses "COMPLIANCE_SCORE: <score>" from the response.
+// If no score marker is present it returns 0 (treated as non-compliant) — a
+// missing score must never be interpreted as a pass.
 func extractScore(text string) int {
-	var score int
-	// Simple scan for the format in text
-	_, err := fmt.Sscanf(text, "COMPLIANCE_SCORE: %d", &score)
-	if err != nil {
-		// Fallback parse search
-		for i := 0; i < len(text)-18; i++ {
-			if text[i:i+17] == "COMPLIANCE_SCORE:" {
-				fmt.Sscanf(text[i:], "COMPLIANCE_SCORE: %d", &score)
-				break
-			}
-		}
+	const marker = "COMPLIANCE_SCORE:"
+	idx := strings.Index(text, marker)
+	if idx < 0 {
+		// Fail closed: no parseable score means "not compliant".
+		return 0
 	}
+
+	var score int
+	if _, err := fmt.Sscanf(text[idx:], "COMPLIANCE_SCORE: %d", &score); err != nil {
+		return 0
+	}
+
 	if score < 0 {
 		score = 0
 	}

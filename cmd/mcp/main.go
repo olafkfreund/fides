@@ -8,9 +8,15 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
+	"time"
 )
+
+// httpClient enforces a request timeout so a hung Fides server cannot block the
+// MCP process indefinitely.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // MCP Protocol structures
 type JsonRpcRequest struct {
@@ -339,8 +345,10 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 			result.Content = []TextContent{{Type: "text", Text: "Missing artifact_sha256 parameter"}}
 			break
 		}
-		url := fmt.Sprintf("%s/api/v1/compliance?artifact_sha256=%s", serverURL, sha)
-		body, err := makeGetRequest(url)
+		q := neturl.Values{}
+		q.Set("artifact_sha256", sha)
+		reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", serverURL, q.Encode())
+		body, err := makeGetRequest(reqURL)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error checking compliance: %v", err)}}
@@ -415,15 +423,25 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 	sendResponse(reqId, result)
 }
 
+// setAuthHeaders applies the API token and organization scope from the
+// environment. Identity must never be hardcoded in the binary.
+func setAuthHeaders(req *http.Request) {
+	if token := os.Getenv("FIDES_API_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if orgID := os.Getenv("FIDES_ORG_ID"); orgID != "" {
+		req.Header.Set("X-Org-Id", orgID)
+	}
+}
+
 func makeGetRequest(url string) ([]byte, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	// Add mock dev authentication or organization header if needed
-	req.Header.Set("X-Org-Id", "5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	setAuthHeaders(req)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -451,9 +469,9 @@ func makePostRequest(url string, payload interface{}) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Org-Id", "5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	setAuthHeaders(req)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

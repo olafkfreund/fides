@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: fides
       POSTGRES_USER: fides_user
-      POSTGRES_PASSWORD: fides_password_secure
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set (see .env.example)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -27,8 +27,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minio_admin
-      MINIO_ROOT_PASSWORD: minio_password_secure
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (see .env.example)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set (see .env.example)}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
@@ -44,9 +44,12 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (see .env.example)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set (see .env.example)}
     entrypoint: >
       /bin/sh -c "
-      /usr/bin/mc alias set myminio http://minio:9000 minio_admin minio_password_secure;
+      /usr/bin/mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD};
       /usr/bin/mc mb myminio/fides-evidence;
       exit 0;
       "
@@ -81,28 +84,33 @@ services:
       - ENV=production
       
       # Database
+      # NOTE: sslmode=disable is only acceptable on this isolated internal
+      # compose network. Use sslmode=verify-full against a TLS-enabled DB in prod.
       - DB_DRIVER=postgres
-      - DB_DSN=host=db port=5432 user=fides_user password=fides_password_secure dbname=fides sslmode=disable
-      
+      - DB_DSN=host=db port=5432 user=fides_user password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set} dbname=fides sslmode=disable
+
       # Storage (MinIO)
       - STORAGE_DRIVER=s3
       - STORAGE_S3_ENDPOINT=http://minio:9000
       - STORAGE_S3_BUCKET=fides-evidence
-      - STORAGE_S3_ACCESS_KEY=minio_admin
-      - STORAGE_S3_SECRET_KEY=minio_password_secure
+      - STORAGE_S3_ACCESS_KEY=${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      - STORAGE_S3_SECRET_KEY=${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       - STORAGE_S3_USE_SSL=false
       - STORAGE_S3_REGION=us-east-1
 
       # Secrets Configuration
       - SECRETS_PROVIDER=env
 
+      # Evidence encryption key (32 random bytes, base64-encoded)
+      - FIDES_ENCRYPTION_KEY=${FIDES_ENCRYPTION_KEY:?FIDES_ENCRYPTION_KEY must be set}
+
+      # API authentication token (required to call /api/v1 endpoints)
+      - FIDES_API_TOKEN=${FIDES_API_TOKEN:?FIDES_API_TOKEN must be set}
+
       # AI Verification Gate Configuration
       - AI_PROVIDER=ollama
       - AI_OLLAMA_ENDPOINT=http://ollama:11434
       - AI_MODEL=llama3:8b
-
-      # Root Token
-      - VERITRAIL_ROOT_TOKEN=vt_root_secure_token_12345
     restart: always
 
 volumes:

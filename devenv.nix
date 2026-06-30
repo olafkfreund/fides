@@ -13,7 +13,8 @@
   # 2. Languages configurations
   languages.go = {
     enable = true;
-    package = pkgs.go_1_22;
+    # Use the default (latest) Go; go.mod requires 1.26+, so do not pin an older release.
+    package = pkgs.go;
   };
 
   languages.javascript = {
@@ -23,9 +24,13 @@
   };
 
   # 3. Environment Variables
+  # NOTE: Never commit secrets here. Provide FIDES_ENCRYPTION_KEY (and DB_DSN)
+  # via an untracked local file, e.g. add `dotenv.enable = true;` with a
+  # git-ignored `.env`, or `export FIDES_ENCRYPTION_KEY=...` in your shell.
+  # The encryption key should be 32 random bytes, base64-encoded:
+  #   head -c 32 /dev/urandom | base64
   env = {
     FIDES_SERVER_URL = "http://localhost:8191";
-    FIDES_ENCRYPTION_KEY = "passphrase-secret-passphrase-secret";
     PORT = "8191";
   };
 
@@ -38,7 +43,7 @@
       go build -o fides-mcp cmd/mcp/main.go
       echo "Build complete."
     '';
-    
+
     run-dev.exec = ''
       echo "Running Fides API Server in development mode..."
       go run cmd/server/main.go

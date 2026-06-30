@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +19,10 @@ import (
 
 	"fides/pkg/crypto"
 )
+
+// httpClient is shared across CLI requests and enforces an overall timeout so a
+// hung server cannot block the CLI indefinitely.
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 type CLIConfig struct {
 	ServerURL string
@@ -158,12 +163,12 @@ func handleArtifact(config CLIConfig, args []string) {
 	}
 
 	payload := map[string]interface{}{
-		"org_id":       *orgID,
-		"trail_id":     *trailID,
-		"sha256":       calculatedSHA,
-		"name":         *name,
-		"type":         *artType,
-		"created_at":   time.Now(),
+		"org_id":     *orgID,
+		"trail_id":   *trailID,
+		"sha256":     calculatedSHA,
+		"name":       *name,
+		"type":       *artType,
+		"created_at": time.Now(),
 	}
 
 	respBody, err := postRequest(config, "/api/v1/artifacts", payload)
@@ -214,7 +219,11 @@ func handleAttest(config CLIConfig, args []string) {
 			fmt.Println("Error: Encryption requires FIDES_ENCRYPTION_KEY environment variable to be set")
 			os.Exit(1)
 		}
-		key := crypto.DeriveKey(encryptionKeyEnv)
+		key, err := crypto.DeriveKey(encryptionKeyEnv)
+		if err != nil {
+			fmt.Printf("Failed to derive encryption key: %v\n", err)
+			os.Exit(1)
+		}
 		encryptedPayload, err := crypto.Encrypt([]byte(rawPayload), key)
 		if err != nil {
 			fmt.Printf("Failed to encrypt payload: %v\n", err)
@@ -254,8 +263,11 @@ func handleAssert(config CLIConfig, args []string) {
 		os.Exit(1)
 	}
 
-	url := fmt.Sprintf("%s/api/v1/compliance?sha256=%s&policy=%s", config.ServerURL, *sha, *policyName)
-	req, err := http.NewRequest("GET", url, nil)
+	q := neturl.Values{}
+	q.Set("sha256", *sha)
+	q.Set("policy", *policyName)
+	reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", config.ServerURL, q.Encode())
+	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		fmt.Printf("Failed to create request: %v\n", err)
 		os.Exit(1)
@@ -265,7 +277,7 @@ func handleAssert(config CLIConfig, args []string) {
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		fmt.Printf("Server check failed: %v\n", err)
 		os.Exit(1)
@@ -317,7 +329,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 		// Mock query docker sockets/inspect to fetch container digests.
 		// In a real cli client we'd pull from: Docker CLI socket client.
 		fmt.Println("Ingesting running docker containers...")
-		
+
 		// Demo mock container digest report
 		mockDigest := "b1d830f367e9154ec5a6dc8634c01d6706e23b20757d59850c90c01067e23b20"
 		reportedArtifacts = append(reportedArtifacts, map[string]string{
@@ -420,7 +432,7 @@ func postRequest(config CLIConfig, path string, data interface{}) (string, error
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -483,7 +495,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 		req.Header.Set("Authorization", "Bearer "+config.Token)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", err
 	}
