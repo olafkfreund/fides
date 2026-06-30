@@ -1,8 +1,6 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: fides
----
+# NOTE: the `fides` namespace is managed separately (cluster-scoped). The CI
+# deploy role has namespace-scoped EKS access, so this manifest only contains
+# namespaced resources. Create the namespace once: kubectl create namespace fides
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -39,11 +37,12 @@ spec:
           value: fides
         - name: POSTGRES_USER
           value: fides_user
+        # NOTE: kept inline (not secretKeyRef) intentionally — changing this
+        # rolls the fides-db pod, which uses emptyDir and would WIPE the database
+        # (schema + data). Move to secretKeyRef only together with a PVC +
+        # schema migration. See the db-persistence follow-up.
         - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: fides-secrets
-              key: postgres-password
+          value: fides_password_secure
         ports:
         - containerPort: 5432
         volumeMounts:
