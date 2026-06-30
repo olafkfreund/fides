@@ -1009,6 +1009,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	var drifts []string
 	var shadows []string
+	var services []map[string]any // running services, for the CMDB sync event
 	isCompliant := true
 
 	for _, a := range req.Artifacts {
@@ -1020,6 +1021,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		if err == sql.ErrNoRows {
 			// Shadow deployment: digest is running but not registered in database
 			shadows = append(shadows, fmt.Sprintf("service %s running unregistered digest %s", a.ServiceName, a.SHA256))
+			services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": false})
 			isCompliant = false
 
 			// Insert runtime record anyway
@@ -1032,6 +1034,8 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			internalError(w, err)
 			return
 		}
+
+		services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": true})
 
 		// Insert valid trace record
 		saID := uuid.New()
@@ -1085,6 +1089,18 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.noncompliant", payload); err != nil {
 				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
+			}
+		}
+	}
+
+	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
+		if orgID, ok := principalOrg(r); ok {
+			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.reported", map[string]any{
+				"environment": envID.String(),
+				"services":    services,
+			}); err != nil {
+				log.Printf("failed to enqueue snapshot.reported event: %v", err)
 			}
 		}
 	}
