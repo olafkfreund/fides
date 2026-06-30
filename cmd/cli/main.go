@@ -471,7 +471,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 	}
 
 	for _, path := range filePaths {
-		file, err := os.Open(path)
+		file, err := os.Open(path) // #nosec G304 -- CLI opens a user-specified attachment by design
 		if err != nil {
 			return "", fmt.Errorf("failed to open attachment: %w", err)
 		}
@@ -519,7 +519,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 }
 
 func hashFile(filePath string) (string, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304 -- CLI hashes a user-specified file by design
 	if err != nil {
 		return "", err
 	}

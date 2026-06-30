@@ -53,12 +53,12 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
 
-      # gosec is advisory: it reports findings but does not block the pipeline
-      # (the current findings are mostly low-severity / accepted false-positives,
-      # e.g. guarded storage paths, the allowlisted MCP exec, and the configured
-      # MCP server URL). Findings are triaged separately; see the gosec issue.
+      # gosec BLOCKS the pipeline at medium+ severity. All findings up to this
+      # bar are resolved: real ones fixed (e.g. 0750 dir perms), and the genuine
+      # false-positives annotated with justified `#nosec` (guarded storage paths,
+      # the allowlisted MCP exec, the bounded multipart parse, the configured MCP
+      # server URL, CLI opening user-specified files). New medium+ findings fail CI.
       - name: Static security analysis (gosec)
-        continue-on-error: true
         uses: securego/gosec@master
         with:
           args: -severity medium -confidence high ./...
