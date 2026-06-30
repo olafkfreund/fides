@@ -183,3 +183,22 @@ type TenantVaultSettings struct {
 	CreatedAt      time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at" db:"updated_at"`
 }
+
+type User struct {
+	ID        uuid.UUID `json:"id" db:"id"`
+	OrgID     uuid.UUID `json:"org_id" db:"org_id"`
+	Name      string    `json:"name" db:"name"`
+	Email     string    `json:"email" db:"email"`
+	Role      string    `json:"role" db:"role"`
+	Groups    []string  `json:"groups" db:"groups"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+type SSOGroupMapping struct {
+	ID            uuid.UUID `json:"id" db:"id"`
+	OrgID         uuid.UUID `json:"org_id" db:"org_id"`
+	ExternalGroup string    `json:"external_group" db:"external_group"`
+	Role          string    `json:"role" db:"role"`
+	CreatedAt     time.Time `json:"created_at" db:"created_at"`
+}
+

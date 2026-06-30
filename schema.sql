@@ -219,3 +219,28 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_artifacts_snapshot_id ON snapshot_artifa
 CREATE INDEX IF NOT EXISTS idx_snapshot_artifacts_sha256 ON snapshot_artifacts(artifact_sha256);
 CREATE INDEX IF NOT EXISTS idx_llm_assessments_attestation_id ON llm_assessments(attestation_id);
 CREATE INDEX IF NOT EXISTS idx_system_audit_logs_org_id ON system_audit_logs(org_id);
+
+-- 17. Users Directory
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    role VARCHAR(50) NOT NULL DEFAULT 'Viewer', -- 'Admin', 'Auditor', 'Writer', 'Viewer'
+    groups VARCHAR(255)[] DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 18. SSO Group Mappings
+CREATE TABLE IF NOT EXISTS sso_group_mappings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+    external_group VARCHAR(255) NOT NULL, -- e.g. 'github:security-team'
+    role VARCHAR(50) NOT NULL, -- 'Admin', 'Auditor', 'Writer', 'Viewer'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, external_group)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(org_id);
+CREATE INDEX IF NOT EXISTS idx_sso_group_mappings_org_id ON sso_group_mappings(org_id);
+

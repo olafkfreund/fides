@@ -34,3 +34,17 @@ VALUES
 '{"provenance": {"required": true}, "attestations": [{"name": "unit-tests", "type": "junit", "rules": [".failures == 0", ".errors == 0"]}, {"name": "snyk-scan", "type": "vulnerability-scan", "rules": [".vulnerabilities.critical == 0"]}, {"name": "secret-scan", "type": "secret-scan", "rules": [".leaks == 0"]}]}'::jsonb,
 CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
+
+-- 6. Insert Seed Users
+INSERT INTO users (org_id, name, email, role, groups) VALUES
+('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Alice Vance', 'alice@company.com', 'Admin', ARRAY['admin-audit', 'payments-admins']),
+('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Bob Smith', 'bob@company.com', 'Auditor', ARRAY['compliance-auditors'])
+ON CONFLICT (email) DO NOTHING;
+
+-- 7. Insert SSO Group Mappings
+INSERT INTO sso_group_mappings (org_id, external_group, role) VALUES
+('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'github:payments-admins', 'Admin'),
+('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'okta:compliance-auditors', 'Auditor'),
+('5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'gitlab:developers', 'Writer')
+ON CONFLICT (org_id, external_group) DO NOTHING;
+

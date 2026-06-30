@@ -16,6 +16,7 @@ import (
 	"fides/pkg/models"
 	"fides/pkg/policy"
 	"fides/pkg/storage"
+	"fides/pkg/telemetry"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -29,6 +30,7 @@ type Server struct {
 }
 
 func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Server {
+	telemetry.Instance.SetDB(db)
 	return &Server{
 		DB:           db,
 		Storage:      store,
@@ -76,6 +78,20 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/callback", s.handleAuthCallback)
 
+	// User Management and SSO group mappings API
+	mux.HandleFunc("GET /api/v1/tenant/users", s.handleListUsers)
+	mux.HandleFunc("POST /api/v1/tenant/users", s.handleSaveUser)
+	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
+	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
+
+	// Swagger API Docs
+	mux.HandleFunc("GET /api/v1/swagger.json", s.handleSwaggerJSON)
+	mux.HandleFunc("GET /swagger", s.handleSwaggerUI)
+
+	// Telemetry metrics
+	mux.HandleFunc("GET /metrics", telemetry.Instance.PrometheusExporter)
+	mux.HandleFunc("GET /api/v1/telemetry/metrics", telemetry.Instance.JSONExporter)
+
 	// AI Policy Wizard & Chat APIs
 	mux.HandleFunc("POST /api/v1/ai/generate-policy", s.handleAIGeneratePolicy)
 	mux.HandleFunc("POST /api/v1/ai/chat", s.handleAIChat)
@@ -90,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 	fs := http.FileServer(http.Dir("./web"))
 	mux.Handle("GET /", fs)
 
-	return mux
+	return telemetry.Middleware(mux)
 }
 
 // Helper JSONB conversion
@@ -1328,4 +1344,124 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(aiChatResp{
 		Response: answer + executionOutput,
 	})
+}
+
+func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
+	orgIDStr := r.URL.Query().Get("org_id")
+	if orgIDStr == "" {
+		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
+	}
+	orgID, err := uuid.Parse(orgIDStr)
+	if err != nil {
+		http.Error(w, "invalid org_id", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	list := []models.User{}
+	for rows.Next() {
+		var u models.User
+		var grps pq.StringArray
+		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &grps, &u.CreatedAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		u.OrgID = orgID
+		u.Groups = []string(grps)
+		list = append(list, u)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
+	var u models.User
+	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if u.OrgID == uuid.Nil {
+		u.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	}
+
+	query := `INSERT INTO users (org_id, name, email, role, groups) 
+	          VALUES ($1, $2, $3, $4, $5) 
+	          ON CONFLICT (email) DO UPDATE SET 
+	              name = EXCLUDED.name, 
+	              role = EXCLUDED.role, 
+	              groups = EXCLUDED.groups`
+	_, err := s.DB.ExecContext(r.Context(), query, u.OrgID, u.Name, u.Email, u.Role, pq.StringArray(u.Groups))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
+}
+
+func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request) {
+	orgIDStr := r.URL.Query().Get("org_id")
+	if orgIDStr == "" {
+		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
+	}
+	orgID, err := uuid.Parse(orgIDStr)
+	if err != nil {
+		http.Error(w, "invalid org_id", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	list := []models.SSOGroupMapping{}
+	for rows.Next() {
+		var gm models.SSOGroupMapping
+		if err := rows.Scan(&gm.ID, &gm.ExternalGroup, &gm.Role, &gm.CreatedAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		gm.OrgID = orgID
+		list = append(list, gm)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) {
+	var gm models.SSOGroupMapping
+	if err := json.NewDecoder(r.Body).Decode(&gm); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if gm.OrgID == uuid.Nil {
+		gm.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	}
+
+	query := `INSERT INTO sso_group_mappings (org_id, external_group, role) 
+	          VALUES ($1, $2, $3) 
+	          ON CONFLICT (org_id, external_group) DO UPDATE SET 
+	              role = EXCLUDED.role`
+	_, err := s.DB.ExecContext(r.Context(), query, gm.OrgID, gm.ExternalGroup, gm.Role)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
 }
