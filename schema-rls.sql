@@ -56,7 +56,33 @@ BEGIN
   END LOOP;
 END $$;
 
--- Tables scoped indirectly (via a parent's org_id) need their own policies once
--- the join path is wired, e.g. trails (via flows), attestations (via trails),
--- llm_assessments (via attestations), snapshot_artifacts (via environment_snapshots).
--- These are intentionally left for a follow-up once the GUC plumbing lands.
+-- Tables scoped indirectly (via a parent's org_id). Their policy references the
+-- parent by foreign key; because the parent table is itself RLS-protected, the
+-- subquery `SELECT id FROM parent` already returns only the current tenant's
+-- rows, so the isolation chains automatically (flows -> trails -> attestations
+-- -> llm_assessments/evidence_attachments; environments -> environment_snapshots
+-- -> snapshot_artifacts; environments -> environment_mcp_servers).
+DO $$
+DECLARE
+  rec record;
+  child_tables jsonb := '[
+    {"tbl": "trails",                  "fk": "flow_id",        "parent": "flows"},
+    {"tbl": "attestations",            "fk": "trail_id",       "parent": "trails"},
+    {"tbl": "llm_assessments",         "fk": "attestation_id", "parent": "attestations"},
+    {"tbl": "evidence_attachments",    "fk": "attestation_id", "parent": "attestations"},
+    {"tbl": "environment_snapshots",   "fk": "environment_id", "parent": "environments"},
+    {"tbl": "snapshot_artifacts",      "fk": "snapshot_id",    "parent": "environment_snapshots"},
+    {"tbl": "environment_mcp_servers", "fk": "environment_id", "parent": "environments"}
+  ]'::jsonb;
+BEGIN
+  FOR rec IN SELECT * FROM jsonb_to_recordset(child_tables) AS x(tbl text, fk text, parent text) LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', rec.tbl);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', rec.tbl);
+    EXECUTE format('DROP POLICY IF EXISTS tenant_isolation ON %I', rec.tbl);
+    EXECUTE format($f$
+      CREATE POLICY tenant_isolation ON %I
+        USING (%I IN (SELECT id FROM %I))
+        WITH CHECK (%I IN (SELECT id FROM %I))
+    $f$, rec.tbl, rec.fk, rec.parent, rec.fk, rec.parent);
+  END LOOP;
+END $$;

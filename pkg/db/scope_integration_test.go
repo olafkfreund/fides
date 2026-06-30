@@ -68,6 +68,13 @@ func setupRLS(t *testing.T, pool *sql.DB) (orgA, orgB uuid.UUID, cleanup func())
 		orgA, "flow-a", orgB, "flow-b"); err != nil {
 		t.Fatalf("seed flows: %v", err)
 	}
+	// Seed an indirect-org row (a trail under OrgA's flow) to exercise the
+	// chained join-path RLS policy.
+	if _, err := pool.ExecContext(ctx,
+		`INSERT INTO trails (flow_id, name)
+		 SELECT id, 'trail-a' FROM flows WHERE org_id = $1`, orgA); err != nil {
+		t.Fatalf("seed trail: %v", err)
+	}
 
 	cleanup = func() {
 		_, _ = pool.ExecContext(ctx, `DELETE FROM organizations WHERE id IN ($1, $2)`, orgA, orgB)
@@ -124,5 +131,31 @@ func TestScopedConnEnforcesTenantIsolationIntegration(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "row-level security") {
 		t.Fatalf("expected an RLS violation error, got: %v", err)
+	}
+
+	// Indirect-org isolation: OrgA sees its trail (chained via flows).
+	var trailCount int
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM trails").Scan(&trailCount); err != nil {
+		t.Fatalf("count trails (OrgA): %v", err)
+	}
+	if trailCount != 1 {
+		t.Fatalf("OrgA should see exactly its 1 trail, got %d", trailCount)
+	}
+
+	// OrgB (a fresh scoped conn) must see zero trails.
+	connB, releaseB, err := ScopedConn(ctx, pool, orgB.String())
+	if err != nil {
+		t.Fatalf("ScopedConn B: %v", err)
+	}
+	defer releaseB()
+	if _, err := connB.ExecContext(ctx, "SET ROLE fides_rls_app"); err != nil {
+		t.Fatalf("set role B: %v", err)
+	}
+	var trailCountB int
+	if err := connB.QueryRowContext(ctx, "SELECT count(*) FROM trails").Scan(&trailCountB); err != nil {
+		t.Fatalf("count trails (OrgB): %v", err)
+	}
+	if trailCountB != 0 {
+		t.Fatalf("OrgB must not see OrgA's trail via the chained policy, got %d", trailCountB)
 	}
 }
