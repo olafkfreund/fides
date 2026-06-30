@@ -18,6 +18,19 @@ type Querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
+type querierCtxKey struct{}
+
+// WithQuerier returns a context carrying a request-scoped Querier.
+func WithQuerier(ctx context.Context, q Querier) context.Context {
+	return context.WithValue(ctx, querierCtxKey{}, q)
+}
+
+// QuerierFromContext returns the request-scoped Querier, if one was set.
+func QuerierFromContext(ctx context.Context) (Querier, bool) {
+	q, ok := ctx.Value(querierCtxKey{}).(Querier)
+	return q, ok
+}
+
 // setOrgGUC sets the tenant GUC on the given connection. It uses set_config so
 // the value can be passed as a bind parameter (SET does not accept parameters).
 func setOrgGUC(ctx context.Context, conn *sql.Conn, org string) error {
