@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"fides/pkg/admission"
 	"fides/pkg/ai"
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
@@ -100,6 +101,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
 	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
 
+	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
+	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
+	mux.HandleFunc("POST /api/v1/admission/validate", s.handleAdmissionValidate)
+
 	// Environment MCP Connections API
 	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
 	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
@@ -181,6 +186,8 @@ func isPublicPath(path string) bool {
 		"/swagger":                 true,
 		"/llms.txt":                true,
 		"/llms-full.txt":           true,
+		// K8s admission webhook: authenticated by the API server via mTLS, not a token.
+		"/api/v1/admission/validate": true,
 	}
 	if publicExact[path] {
 		return true
@@ -2355,6 +2362,49 @@ func (s *Server) handleSaveWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
+}
+
+// handleAdmissionValidate is the Kubernetes ValidatingAdmissionWebhook entry
+// point. It denies Pods whose image digests are unregistered (shadow) or
+// non-compliant in Fides. Tenant from FIDES_ADMISSION_ORG_ID; mode from
+// FIDES_ADMISSION_MODE ("enforce" denies, default "audit" warns only).
+func (s *Server) handleAdmissionValidate(w http.ResponseWriter, r *http.Request) {
+	var review admission.AdmissionReview
+	if err := json.NewDecoder(r.Body).Decode(&review); err != nil {
+		badRequest(w, err)
+		return
+	}
+
+	uid := ""
+	if review.Request != nil {
+		uid = review.Request.UID
+	}
+
+	writeReview := func(resp *admission.AdmissionResponse) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(admission.AdmissionReview{
+			APIVersion: "admission.k8s.io/v1",
+			Kind:       "AdmissionReview",
+			Response:   resp,
+		})
+	}
+
+	orgID, err := uuid.Parse(os.Getenv("FIDES_ADMISSION_ORG_ID"))
+	if err != nil {
+		// Misconfiguration must not break the cluster: allow with a warning.
+		// (Use the webhook's failurePolicy for hard availability guarantees.)
+		writeReview(&admission.AdmissionResponse{UID: uid, Allowed: true,
+			Warnings: []string{"Fides admission: FIDES_ADMISSION_ORG_ID not configured; allowing"}})
+		return
+	}
+
+	mode := admission.Mode(os.Getenv("FIDES_ADMISSION_MODE"))
+	if mode != admission.ModeEnforce {
+		mode = admission.ModeAudit // safe default
+	}
+
+	rv := &admission.Reviewer{Checker: admission.NewDBChecker(s.DB), Mode: mode}
+	writeReview(rv.Review(r.Context(), orgID, review.Request))
 }
 
 func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) {

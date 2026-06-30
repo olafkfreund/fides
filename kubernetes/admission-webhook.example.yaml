@@ -1,0 +1,42 @@
+# Reference ValidatingWebhookConfiguration for the Fides image-compliance gate.
+# It calls the Fides server's /api/v1/admission/validate, which denies Pods whose
+# image digests are unregistered (shadow) or non-compliant in Fides.
+#
+# PREREQUISITES (this file is a template — adapt before applying):
+#   1. TLS: admission webhooks require HTTPS. The Fides server serves plain HTTP
+#      today, so either (a) front it with a TLS-terminating service/sidecar and
+#      set caBundle to the signing CA, or (b) use clientConfig.url pointing at the
+#      ingress (publicly-trusted cert; omit caBundle).
+#   2. Server env: set FIDES_ADMISSION_ORG_ID=<tenant uuid> and
+#      FIDES_ADMISSION_MODE=enforce (default "audit" only warns).
+#   3. Opt namespaces in by labeling them:  kubectl label ns <ns> fides-admission=enforce
+#   4. Start with failurePolicy: Ignore; switch to Fail once you trust it.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: fides-image-compliance
+webhooks:
+  - name: images.fides.compliance
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore           # -> Fail once proven (fail-closed)
+    timeoutSeconds: 5
+    namespaceSelector:
+      matchLabels:
+        fides-admission: enforce     # only gate opted-in namespaces
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+        scope: Namespaced
+    clientConfig:
+      # Option A — in-cluster service (server must serve TLS on the target port):
+      service:
+        namespace: fides
+        name: fides-server
+        path: /api/v1/admission/validate
+        port: 443
+      caBundle: REPLACE_WITH_BASE64_PEM_CA
+      # Option B — via the ingress (publicly-trusted cert; remove `service` + `caBundle`):
+      # url: https://fides.13.134.88.9.nip.io/api/v1/admission/validate
