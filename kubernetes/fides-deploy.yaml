@@ -235,6 +235,12 @@ spec:
           value: aws
         - name: FIDES_MCP_ALLOWED_COMMANDS
           value: "echo,/bin/echo,/usr/bin/echo,/usr/local/bin/fides-mcp-sensor"
+        # Run the event/outbox dispatcher (ServiceNow CMDB/ITOM, webhook, and
+        # commit-status sinks). FIDES_PUBLIC_URL is used for commit-status links.
+        - name: FIDES_EVENTS_ENABLED
+          value: "true"
+        - name: FIDES_PUBLIC_URL
+          value: "https://fides.13.134.88.9.nip.io"
 ---
 apiVersion: v1
 kind: Service
