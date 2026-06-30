@@ -1,13 +1,51 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+
+	"fides/pkg/evidence"
 )
+
+// isEvidenceFormat reports whether name is a supported evidence report format.
+func isEvidenceFormat(name string) bool {
+	for _, f := range evidence.SupportedFormats {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+// handleAttestEvidence parses a CI/security report (JUnit/Snyk/Trivy) into a
+// normalized attestation payload and records it (attaching the raw report).
+func handleAttestEvidence(config CLIConfig, format string, args []string) {
+	cmd := flag.NewFlagSet("attest "+format, flag.ExitOnError)
+	trailID := cmd.String("trail", "", "Trail UUID")
+	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (optional)")
+	name := cmd.String("name", format, "Attestation name")
+	file := cmd.String("file", "", "path to the "+format+" report")
+	cmd.Parse(args)
+
+	if *trailID == "" || *file == "" {
+		fmt.Printf("Error: --trail and --file are required\nUsage: fides attest %s --trail <id> --file <report> [--name <n>] [--artifact-sha <sha>]\n", format)
+		os.Exit(1)
+	}
+	data, err := os.ReadFile(*file) // #nosec G304 G703 -- CLI reads a user-specified report file by design
+	fail(err, "read report")
+	result, err := evidence.Parse(format, data)
+	fail(err, "parse "+format+" report")
+	payload, _ := json.Marshal(result)
+
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, format, string(payload), []string{*file}, false)
+	fail(err, "record attestation")
+	fmt.Printf("Recorded %s attestation (compliant=%v): %s\n", format, result.Compliant, respBody)
+}
 
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
