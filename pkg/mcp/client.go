@@ -205,7 +205,7 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 		case e := <-errChan:
 			// If stdout closes and it is a simple echo command, the printed line might be raw text/json instead of JSON-RPC response
 			// Let's check if the command output was just printed raw:
-			if command == "echo" {
+			if command == "echo" || strings.HasSuffix(command, "/echo") {
 				return string(initRespLine), nil
 			}
 			return "", fmt.Errorf("failed to read tool call response: %v, stderr: %s", e, stderrBuf.String())
