@@ -45,3 +45,34 @@ jobs:
         uses: securego/gosec@master
         with:
           args: ./...
+
+  rls-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: fides
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d fides"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      # Proves the Postgres RLS policies (schema-rls.sql) enforce tenant
+      # isolation through pkg/db.ScopedConn against a real database.
+      - name: RLS integration tests
+        env:
+          FIDES_TEST_DB_DSN: host=127.0.0.1 port=5432 user=postgres password=test dbname=fides sslmode=disable
+        run: go test ./pkg/db/ -run Integration -v

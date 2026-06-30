@@ -5,25 +5,19 @@
 -- session, otherwise all queries will return zero rows.
 --
 -- Application wiring required before enabling:
---   Run each request's queries inside a transaction that first executes
---     SET LOCAL app.current_org = '<authenticated principal org uuid>';
---   For database/sql with a pool, the cleanest approach is a helper that opens a
---   tx, sets the GUC, runs the work, and commits, e.g.:
---
---     func (s *Server) withOrgScope(ctx context.Context, org uuid.UUID,
---         fn func(*sql.Tx) error) error {
---         tx, err := s.DB.BeginTx(ctx, nil)
---         if err != nil { return err }
---         defer tx.Rollback()
---         if _, err := tx.ExecContext(ctx, "SET LOCAL app.current_org = $1", org.String()); err != nil {
---             return err
---         }
---         if err := fn(tx); err != nil { return err }
---         return tx.Commit()
---     }
+--   Every tenant-scoped query must run on a connection where app.current_org is
+--   set to the authenticated principal's org. Use the helpers in pkg/db:
+--     - db.ScopedConn(ctx, pool, org)  -> pins a conn with the GUC set (request scope)
+--     - db.WithOrgScope(ctx, pool, org, fn) -> tx with SET LOCAL (self-contained work)
+--   These are proven against this schema by pkg/db's RLS integration test
+--   (TestScopedConnEnforcesTenantIsolationIntegration), which runs in CI.
 --
 -- The DB role the app connects as must NOT be a superuser or have BYPASSRLS,
--- or these policies are ignored.
+-- or these policies are ignored. Create a least-privilege application role:
+--
+--   CREATE ROLE fides_app LOGIN PASSWORD '...';
+--   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO fides_app;
+--   GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO fides_app;
 
 -- Helper: read the current tenant from the session GUC as a uuid.
 CREATE OR REPLACE FUNCTION fides_current_org() RETURNS uuid
