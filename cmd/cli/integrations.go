@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"strings"
 
@@ -235,6 +236,68 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	default:
 		fmt.Println("Usage: fides service-account <create|list|issue-key|revoke-key> [flags]")
 		os.Exit(1)
+	}
+}
+
+// fides search artifacts|attestations
+func handleSearch(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides search <artifacts|attestations> [--sha --commit --name | --type --trail --compliant]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("search "+args[0], flag.ExitOnError)
+	sha := cmd.String("sha", "", "artifact SHA256 prefix")
+	commit := cmd.String("commit", "", "git commit")
+	name := cmd.String("name", "", "artifact name (substring)")
+	typ := cmd.String("type", "", "attestation type name")
+	trail := cmd.String("trail", "", "trail UUID")
+	compliant := cmd.String("compliant", "", "true|false")
+	cmd.Parse(args[1:])
+
+	q := neturl.Values{}
+	var path string
+	switch args[0] {
+	case "artifacts":
+		path = "/api/v1/search/artifacts"
+		setIf(q, "sha", *sha)
+		setIf(q, "commit", *commit)
+		setIf(q, "name", *name)
+	case "attestations":
+		path = "/api/v1/search/attestations"
+		setIf(q, "type", *typ)
+		setIf(q, "trail", *trail)
+		setIf(q, "compliant", *compliant)
+	default:
+		fmt.Println("Usage: fides search <artifacts|attestations>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, path+"?"+q.Encode())
+	fail(err, "search")
+	fmt.Println(body)
+}
+
+// fides env diff --env <id> [--from <snap> --to <snap>]
+func handleEnvDiff(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("env diff", flag.ExitOnError)
+	env := cmd.String("env", "", "environment UUID")
+	from := cmd.String("from", "", "from snapshot UUID (default: 2nd most recent)")
+	to := cmd.String("to", "", "to snapshot UUID (default: most recent)")
+	cmd.Parse(args)
+	if *env == "" {
+		fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>]")
+		os.Exit(1)
+	}
+	q := neturl.Values{}
+	setIf(q, "from", *from)
+	setIf(q, "to", *to)
+	body, err := getRequest(config, "/api/v1/environments/"+*env+"/snapshots/diff?"+q.Encode())
+	fail(err, "snapshot diff")
+	fmt.Println(body)
+}
+
+func setIf(q neturl.Values, k, v string) {
+	if v != "" {
+		q.Set(k, v)
 	}
 }
 

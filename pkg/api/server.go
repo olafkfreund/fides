@@ -75,6 +75,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
 
+	// Search / query + snapshot diff
+	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
+	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
+	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
+
 	// Per-environment artifact allow-list (explicit approvals)
 	mux.HandleFunc("GET /api/v1/environments/{id}/allowlist", s.handleListAllowlist)
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
