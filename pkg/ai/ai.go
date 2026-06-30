@@ -58,7 +58,7 @@ Payload Data:
 Review the payload data above. Perform the following checks:
 1. Identify any critical or high vulnerabilities, failing test cases, or licensing risks.
 2. Confirm if the payload is compliant.
-3. Output your assessment in markdown. Explain your reasoning.
+3. Write your assessment as plain, readable text. Do NOT use markdown syntax: no '#' headings, no '*' or '-' bullets, no backticks or code fences. Use short labeled lines (e.g. "Vulnerabilities:") with blank lines between sections. Explain your reasoning.
 4. Conclude with a compliance score between 0 (completely failed/unsafe) and 100 (fully compliant/safe) in this exact format:
 COMPLIANCE_SCORE: <score>`, injectionPreamble, clampInput(attestationName), clampInput(payloadType), clampInput(payloadData))
 }
