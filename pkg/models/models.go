@@ -240,3 +240,15 @@ type TenantWebhook struct {
 	CreatedAt  time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at" db:"updated_at"`
 }
+
+type TenantGitProvider struct {
+	ID        uuid.UUID `json:"id" db:"id"`
+	OrgID     uuid.UUID `json:"org_id" db:"org_id"`
+	Provider  string    `json:"provider" db:"provider"` // github / gitlab
+	Host      string    `json:"host" db:"host"`
+	APIBase   string    `json:"api_base" db:"api_base"`
+	TokenPath string    `json:"token_path" db:"token_path"` // reference, not the token
+	Enabled   bool      `json:"enabled" db:"enabled"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}

@@ -318,5 +318,21 @@ CREATE TABLE IF NOT EXISTS tenant_webhooks (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_webhooks_org_id ON tenant_webhooks(org_id);
 
+-- 23. Tenant Git Providers (CI/CD commit-status gating)
+CREATE TABLE IF NOT EXISTS tenant_git_providers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    provider VARCHAR(20) NOT NULL,    -- 'github', 'gitlab'
+    host VARCHAR(255) NOT NULL,       -- github.com, gitlab.example.com (matched to the trail remote)
+    api_base VARCHAR(512) NOT NULL,   -- https://api.github.com, https://gitlab.com/api/v4
+    token_path VARCHAR(255) NOT NULL, -- API token secret reference (env/vault)
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, host)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
+
 
 

@@ -13,6 +13,7 @@ import (
 	"fides/pkg/ai"
 	"fides/pkg/api"
 	"fides/pkg/events"
+	"fides/pkg/gitstatus"
 	"fides/pkg/storage"
 	"fides/pkg/vault"
 	"fides/pkg/webhooks"
@@ -123,9 +124,13 @@ func main() {
 	// registered by integration features (webhooks, ServiceNow, CI/CD gates);
 	// with none registered it idles, leaving events durably queued. Stops with ctx.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		sink := webhooks.NewSink(webhooks.NewDBLoader(db, vault.NewEnvSecretsProvider()))
-		go events.NewDispatcher(db, sink).Run(ctx)
-		log.Printf("Event dispatcher enabled (webhook sink)")
+		secrets := vault.NewEnvSecretsProvider()
+		sinks := []events.Sink{
+			webhooks.NewSink(webhooks.NewDBLoader(db, secrets)),
+			gitstatus.NewSink(gitstatus.NewDBLoader(db, secrets), os.Getenv("FIDES_PUBLIC_URL")),
+		}
+		go events.NewDispatcher(db, sinks...).Run(ctx)
+		log.Printf("Event dispatcher enabled (webhook + git-commit-status sinks)")
 	}
 
 	<-ctx.Done()
