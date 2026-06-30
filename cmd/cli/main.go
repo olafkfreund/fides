@@ -59,6 +59,14 @@ func main() {
 		handleAssert(config, os.Args[2:])
 	case "snapshot":
 		handleSnapshot(config, os.Args[2:])
+	case "servicenow":
+		handleServiceNow(config, os.Args[2:])
+	case "git-provider":
+		handleGitProvider(config, os.Args[2:])
+	case "webhook":
+		handleWebhook(config, os.Args[2:])
+	case "user":
+		handleUser(config, os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -79,6 +87,10 @@ func printUsage() {
 	fmt.Println("  attest           Report tests, security scans, or custom evidence")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  snapshot         Snapshot running container runtimes and send to Fides")
+	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
+	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
+	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
+	fmt.Println("  user             Manage users (set-password)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
