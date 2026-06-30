@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fides · Admin Console</title>
+<style>
+  :root { --bg:#0a0a0a; --panel:#121212; --border:#262626; --fg:#e5e5e5; --muted:#9ca3af;
+          --green:#34d399; --purple:#a855f7; --red:#f87171; --amber:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+  header { padding:18px 28px; border-bottom:1px solid var(--border); }
+  h1 { margin:0; font:600 18px ui-monospace,monospace; letter-spacing:.04em; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  nav { display:flex; gap:4px; padding:0 28px; border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  nav button { background:transparent; border:0; color:var(--muted); padding:12px 16px; cursor:pointer; font:600 13px ui-monospace,monospace; border-bottom:2px solid transparent; }
+  nav button.active { color:var(--fg); border-bottom-color:var(--purple); }
+  main { max-width:1000px; margin:0 auto; padding:24px 28px; }
+  .tab { display:none; } .tab.active { display:block; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:18px; }
+  .panel h2 { margin:0 0 14px; font:600 12px ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; background:#1a1a1a; border:1px solid var(--border); color:var(--fg); border-radius:7px; padding:9px 11px; font:13px ui-monospace,monospace; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .check { display:flex; align-items:center; gap:8px; margin-top:14px; } .check input { width:auto; }
+  button.act { background:var(--purple); color:#fff; border:0; border-radius:7px; padding:9px 16px; font:600 13px ui-sans-serif; cursor:pointer; margin-top:14px; }
+  button.ghost { background:transparent; border:1px solid var(--border); color:var(--fg); border-radius:7px; padding:7px 12px; font:13px ui-sans-serif; cursor:pointer; }
+  button.danger { color:var(--red); border-color:#5f2120; }
+  .btnrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  table { width:100%; border-collapse:collapse; font:12px ui-monospace,monospace; margin-top:10px; }
+  th,td { text-align:left; padding:7px 9px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); }
+  pre { background:#1a1a1a; border:1px solid var(--border); border-radius:7px; padding:12px; overflow:auto; font:12px ui-monospace,monospace; color:var(--green); white-space:pre-wrap; word-break:break-word; }
+  .msg { font-size:12px; margin-top:10px; min-height:16px; } .ok { color:var(--green); } .err { color:var(--red); }
+  a { color:var(--purple); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fides Admin Console</h1>
+  <p>Configure integrations and policies. Sign in to the portal first — this page uses your session.</p>
+</header>
+<nav id="tabs">
+  <button data-tab="servicenow" class="active">ServiceNow</button>
+  <button data-tab="slack">Slack</button>
+  <button data-tab="accounts">Service Accounts</button>
+  <button data-tab="git">Git &amp; Webhooks</button>
+  <button data-tab="envs">Environments</button>
+  <button data-tab="metrics">Metrics</button>
+</nav>
+<main>
+  <!-- ServiceNow -->
+  <section class="tab active" id="tab-servicenow">
+    <div class="panel">
+      <h2>ServiceNow Connection</h2>
+      <div class="row">
+        <div><label>Instance URL</label><input id="sn_url" placeholder="https://acme.service-now.com"/></div>
+        <div><label>Auth type</label><select id="sn_auth"><option value="basic">basic</option><option value="oauth2">oauth2</option></select></div>
+      </div>
+      <div class="row">
+        <div><label>Client ID / Username</label><input id="sn_client"/></div>
+        <div><label>Secret reference</label><input id="sn_secret" placeholder="fides/servicenow"/></div>
+      </div>
+      <div class="check"><input type="checkbox" id="sn_enabled" checked/><label style="margin:0">Enabled</label></div>
+      <div class="btnrow"><button class="ghost" onclick="loadSN()">Reload</button><button class="act" onclick="saveSN()">Save</button>
+        <a href="/servicenow" target="_blank">Open full ServiceNow console →</a></div>
+      <div id="sn_msg" class="msg"></div>
+    </div>
+  </section>
+
+  <!-- Slack -->
+  <section class="tab" id="tab-slack">
+    <div class="panel">
+      <h2>Slack Notifications</h2>
+      <label>Incoming-webhook secret reference</label><input id="sl_secret" placeholder="fides/slack-webhook"/>
+      <div class="check"><input type="checkbox" id="sl_enabled" checked/><label style="margin:0">Enabled</label></div>
+      <div class="btnrow"><button class="ghost" onclick="loadSlack()">Reload</button><button class="act" onclick="saveSlack()">Save</button></div>
+      <div id="sl_msg" class="msg"></div>
+    </div>
+  </section>
+
+  <!-- Service accounts -->
+  <section class="tab" id="tab-accounts">
+    <div class="panel">
+      <h2>Create service account</h2>
+      <div class="row">
+        <div><label>Name</label><input id="sa_name" placeholder="ci-pipeline"/></div>
+        <div><label>Role</label><select id="sa_role"><option>Writer</option><option>Admin</option><option>Auditor</option><option>Viewer</option></select></div>
+      </div>
+      <div class="btnrow"><button class="act" onclick="createSA()">Create</button></div>
+      <div id="sa_msg" class="msg"></div>
+    </div>
+    <div class="panel">
+      <h2>Service accounts</h2>
+      <div class="btnrow"><button class="ghost" onclick="loadSA()">Refresh</button></div>
+      <div id="sa_list"></div>
+      <pre id="sa_key" style="display:none"></pre>
+    </div>
+  </section>
+
+  <!-- Git & webhooks -->
+  <section class="tab" id="tab-git">
+    <div class="panel">
+      <h2>Git provider</h2>
+      <div class="row">
+        <div><label>Provider</label><select id="gp_provider"><option>github</option><option>gitlab</option></select></div>
+        <div><label>Host</label><input id="gp_host" placeholder="github.com"/></div>
+      </div>
+      <div class="row">
+        <div><label>API base</label><input id="gp_api" placeholder="https://api.github.com"/></div>
+        <div><label>Token reference</label><input id="gp_token" placeholder="fides/gh-token"/></div>
+      </div>
+      <label>Inbound webhook secret reference (optional)</label><input id="gp_inbound" placeholder="fides/gh-webhook"/>
+      <div class="btnrow"><button class="ghost" onclick="loadGit()">Reload list</button><button class="act" onclick="saveGit()">Save provider</button></div>
+      <div id="gp_msg" class="msg"></div>
+      <div id="gp_list"></div>
+    </div>
+    <div class="panel">
+      <h2>Outbound webhook</h2>
+      <div class="row">
+        <div><label>Name</label><input id="wh_name"/></div>
+        <div><label>URL (https)</label><input id="wh_url" placeholder="https://example.com/hook"/></div>
+      </div>
+      <div class="row">
+        <div><label>Signing secret reference</label><input id="wh_secret" placeholder="fides/hook-secret"/></div>
+        <div><label>Event types (csv, blank = all)</label><input id="wh_events" placeholder="compliance.evaluated"/></div>
+      </div>
+      <div class="btnrow"><button class="ghost" onclick="loadHooks()">Reload list</button><button class="act" onclick="saveHook()">Save webhook</button></div>
+      <div id="wh_msg" class="msg"></div>
+      <div id="wh_list"></div>
+    </div>
+  </section>
+
+  <!-- Environments -->
+  <section class="tab" id="tab-envs">
+    <div class="panel">
+      <h2>Environment</h2>
+      <label>Select environment</label><select id="env_select" onchange="loadEnv()"></select>
+      <div id="env_msg" class="msg"></div>
+    </div>
+    <div class="panel">
+      <h2>Policies</h2>
+      <div class="row">
+        <div><label>Name</label><input id="pol_name"/></div>
+        <div><label>Required types (csv)</label><input id="pol_req" placeholder="junit,trivy"/></div>
+      </div>
+      <div class="row">
+        <div><label>If tag (optional)</label><input id="pol_iftag" placeholder="risk"/></div>
+        <div><label>If value</label><input id="pol_ifval" placeholder="high"/></div>
+      </div>
+      <div class="btnrow"><button class="act" onclick="addPolicy()">Add policy</button></div>
+      <div id="pol_list"></div>
+    </div>
+    <div class="panel">
+      <h2>Allow-list (approved artifacts)</h2>
+      <div class="row">
+        <div><label>Artifact SHA256</label><input id="al_sha"/></div>
+        <div><label>Reason</label><input id="al_reason"/></div>
+      </div>
+      <div class="btnrow"><button class="act" onclick="addAllow()">Approve</button></div>
+      <div id="al_list"></div>
+    </div>
+  </section>
+
+  <!-- Metrics -->
+  <section class="tab" id="tab-metrics">
+    <div class="panel">
+      <h2>DORA delivery metrics</h2>
+      <div class="btnrow"><label style="margin:0">Window (days)</label><input id="m_days" value="30" style="width:90px"/><button class="ghost" onclick="loadMetrics()">Load</button></div>
+      <pre id="m_out" style="display:none;margin-top:12px"></pre>
+    </div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+async function api(method, path, body) {
+  const opt = { method, credentials:'include', headers:{} };
+  if (body) { opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+  const r = await fetch(path, opt); const t = await r.text();
+  if (r.status===401) throw new Error('Not signed in — log into the portal, then reload.');
+  if (!r.ok) throw new Error(t || ('HTTP '+r.status));
+  try { return JSON.parse(t); } catch { return t; }
+}
+function msg(id,t,ok){ const e=$(id); e.textContent=t; e.className='msg '+(ok?'ok':'err'); }
+function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+
+// tabs
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); $('tab-'+b.dataset.tab).classList.add('active');
+  ({servicenow:loadSN,slack:loadSlack,accounts:loadSA,git:()=>{loadGit();loadHooks();},envs:loadEnvs,metrics:()=>{}}[b.dataset.tab]||(()=>{}))();
+});
+
+// ServiceNow
+async function loadSN(){ try{ const c=await api('GET','/api/v1/tenant/servicenow');
+  $('sn_url').value=c.instance_url||''; $('sn_auth').value=c.auth_type||'basic'; $('sn_client').value=c.client_id||'';
+  $('sn_secret').value=c.secret_path||''; $('sn_enabled').checked=!!c.instance_url&&c.enabled!==false;
+  msg('sn_msg',c.instance_url?'Loaded.':'Not configured yet.',true);}catch(e){msg('sn_msg',e.message,false);} }
+async function saveSN(){ try{ await api('POST','/api/v1/tenant/servicenow',{instance_url:$('sn_url').value.trim(),auth_type:$('sn_auth').value,client_id:$('sn_client').value.trim(),secret_path:$('sn_secret').value.trim(),enabled:$('sn_enabled').checked}); msg('sn_msg','Saved.',true);}catch(e){msg('sn_msg',e.message,false);} }
+
+// Slack
+async function loadSlack(){ try{ const c=await api('GET','/api/v1/tenant/slack'); $('sl_secret').value=c.webhook_secret_path||''; $('sl_enabled').checked=c.enabled!==false&&!!c.webhook_secret_path; msg('sl_msg',c.webhook_secret_path?'Loaded.':'Not configured yet.',true);}catch(e){msg('sl_msg',e.message,false);} }
+async function saveSlack(){ try{ await api('POST','/api/v1/tenant/slack',{webhook_secret_path:$('sl_secret').value.trim(),enabled:$('sl_enabled').checked}); msg('sl_msg','Saved.',true);}catch(e){msg('sl_msg',e.message,false);} }
+
+// Service accounts
+async function loadSA(){ try{ const list=await api('GET','/api/v1/tenant/service-accounts'); const el=$('sa_list');
+  if(!list.length){ el.innerHTML='<p class="msg">No service accounts.</p>'; return; }
+  el.innerHTML='<table><thead><tr><th>Name</th><th>Role</th><th>Active keys</th><th></th></tr></thead><tbody>'+
+    list.map(a=>`<tr><td>${esc(a.name)}</td><td>${esc(a.role)}</td><td>${a.active_keys}</td>
+      <td><button class="ghost" onclick="issueKey('${a.id}')">Issue key</button>
+          <button class="ghost" onclick="showKeys('${a.id}')">Keys</button></td></tr>
+      <tr id="keys-${a.id}"></tr>`).join('')+'</tbody></table>';
+  }catch(e){ $('sa_list').innerHTML='<p class="msg err">'+esc(e.message)+'</p>'; } }
+async function createSA(){ try{ await api('POST','/api/v1/tenant/service-accounts',{name:$('sa_name').value.trim(),role:$('sa_role').value}); msg('sa_msg','Created.',true); $('sa_name').value=''; loadSA();}catch(e){msg('sa_msg',e.message,false);} }
+async function issueKey(id){ const label=prompt('Key label (optional):')||''; const h=prompt('Expiry in hours (0 = none):','0'); try{ const r=await api('POST','/api/v1/tenant/service-accounts/'+id+'/keys',{label,expires_hours:parseInt(h||'0',10)}); const p=$('sa_key'); p.style.display='block'; p.textContent='Save this key now — shown once:\n'+r.api_key; loadSA();}catch(e){msg('sa_msg',e.message,false);} }
+async function showKeys(id){ const row=$('keys-'+id); try{ const keys=await api('GET','/api/v1/tenant/service-accounts/'+id+'/keys');
+  row.innerHTML='<td colspan="4">'+(keys.length?('<table><thead><tr><th>Prefix</th><th>Label</th><th>Revoked</th><th></th></tr></thead><tbody>'+
+    keys.map(k=>`<tr><td>${esc(k.prefix)}</td><td>${esc(k.label)}</td><td>${k.revoked_at?'yes':'no'}</td>
+      <td>${k.revoked_at?'':`<button class="ghost danger" onclick="revokeKey('${id}','${k.id}')">Revoke</button>`}</td></tr>`).join('')+'</tbody></table>'):'<span class="msg">No keys.</span>')+'</td>';
+  }catch(e){ row.innerHTML='<td colspan="4" class="msg err">'+esc(e.message)+'</td>'; } }
+async function revokeKey(said,kid){ if(!confirm('Revoke this key?'))return; try{ await api('DELETE','/api/v1/tenant/service-accounts/'+said+'/keys/'+kid); showKeys(said); loadSA();}catch(e){alert(e.message);} }
+
+// Git & webhooks
+async function loadGit(){ try{ const list=await api('GET','/api/v1/tenant/git-providers'); $('gp_list').innerHTML=list.length?('<table><thead><tr><th>Provider</th><th>Host</th><th>Enabled</th></tr></thead><tbody>'+list.map(p=>`<tr><td>${esc(p.provider)}</td><td>${esc(p.host)}</td><td>${p.enabled}</td></tr>`).join('')+'</tbody></table>'):''; }catch(e){msg('gp_msg',e.message,false);} }
+async function saveGit(){ try{ await api('POST','/api/v1/tenant/git-providers',{provider:$('gp_provider').value,host:$('gp_host').value.trim(),api_base:$('gp_api').value.trim(),token_path:$('gp_token').value.trim(),inbound_secret_path:$('gp_inbound').value.trim(),enabled:true}); msg('gp_msg','Saved.',true); loadGit();}catch(e){msg('gp_msg',e.message,false);} }
+async function loadHooks(){ try{ const list=await api('GET','/api/v1/tenant/webhooks'); $('wh_list').innerHTML=list.length?('<table><thead><tr><th>Name</th><th>URL</th><th>Enabled</th></tr></thead><tbody>'+list.map(h=>`<tr><td>${esc(h.name)}</td><td>${esc(h.url)}</td><td>${h.enabled}</td></tr>`).join('')+'</tbody></table>'):''; }catch(e){msg('wh_msg',e.message,false);} }
+async function saveHook(){ const ev=$('wh_events').value.trim(); try{ await api('POST','/api/v1/tenant/webhooks',{name:$('wh_name').value.trim(),url:$('wh_url').value.trim(),secret_path:$('wh_secret').value.trim(),event_types:ev?ev.split(','):[],enabled:true}); msg('wh_msg','Saved.',true); loadHooks();}catch(e){msg('wh_msg',e.message,false);} }
+
+// Environments
+async function loadEnvs(){ try{ const envs=await api('GET','/api/v1/environments'); const sel=$('env_select'); sel.innerHTML=envs.map(e=>`<option value="${e.id}">${esc(e.name)} (${esc(e.type)})</option>`).join(''); if(envs.length){ loadEnv(); } else { msg('env_msg','No environments.',true); } }catch(e){msg('env_msg',e.message,false);} }
+function curEnv(){ return $('env_select').value; }
+async function loadEnv(){ const id=curEnv(); if(!id)return; try{
+  const pols=await api('GET','/api/v1/environments/'+id+'/policies');
+  $('pol_list').innerHTML=pols.length?('<table><thead><tr><th>Name</th><th>Required</th><th>Condition</th></tr></thead><tbody>'+pols.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc((p.required_types||[]).join(', '))}</td><td>${p.if_tag?esc(p.if_tag+'=='+p.if_value):'always'}</td></tr>`).join('')+'</tbody></table>'):'<p class="msg">No policies.</p>';
+  const al=await api('GET','/api/v1/environments/'+id+'/allowlist');
+  $('al_list').innerHTML=(al&&al.length)?('<table><thead><tr><th>SHA256</th><th>By</th><th>Reason</th></tr></thead><tbody>'+al.map(a=>`<tr><td>${esc(a.artifact_sha256)}</td><td>${esc(a.approved_by)}</td><td>${esc(a.reason)}</td></tr>`).join('')+'</tbody></table>'):'<p class="msg">No approvals.</p>';
+  }catch(e){msg('env_msg',e.message,false);} }
+async function addPolicy(){ const id=curEnv(); try{ await api('POST','/api/v1/environments/'+id+'/policies',{name:$('pol_name').value.trim(),required_types:$('pol_req').value.split(',').map(s=>s.trim()).filter(Boolean),if_tag:$('pol_iftag').value.trim(),if_value:$('pol_ifval').value.trim()}); $('pol_name').value='';$('pol_req').value=''; loadEnv();}catch(e){msg('env_msg',e.message,false);} }
+async function addAllow(){ const id=curEnv(); try{ await api('POST','/api/v1/environments/'+id+'/allowlist',{artifact_sha256:$('al_sha').value.trim(),reason:$('al_reason').value.trim()}); $('al_sha').value='';$('al_reason').value=''; loadEnv();}catch(e){msg('env_msg',e.message,false);} }
+
+// Metrics
+async function loadMetrics(){ try{ const m=await api('GET','/api/v1/metrics/dora?days='+(parseInt($('m_days').value||'30',10))); const p=$('m_out'); p.style.display='block'; p.textContent=JSON.stringify(m,null,2);}catch(e){const p=$('m_out');p.style.display='block';p.textContent=e.message;} }
+
+loadSN();
+</script>
+</body>
+</html>

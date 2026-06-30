@@ -170,6 +170,43 @@ func (s *Server) handleListServiceAccounts(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(out)
 }
 
+// handleListServiceAccountKeys lists a service account's keys (metadata only).
+func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	saID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid service account id", http.StatusBadRequest)
+		return
+	}
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT k.id, k.prefix, COALESCE(k.label,''), k.expires_at, k.revoked_at, k.last_used_at, k.created_at
+		 FROM service_account_keys k JOIN service_accounts sa ON sa.id = k.service_account_id
+		 WHERE sa.id = $1 AND sa.org_id = $2 ORDER BY k.created_at DESC`, saID, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var prefix, label string
+		var expires, revoked, lastUsed, created *time.Time
+		if err := rows.Scan(&id, &prefix, &label, &expires, &revoked, &lastUsed, &created); err != nil {
+			internalError(w, err)
+			return
+		}
+		out = append(out, map[string]any{"id": id, "prefix": prefix, "label": label,
+			"expires_at": expires, "revoked_at": revoked, "last_used_at": lastUsed, "created_at": created})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
 func (s *Server) handleIssueServiceAccountKey(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.requireAdmin(w, r)
 	if !ok {
