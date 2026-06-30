@@ -234,7 +234,7 @@ spec:
         - name: SECRETS_PROVIDER
           value: aws
         - name: FIDES_MCP_ALLOWED_COMMANDS
-          value: "echo,/bin/echo,/usr/bin/echo"
+          value: "echo,/bin/echo,/usr/bin/echo,/usr/local/bin/fides-mcp-sensor"
 ---
 apiVersion: v1
 kind: Service
