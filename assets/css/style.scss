@@ -51,6 +51,29 @@ body {
   font-size: 1.05rem;
 }
 
+/* Constrain screenshots/images so high-resolution captures never overflow the
+   content column. Keeps aspect ratio, centers, and frames them cleanly. */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 24px auto;
+  border: 1px solid #504945;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Keep small inline images (badges/icons) from being framed or forced to block. */
+img[src*="shields.io"],
+img[src*="badge"],
+.nav img {
+  display: inline-block;
+  margin: 0 4px;
+  border: 0;
+  box-shadow: none;
+  vertical-align: middle;
+}
+
 h1, h2, h3, h4, h5, h6 {
   color: #fe8019;
   font-weight: 700;
