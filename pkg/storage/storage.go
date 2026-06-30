@@ -21,7 +21,7 @@ type LocalStorage struct {
 }
 
 func NewLocalStorage(baseDir string) (*LocalStorage, error) {
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
+	if err := os.MkdirAll(baseDir, 0750); err != nil {
 		return nil, fmt.Errorf("failed to create base directory: %w", err)
 	}
 	abs, err := filepath.Abs(baseDir)
@@ -50,11 +50,11 @@ func (s *LocalStorage) Upload(ctx context.Context, bucket, key string, r io.Read
 	}
 
 	// Create subdirectories inside the bucket if key contains slashes
-	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(destPath), 0750); err != nil {
 		return "", fmt.Errorf("failed to create key subdirectories: %w", err)
 	}
 
-	file, err := os.Create(destPath)
+	file, err := os.Create(destPath) // #nosec G304 -- destPath is validated by safePath (no traversal outside BaseDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to create file: %w", err)
 	}
@@ -73,7 +73,7 @@ func (s *LocalStorage) Download(ctx context.Context, bucket, key string) (io.Rea
 	if err != nil {
 		return nil, err
 	}
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304 -- filePath is validated by safePath (no traversal outside BaseDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}

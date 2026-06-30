@@ -810,6 +810,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	} else {
+		// #nosec G120 -- bounded to 32MB in-memory; total request body is capped by the limitBody middleware
 		err := r.ParseMultipartForm(32 << 20)
 		if err != nil {
 			badRequest(w, err)

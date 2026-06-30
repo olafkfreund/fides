@@ -81,7 +81,7 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 		return "", fmt.Errorf("stdio MCP command %q is not in the allowlist (set FIDES_MCP_ALLOWED_COMMANDS)", command)
 	}
 
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, args...) // #nosec G204 -- command is validated against FIDES_MCP_ALLOWED_COMMANDS above
 
 	// Pass env variables
 	if len(env) > 0 {

@@ -519,14 +519,16 @@ func setAuthHeaders(req *http.Request) {
 	}
 }
 
+// makeGetRequest calls the operator-configured Fides server (FIDES_SERVER_URL).
+// The URL is not user/attacker input, so the SSRF (G704) findings are suppressed.
 func makeGetRequest(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- url is the configured Fides server, not user input
 	if err != nil {
 		return nil, err
 	}
 	setAuthHeaders(req)
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- url is the configured Fides server, not user input
 	if err != nil {
 		return nil, err
 	}
@@ -549,14 +551,14 @@ func makePostRequest(url string, payload interface{}) ([]byte, error) {
 		return nil, err
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes)) // #nosec G704 -- url is the configured Fides server, not user input
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	setAuthHeaders(req)
 
-	resp, err := httpClient.Do(req)
+	resp, err := httpClient.Do(req) // #nosec G704 -- url is the configured Fides server, not user input
 	if err != nil {
 		return nil, err
 	}
