@@ -12,6 +12,7 @@ import (
 
 	"fides/pkg/ai"
 	"fides/pkg/api"
+	fidesdb "fides/pkg/db"
 	"fides/pkg/events"
 	"fides/pkg/gitstatus"
 	"fides/pkg/servicenow"
@@ -43,6 +44,15 @@ func main() {
 
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to establish database connection ping: %v", err)
+	}
+
+	// Apply schema migrations on startup (idempotent) unless disabled. Keeps the
+	// live DB in sync with the code's expected schema.
+	if os.Getenv("FIDES_AUTO_MIGRATE") != "false" {
+		if err := fidesdb.Migrate(context.Background(), db); err != nil {
+			log.Fatalf("Failed to apply database migrations: %v", err)
+		}
+		log.Printf("Database migrations applied")
 	}
 
 	var store storage.StorageBackend
