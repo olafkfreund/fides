@@ -137,6 +137,16 @@ spec:
   selector:
     app: fides-ollama
 ---
+# IRSA service account: grants the fides-server pods read access to fides/*
+# secrets in AWS Secrets Manager (role trusts the cluster OIDC provider).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fides-server
+  namespace: fides
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::796973489124:role/fides-secrets-reader
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -152,6 +162,7 @@ spec:
       labels:
         app: fides-server
     spec:
+      serviceAccountName: fides-server
       containers:
       - name: app
         image: 796973489124.dkr.ecr.eu-west-2.amazonaws.com/fides-server:latest
@@ -217,6 +228,11 @@ spec:
           value: fides-evidence-synechron
         - name: AWS_REGION
           value: eu-west-2
+        # Resolve per-tenant integration secret_path references from AWS Secrets
+        # Manager (via IRSA on the fides-server service account). The core secrets
+        # above stay as K8s secretKeyRef.
+        - name: SECRETS_PROVIDER
+          value: aws
         - name: FIDES_MCP_ALLOWED_COMMANDS
           value: "echo,/bin/echo,/usr/bin/echo"
 ---
