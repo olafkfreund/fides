@@ -118,6 +118,11 @@ services:
       # CI/CD gates). Defaults off; sinks are registered by integration features.
       - FIDES_EVENTS_ENABLED=${FIDES_EVENTS_ENABLED:-false}
 
+      # Kubernetes admission webhook gate (POST /api/v1/admission/validate).
+      # MODE: "enforce" denies shadow/non-compliant images; default "audit" warns.
+      - FIDES_ADMISSION_ORG_ID=${FIDES_ADMISSION_ORG_ID:-}
+      - FIDES_ADMISSION_MODE=${FIDES_ADMISSION_MODE:-audit}
+
       # AI Verification Gate Configuration
       - AI_PROVIDER=ollama
       - AI_OLLAMA_ENDPOINT=http://ollama:11434
