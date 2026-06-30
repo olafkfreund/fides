@@ -165,6 +165,23 @@ func handleWebhook(config CLIConfig, args []string) {
 	}, "Webhook configuration saved")
 }
 
+// fides verify-chain --trail <id>
+func handleVerifyChain(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("verify-chain", flag.ExitOnError)
+	trailID := cmd.String("trail", "", "trail UUID")
+	cmd.Parse(args)
+	if *trailID == "" {
+		fmt.Println("Usage: fides verify-chain --trail <trail_id>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/trails/"+*trailID+"/verify-chain")
+	fail(err, "verify chain")
+	fmt.Println(body)
+	if strings.Contains(body, "\"valid\":false") {
+		os.Exit(2) // non-zero so CI fails on a broken chain
+	}
+}
+
 // fides user set-password
 func handleUser(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "set-password" {

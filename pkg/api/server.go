@@ -73,6 +73,7 @@ func (s *Server) Routes() http.Handler {
 
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
+	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
 
 	// Artifact API
 	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
@@ -916,9 +917,14 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		CreatedAt:           time.Now(),
 	}
 
-	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, created_at)
-	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, attestation.CreatedAt)
+	contentHash, prevHash, err := s.attestationChain(r.Context(), attestation.TrailID, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
+	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+	_, err = s.q(r.Context()).ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, contentHash, prevHash, attestation.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -2834,11 +2840,16 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	rulesOK, failed, _ := s.PolicyEngine.EvaluateAttestation(string(payloadJSON), []string(rules))
 	compliant := found && rulesOK
 
-	// Record the attestation on the trail.
+	// Record the attestation on the trail (with tamper-evidence chain).
+	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	_, err = s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, now())`,
-		uuid.New(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant)
+		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
+		uuid.New(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant, contentHash, prevHash)
 	if err != nil {
 		internalError(w, err)
 		return

@@ -124,7 +124,11 @@ CREATE TABLE IF NOT EXISTS attestations (
     signature TEXT, -- Cryptographic signature (RSA/ECDSA) of payload + attachments
     signature_algorithm VARCHAR(50),
     manifestation_reason TEXT, -- Statement of signature intent
-    
+
+    -- Append-only tamper-evidence chain (per trail); see pkg/ledger.
+    content_hash VARCHAR(64), -- sha256 of this attestation's content + prev_hash
+    prev_hash VARCHAR(64),    -- content_hash of the previous attestation in the trail
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -231,6 +235,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash VARCHAR(255), -- scrypt hash for local login; NULL for SSO-only users
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+-- NOTE: keep pkg/db/migrations/0001_init.sql byte-identical to this file
+-- (enforced by TestEmbeddedSchemaMatchesRoot); add new columns via a NNNN_*.sql.
 
 -- 18. SSO Group Mappings
 CREATE TABLE IF NOT EXISTS sso_group_mappings (
