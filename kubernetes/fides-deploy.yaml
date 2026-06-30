@@ -40,7 +40,10 @@ spec:
         - name: POSTGRES_USER
           value: fides_user
         - name: POSTGRES_PASSWORD
-          value: fides_password_secure
+          valueFrom:
+            secretKeyRef:
+              name: fides-secrets
+              key: postgres-password
         ports:
         - containerPort: 5432
         volumeMounts:
@@ -140,23 +143,53 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
         env:
         - name: PORT
           value: "8080"
         - name: DB_DRIVER
           value: postgres
+        # Sensitive values come from the externally-managed `fides-secrets` Secret
+        # (see kubernetes/fides-secrets.example.yaml). Never commit real values here.
         - name: DB_DSN
-          value: host=fides-db port=5432 user=fides_user password=fides_password_secure dbname=fides sslmode=disable
+          valueFrom:
+            secretKeyRef:
+              name: fides-secrets
+              key: db-dsn
         - name: FIDES_ENCRYPTION_KEY
-          value: passphrase-secret-passphrase-secret
+          valueFrom:
+            secretKeyRef:
+              name: fides-secrets
+              key: encryption-key
         - name: FIDES_API_TOKEN
-          value: passphrase-secret-passphrase-secret-api-token
+          valueFrom:
+            secretKeyRef:
+              name: fides-secrets
+              key: api-token
         - name: FIDES_API_ORG_ID
           value: 5d57b8c7-4328-4e1b-93df-4161b9a918a3
         - name: PORTAL_USERNAME
           value: admin
         - name: PORTAL_PASSWORD
-          value: admin12345
+          valueFrom:
+            secretKeyRef:
+              name: fides-secrets
+              key: portal-password
         - name: AI_PROVIDER
           value: ollama
         - name: AI_OLLAMA_ENDPOINT

@@ -33,6 +33,18 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Guard against shipping a corrupted frontend build: every committed
+      # Next.js chunk must parse as valid JavaScript. A broken chunk crashes the
+      # whole portal (blank page) even though the server stays healthy.
+      - name: Validate web build (JS chunks parse)
+        run: |
+          shopt -s nullglob
+          fail=0
+          for f in web/_next/static/chunks/*.js web/_next/static/chunks/**/*.js; do
+            node --check "$f" || { echo "BROKEN CHUNK: $f"; fail=1; }
+          done
+          exit $fail
+
       - name: Run Tests
         run: go test -race -v ./...
 
@@ -107,14 +119,26 @@ jobs:
         env:
           ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
           ECR_REPOSITORY: fides-server
-          IMAGE_TAG: latest
         run: |
-          docker build -f Dockerfile.server -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # Tag by commit SHA (immutable, reproducible) and also move :latest.
+          docker build -f Dockerfile.server \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
       - name: Update kubeconfig
         run: aws eks update-kubeconfig --name sarc-aws --region eu-west-2
 
       - name: Deploy to Kubernetes
+        env:
+          ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
+          ECR_REPOSITORY: fides-server
         run: |
           kubectl apply -f kubernetes/fides-deploy.yaml
+          # Pin the Deployment to the exact image built here and wait for the
+          # rollout, so a new build always rolls out (a plain apply of an
+          # unchanged :latest manifest would not restart the pods).
+          kubectl -n fides set image deployment/fides-server \
+            app=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          kubectl -n fides rollout status deployment/fides-server --timeout=240s
