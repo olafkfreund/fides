@@ -94,7 +94,7 @@ jobs:
       - name: RLS + events integration + E2E tests
         env:
           FIDES_TEST_DB_DSN: host=127.0.0.1 port=5432 user=postgres password=test dbname=fides sslmode=disable
-        run: go test -p 1 ./pkg/db/ ./pkg/api/ ./pkg/events/ -run 'Integration|EndToEnd' -v
+        run: go test -p 1 ./pkg/db/ ./pkg/api/ ./pkg/events/ ./pkg/servicenow/ -run 'Integration|EndToEnd' -v
 
   deploy:
     runs-on: ubuntu-latest
