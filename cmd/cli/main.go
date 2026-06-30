@@ -69,6 +69,8 @@ func main() {
 		handleUser(config, os.Args[2:])
 	case "verify-chain":
 		handleVerifyChain(config, os.Args[2:])
+	case "service-account":
+		handleServiceAccount(config, os.Args[2:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -94,6 +96,7 @@ func printUsage() {
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
 	fmt.Println("  user             Manage users (set-password)")
 	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
+	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
