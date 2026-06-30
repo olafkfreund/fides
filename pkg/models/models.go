@@ -198,13 +198,14 @@ type TenantLLMSettings struct {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id" db:"id"`
-	OrgID     uuid.UUID `json:"org_id" db:"org_id"`
-	Name      string    `json:"name" db:"name"`
-	Email     string    `json:"email" db:"email"`
-	Role      string    `json:"role" db:"role"`
-	Groups    []string  `json:"groups" db:"groups"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID           uuid.UUID `json:"id" db:"id"`
+	OrgID        uuid.UUID `json:"org_id" db:"org_id"`
+	Name         string    `json:"name" db:"name"`
+	Email        string    `json:"email" db:"email"`
+	Role         string    `json:"role" db:"role"`
+	Groups       []string  `json:"groups" db:"groups"`
+	PasswordHash string    `json:"-" db:"password_hash"` // never serialized to clients
+	CreatedAt    time.Time `json:"created_at" db:"created_at"`
 }
 
 type SSOGroupMapping struct {
