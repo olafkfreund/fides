@@ -326,6 +326,7 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
     host VARCHAR(255) NOT NULL,       -- github.com, gitlab.example.com (matched to the trail remote)
     api_base VARCHAR(512) NOT NULL,   -- https://api.github.com, https://gitlab.com/api/v4
     token_path VARCHAR(255) NOT NULL, -- API token secret reference (env/vault)
+    inbound_secret_path VARCHAR(255), -- inbound webhook HMAC secret/token reference
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
