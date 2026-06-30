@@ -3,6 +3,19 @@ kind: Namespace
 metadata:
   name: fides
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fides-ollama-pvc
+  namespace: fides
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 15Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,13 +85,18 @@ spec:
           - |
             ollama serve &
             echo "Waiting for Ollama to start..."
-            until curl -s http://localhost:11434/api/tags >/dev/null; do
+            until ollama list >/dev/null 2>&1; do
               sleep 1
             done
-            echo "Ollama started. Pulling gemma2:2b model..."
-            ollama pull gemma2:2b
+            echo "Ollama started. Pulling gemma4:e2b model..."
+            ollama pull gemma4:e2b
             echo "Model pulled successfully."
             wait
+        env:
+        - name: OLLAMA_CUDA_VISIBLE_DEVICES
+          value: ""
+        - name: OLLAMA_CPU_ONLY
+          value: "1"
         ports:
         - containerPort: 11434
         volumeMounts:
@@ -86,7 +104,8 @@ spec:
           mountPath: /root/.ollama
       volumes:
       - name: ollama-data
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: fides-ollama-pvc
 ---
 apiVersion: v1
 kind: Service
@@ -143,7 +162,7 @@ spec:
         - name: AI_OLLAMA_ENDPOINT
           value: http://fides-ollama:11434
         - name: AI_MODEL
-          value: gemma2:2b
+          value: gemma4:e2b
 ---
 apiVersion: v1
 kind: Service
