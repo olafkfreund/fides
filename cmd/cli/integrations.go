@@ -239,6 +239,16 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	}
 }
 
+// fides metrics [--days N]
+func handleMetrics(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)
+	days := cmd.Int("days", 30, "window in days")
+	cmd.Parse(args)
+	body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/dora?days=%d", *days))
+	fail(err, "fetch metrics")
+	fmt.Println(body)
+}
+
 // fides logical-env create|list|add-member|state
 func handleLogicalEnv(config CLIConfig, args []string) {
 	if len(args) < 1 {
