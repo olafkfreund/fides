@@ -2,22 +2,28 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"fides/pkg/ai"
+	"fides/pkg/auth"
 	"fides/pkg/crypto"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
 	"fides/pkg/storage"
 	"fides/pkg/telemetry"
+	"fides/pkg/vault"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -28,6 +34,10 @@ type Server struct {
 	Storage      storage.StorageBackend
 	PolicyEngine *policy.PolicyEngine
 	LLM          ai.LLMClient
+	Secrets      vault.SecretsProvider
+	States       *auth.StateStore
+	Sessions     *auth.SessionStore
+	httpClient   *http.Client
 }
 
 func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Server {
@@ -37,6 +47,10 @@ func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Serv
 		Storage:      store,
 		PolicyEngine: policy.NewPolicyEngine(),
 		LLM:          llm,
+		Secrets:      vault.NewEnvSecretsProvider(),
+		States:       auth.NewStateStore(),
+		Sessions:     auth.NewSessionStore(),
+		httpClient:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -125,7 +139,139 @@ func (s *Server) Routes() http.Handler {
 	fs := http.FileServer(http.Dir("./web"))
 	mux.Handle("GET /", fs)
 
-	return telemetry.Middleware(mux)
+	return securityHeaders(limitBody(s.authMiddleware(telemetry.Middleware(mux))))
+}
+
+// maxRequestBody caps request body size to mitigate memory-exhaustion DoS.
+// It is generous enough to accommodate multipart evidence uploads.
+const maxRequestBody = 64 << 20 // 64 MiB
+
+// limitBody wraps every request body in http.MaxBytesReader.
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isPublicPath reports whether a request path is reachable without authentication.
+// Everything else under /api/v1 requires a valid bearer token.
+func isPublicPath(path string) bool {
+	publicExact := map[string]bool{
+		"/healthz":              true,
+		"/metrics":              true,
+		"/api/v1/auth/login":    true,
+		"/api/v1/auth/callback": true,
+		"/api/v1/swagger.json":  true,
+		"/swagger":              true,
+		"/llms.txt":             true,
+		"/llms-full.txt":        true,
+	}
+	if publicExact[path] {
+		return true
+	}
+	// The static web portal and its assets are public; the API surface is not.
+	return !strings.HasPrefix(path, "/api/v1/")
+}
+
+const sessionCookieName = "fides_session"
+
+// authMiddleware authenticates the API surface and attaches a Principal to the
+// request context. Two credential types are accepted:
+//   - an interactive SSO session cookie (set by the OAuth callback), or
+//   - the static service bearer token FIDES_API_TOKEN (used by the CLI/MCP),
+//     whose tenant scope is fixed by FIDES_API_ORG_ID.
+//
+// The Principal's OrgID is the ONLY source of tenant scoping downstream; handlers
+// must never trust an org_id from the request body or query (see H2 / IDOR).
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// 1. Interactive session cookie.
+		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+			if p, ok := s.Sessions.Get(c.Value, time.Now()); ok {
+				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), &p)))
+				return
+			}
+		}
+
+		// 2. Static service bearer token.
+		expected := os.Getenv("FIDES_API_TOKEN")
+		if expected == "" {
+			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
+			return
+		}
+
+		const prefix = "Bearer "
+		authz := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authz, prefix) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+
+		presented := strings.TrimPrefix(authz, prefix)
+		// Constant-time comparison to avoid token-timing leaks.
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+			return
+		}
+
+		// The service token must be bound to a tenant via FIDES_API_ORG_ID.
+		orgID, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
+		if err != nil {
+			http.Error(w, "service token tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "service"}
+		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+	})
+}
+
+// principalOrg returns the authenticated tenant for the request. Handlers use
+// this as the sole source of org scoping. The bool is false only if the request
+// somehow bypassed authMiddleware (defensive).
+func principalOrg(r *http.Request) (uuid.UUID, bool) {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		return uuid.UUID{}, false
+	}
+	return p.OrgID, true
+}
+
+// securityHeaders adds baseline hardening headers to every response.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// internalError logs the underlying error server-side and returns a generic
+// message to the client, so DB/driver/internal details are not leaked (M3).
+func internalError(w http.ResponseWriter, err error) {
+	log.Printf("internal error: %v", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
+}
+
+// badRequest returns a generic 400 without echoing parse/validation detail.
+func badRequest(w http.ResponseWriter, err error) {
+	if err != nil {
+		log.Printf("bad request: %v", err)
+	}
+	http.Error(w, "invalid request", http.StatusBadRequest)
 }
 
 // Helper JSONB conversion
@@ -155,7 +301,7 @@ type createOrgReq struct {
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	var req createOrgReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -169,7 +315,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO organizations (id, name, description, created_at) VALUES ($1, $2, $3, $4)`
 	_, err := s.DB.ExecContext(r.Context(), query, org.ID, org.Name, org.Description, org.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -182,7 +328,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, description, created_at FROM organizations ORDER BY name`
 	rows, err := s.DB.QueryContext(r.Context(), query)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -191,7 +337,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var o models.Organization
 		if err := rows.Scan(&o.ID, &o.Name, &o.Description, &o.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		list = append(list, &o)
@@ -211,15 +357,17 @@ type createFlowReq struct {
 func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	var req createFlowReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	flow := &models.Flow{
 		ID:          uuid.New(),
@@ -234,7 +382,7 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err = s.DB.ExecContext(r.Context(), query, flow.ID, flow.OrgID, flow.Name, flow.Description, marshalJSONB(flow.Tags), flow.CreatedAt, flow.UpdatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -253,7 +401,7 @@ type updateFlowReq struct {
 func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	var req updateFlowReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -266,7 +414,7 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
 	_, err = s.DB.ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database update error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -275,10 +423,15 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows ORDER BY name`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -288,7 +441,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		var f models.Flow
 		var tagsBytes []byte
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.Name, &f.Description, &tagsBytes, &f.CreatedAt, &f.UpdatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		f.Tags = unmarshalJSONB(tagsBytes)
@@ -312,7 +465,7 @@ type createTrailReq struct {
 func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	var req createTrailReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -337,7 +490,7 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err = s.DB.ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -358,15 +511,17 @@ type reportArtifactReq struct {
 func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	var req reportArtifactReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	var trailID *uuid.UUID
 	if req.TrailID != "" {
@@ -393,7 +548,7 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	          ON CONFLICT (sha256) DO UPDATE SET trail_id = EXCLUDED.trail_id`
 	_, err = s.DB.ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -403,14 +558,20 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	// Joining trail name for simple UI rendering
-	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '') 
+	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '')
 	          FROM artifacts a
 	          LEFT JOIN trails t ON a.trail_id = t.id
+	          WHERE a.org_id = $1
 	          ORDER BY a.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -418,8 +579,8 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	// Struct representation specifically decorated for UI rendering
 	type ArtifactView struct {
 		models.Artifact
-		TrailName  string `json:"trail_name"`
-		SBOMStatus string `json:"sbom_status"`
+		TrailName  string        `json:"trail_name"`
+		SBOMStatus string        `json:"sbom_status"`
 		SBOM       []interface{} `json:"sbom"`
 	}
 
@@ -428,11 +589,11 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		var av ArtifactView
 		var tagsBytes []byte
 		if err := rows.Scan(&av.SHA256, &av.OrgID, &av.TrailID, &av.Name, &av.Type, &tagsBytes, &av.CreatedAt, &av.TrailName); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
-		
+
 		// Fallback mock check to keep SBOM dynamic for testing
 		av.SBOMStatus = "Compliant"
 		av.SBOM = []interface{}{
@@ -458,15 +619,17 @@ type createAttestationTypeReq struct {
 func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Request) {
 	var req createAttestationTypeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	attType := &models.AttestationType{
 		ID:          uuid.New(),
@@ -481,7 +644,7 @@ func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Requ
 	query := `INSERT INTO attestation_types (id, org_id, name, description, schema, jq_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err = s.DB.ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -511,13 +674,13 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	if contentType == "application/json" || contentType == "" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			badRequest(w, err)
 			return
 		}
 	} else {
 		err := r.ParseMultipartForm(32 << 20)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			badRequest(w, err)
 			return
 		}
 
@@ -535,7 +698,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		for _, fHeaders := range files {
 			f, err := fHeaders.Open()
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			defer f.Close()
@@ -552,10 +715,14 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			http.Error(w, "server error: decryption key not configured on server", http.StatusInternalServerError)
 			return
 		}
-		key := crypto.DeriveKey(encryptionKey)
+		key, err := crypto.DeriveKey(encryptionKey)
+		if err != nil {
+			http.Error(w, "server error: invalid decryption key configured", http.StatusInternalServerError)
+			return
+		}
 		decrypted, err := crypto.Decrypt(req.Payload, key)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("decryption failure: %v", err), http.StatusBadRequest)
+			http.Error(w, "decryption failure: payload could not be decrypted", http.StatusBadRequest)
 			return
 		}
 		req.Payload = string(decrypted)
@@ -577,7 +744,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 LIMIT 1`
 	err = s.DB.QueryRowContext(r.Context(), queryType, req.TypeName).Scan(pq.Array(&rules))
 	if err != nil && err != sql.ErrNoRows {
-		http.Error(w, fmt.Sprintf("database read error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -586,7 +753,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	if len(rules) > 0 {
 		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(req.Payload, rules)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("policy evaluation error: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		if !ok {
@@ -614,16 +781,19 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	_, err = s.DB.ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, attestation.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	// Upload attachments to Object Store and save mapping
 	for i, reader := range fileReaders {
-		key := fmt.Sprintf("%s/%s", attestation.ID, fileNames[i])
+		// Use only the base name of the client-supplied filename to prevent
+		// path traversal (e.g. "../../etc/passwd") in the storage key.
+		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
+		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
 		path, err := s.Storage.Upload(r.Context(), "fides-evidence", key, reader, "application/octet-stream")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to upload attachment: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -646,7 +816,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 				log.Printf("LLM Audit error: %v", err)
 				return
 			}
-			
+
 			// Save LLM assessment findings
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
@@ -672,16 +842,16 @@ type reportSnapshotReq struct {
 }
 
 type snapshotReportResponse struct {
-	SnapshotID uuid.UUID        `json:"snapshot_id"`
-	Compliant  bool             `json:"compliant"`
-	Drifts     []string         `json:"drifts"`
-	Shadows    []string         `json:"shadow_changes"`
+	SnapshotID uuid.UUID `json:"snapshot_id"`
+	Compliant  bool      `json:"compliant"`
+	Drifts     []string  `json:"drifts"`
+	Shadows    []string  `json:"shadow_changes"`
 }
 
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req reportSnapshotReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -693,7 +863,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -702,7 +872,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	querySnap := `INSERT INTO environment_snapshots (id, environment_id, created_at) VALUES ($1, $2, $3)`
 	_, err = tx.ExecContext(r.Context(), querySnap, snapshotID, envID, time.Now())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -715,12 +885,12 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		var dbSHA, dbTrailID string
 		queryArt := `SELECT sha256, trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`
 		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256).Scan(&dbSHA, &dbTrailID)
-		
+
 		if err == sql.ErrNoRows {
 			// Shadow deployment: digest is running but not registered in database
 			shadows = append(shadows, fmt.Sprintf("service %s running unregistered digest %s", a.ServiceName, a.SHA256))
 			isCompliant = false
-			
+
 			// Insert runtime record anyway
 			saID := uuid.New()
 			querySA := `INSERT INTO snapshot_artifacts (id, snapshot_id, artifact_sha256, service_name, runtime_digest, started_at)
@@ -728,7 +898,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			tx.ExecContext(r.Context(), querySA, saID, snapshotID, a.ServiceName, a.SHA256, time.Now())
 			continue
 		} else if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -738,7 +908,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		            VALUES ($1, $2, $3, $4, $5, $6)`
 		_, err = tx.ExecContext(r.Context(), querySA, saID, snapshotID, dbSHA, a.ServiceName, a.SHA256, time.Now())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -746,7 +916,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		queryAtt := `SELECT name, is_compliant FROM attestations WHERE trail_id = $1`
 		rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		defer rows.Close()
@@ -755,7 +925,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			var attName string
 			var compliant bool
 			if err := rows.Scan(&attName, &compliant); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			if !compliant {
@@ -766,7 +936,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -795,7 +965,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -806,7 +976,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 		queryAtt := `SELECT name, type_name, is_compliant FROM attestations WHERE trail_id = $1`
 		rows, err := s.DB.QueryContext(r.Context(), queryAtt, trailID.String)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		defer rows.Close()
@@ -815,7 +985,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 			var attName, typeName string
 			var compliant bool
 			if err := rows.Scan(&attName, &typeName, &compliant); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			if !compliant {
@@ -827,18 +997,23 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sha256":      sha,
-		"name":        name,
-		"compliant":   isCompliant,
-		"violations":  reasons,
+		"sha256":     sha,
+		"name":       name,
+		"compliant":  isCompliant,
+		"violations": reasons,
 	})
 }
 
 func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
-	queryEnv := `SELECT id, name, type, description FROM environments`
-	rows, err := s.DB.QueryContext(r.Context(), queryEnv)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	queryEnv := `SELECT id, name, type, description FROM environments WHERE org_id = $1`
+	rows, err := s.DB.QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -852,21 +1027,21 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	}
 
 	type EnvironmentView struct {
-		ID            string             `json:"id"`
-		Name          string             `json:"name"`
-		Type          string             `json:"type"`
-		Description   string             `json:"description"`
-		LastSnapshot  string             `json:"lastSnapshot"`
-		Running       []RuntimeArtifact  `json:"running"`
-		Drifts        []string           `json:"drifts"`
-		ShadowChanges []string           `json:"shadowChanges"`
+		ID            string            `json:"id"`
+		Name          string            `json:"name"`
+		Type          string            `json:"type"`
+		Description   string            `json:"description"`
+		LastSnapshot  string            `json:"lastSnapshot"`
+		Running       []RuntimeArtifact `json:"running"`
+		Drifts        []string          `json:"drifts"`
+		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
 	var list []*EnvironmentView
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		ev.LastSnapshot = "No snapshot reported yet"
@@ -879,10 +1054,10 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		var snapTime time.Time
 		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
 		err = s.DB.QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
-		
+
 		if err == nil {
 			ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-			
+
 			// Query running artifacts in snapshot
 			querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
 			            FROM snapshot_artifacts sa
@@ -895,7 +1070,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 					var ra RuntimeArtifact
 					if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
 						ev.Running = append(ev.Running, ra)
-						
+
 						if !ra.Registered {
 							ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
 						} else {
@@ -922,10 +1097,15 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, name, description, rules FROM policies`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query := `SELECT id, name, description, rules FROM policies WHERE org_id = $1`
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -942,7 +1122,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		var p PolicyView
 		var rulesBytes []byte
 		if err := rows.Scan(&p.ID, &p.Name, &p.Target, &rulesBytes); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		p.YAML = string(rulesBytes)
@@ -959,9 +1139,14 @@ type savePolicyReq struct {
 }
 
 func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req savePolicyReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 	policyID, err := uuid.Parse(req.ID)
@@ -969,24 +1154,37 @@ func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid policy id", http.StatusBadRequest)
 		return
 	}
-	_, err = s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2", req.YAML, policyID)
+	// Scope the update to the caller's tenant so one org cannot modify another's policy.
+	res, err := s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to save policy: %v", err), http.StatusInternalServerError)
+		http.Error(w, "failed to save policy", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "policy not found", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
 }
 
-
 func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Scope to the caller's tenant via attestation -> trail -> flow -> org.
 	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
 	          FROM llm_assessments la
 	          JOIN attestations att ON la.attestation_id = att.id
+	          JOIN trails tr ON att.trail_id = tr.id
+	          JOIN flows f ON tr.flow_id = f.id
+	          WHERE f.org_id = $1
 	          ORDER BY la.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1005,7 +1203,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var av AssessmentView
 		if err := rows.Scan(&av.ID, &av.AttestationName, &av.ModelProvider, &av.ModelName, &av.AssessmentRaw, &av.ComplianceScore, &av.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		list = append(list, &av)
@@ -1024,15 +1222,13 @@ type tenantSettingsResp struct {
 }
 
 func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	orgIDStr := orgID.String()
+	var err error
 
 	var authConfig models.TenantAuthConfig
 	var storageConfig models.TenantStorageSettings
@@ -1052,7 +1248,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		authConfig.ProviderName = "github"
 		authConfig.Enabled = false
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (auth): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1068,7 +1264,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		storageConfig.OrgID = orgID
 		storageConfig.StorageDriver = "local"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (storage): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1083,7 +1279,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		vaultConfig.OrgID = orgID
 		vaultConfig.VaultProvider = "env"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (vault): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1099,7 +1295,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		llmConfig.ProviderName = "ollama"
 		llmConfig.ModelName = "llama3:8b"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (llm): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1121,23 +1317,24 @@ type saveTenantSettingsReq struct {
 	LLM     *models.TenantLLMSettings     `json:"llm"`
 }
 
-
 func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request) {
 	var req saveTenantSettingsReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -1160,7 +1357,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.Auth.AuthURL, req.Auth.TokenURL, req.Auth.UserInfoURL, req.Auth.RedirectURI, req.Auth.Enabled,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save auth settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1187,7 +1384,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.Storage.GCSBucket, req.Storage.GCSCredentialsPath, req.Storage.AzureContainer, req.Storage.AzureConnectionStringPath,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save storage settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1206,7 +1403,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			orgID, req.Vault.VaultProvider, req.Vault.VaultAddress, req.Vault.VaultTokenPath, req.Vault.VaultRole,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save vault settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1228,13 +1425,13 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.LLM.APIKeyPath, req.LLM.AWSRegion, req.LLM.AzureDeployment,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save llm settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1242,60 +1439,186 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(`{"status":"success"}`))
 }
 
+// providerDefaults returns the well-known OAuth endpoints and scope for a
+// provider, used when the tenant config leaves them blank.
+func providerDefaults(provider string) (authURL, tokenURL, userInfoURL, scope string) {
+	switch provider {
+	case "github":
+		return "https://github.com/login/oauth/authorize",
+			"https://github.com/login/oauth/access_token",
+			"https://api.github.com/user",
+			"read:user user:email"
+	case "gitlab":
+		return "https://gitlab.com/oauth/authorize",
+			"https://gitlab.com/oauth/token",
+			"https://gitlab.com/api/v4/user",
+			"read_user"
+	case "google":
+		return "https://accounts.google.com/o/oauth2/v2/auth",
+			"https://oauth2.googleapis.com/token",
+			"https://openidconnect.googleapis.com/v1/userinfo",
+			"openid email profile"
+	case "okta":
+		return "https://okta.com/oauth2/v1/authorize",
+			"https://okta.com/oauth2/v1/token",
+			"https://okta.com/oauth2/v1/userinfo",
+			"openid email profile groups"
+	default:
+		return "", "", "", "openid email"
+	}
+}
+
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
 		provider = "github"
 	}
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
+	// org_id selects which tenant's SSO configuration to use. This is the only
+	// place an org_id is accepted from the client, and it is bound into a signed,
+	// single-use state nonce — the resulting session's org comes from that state.
+	orgID, err := uuid.Parse(r.URL.Query().Get("org_id"))
 	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+		http.Error(w, "valid org_id query parameter is required", http.StatusBadRequest)
 		return
 	}
 
 	var authConfig models.TenantAuthConfig
 	queryAuth := `SELECT client_id, COALESCE(auth_url, ''), redirect_uri, enabled FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
 	err = s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&authConfig.ClientID, &authConfig.AuthURL, &authConfig.RedirectURI, &authConfig.Enabled)
-
 	if err != nil {
-		redirectURL := fmt.Sprintf("/api/v1/auth/callback?code=mock_code&state=%s&provider=%s", orgIDStr, provider)
-		http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+		http.Error(w, "no SSO provider is configured for this organization", http.StatusBadRequest)
 		return
 	}
-
 	if !authConfig.Enabled {
 		http.Error(w, "auth provider disabled for tenant", http.StatusForbidden)
 		return
 	}
 
 	authURL := authConfig.AuthURL
+	defAuth, _, _, scope := providerDefaults(provider)
 	if authURL == "" {
-		switch provider {
-		case "github":
-			authURL = "https://github.com/login/oauth/authorize"
-		case "gitlab":
-			authURL = "https://gitlab.com/oauth/authorize"
-		case "google":
-			authURL = "https://accounts.google.com/o/oauth2/v2/auth"
-		case "okta":
-			authURL = "https://okta.com/oauth2/v1/authorize"
-		}
+		authURL = defAuth
+	}
+	if authURL == "" {
+		http.Error(w, "unknown auth provider", http.StatusBadRequest)
+		return
 	}
 
-	targetURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&state=%s", authURL, authConfig.ClientID, authConfig.RedirectURI, orgIDStr)
-	http.Redirect(w, r, targetURL, http.StatusTemporaryRedirect)
+	state, err := s.States.New(orgID, provider, 10*time.Minute, time.Now())
+	if err != nil {
+		http.Error(w, "failed to initialize login", http.StatusInternalServerError)
+		return
+	}
+
+	q := neturl.Values{}
+	q.Set("client_id", authConfig.ClientID)
+	q.Set("redirect_uri", authConfig.RedirectURI)
+	q.Set("response_type", "code")
+	q.Set("scope", scope)
+	q.Set("state", state)
+	http.Redirect(w, r, authURL+"?"+q.Encode(), http.StatusTemporaryRedirect)
 }
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-	provider := r.URL.Query().Get("provider")
-	log.Printf("Authentication callback code: %s for org: %s, provider: %s", code, state, provider)
-	http.Redirect(w, r, fmt.Sprintf("/?login=success&org_id=%s&provider=%s", state, provider), http.StatusTemporaryRedirect)
+	stateParam := r.URL.Query().Get("state")
+	if code == "" || stateParam == "" {
+		http.Error(w, "missing code or state", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Validate the single-use state nonce (CSRF / replay defense). The tenant
+	// and provider come from the server-side state, never from the client.
+	stateData, ok := s.States.Consume(stateParam, time.Now())
+	if !ok {
+		http.Error(w, "invalid or expired login state", http.StatusBadRequest)
+		return
+	}
+	orgID := stateData.OrgID
+	provider := stateData.Provider
+
+	// 2. Load the tenant's provider configuration and resolve the client secret.
+	var clientID, secretPath, tokenURL, userInfoURL, redirectURI string
+	var enabled bool
+	queryAuth := `SELECT client_id, client_secret_path, COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled
+	              FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
+	if err := s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&clientID, &secretPath, &tokenURL, &userInfoURL, &redirectURI, &enabled); err != nil || !enabled {
+		http.Error(w, "SSO provider not available", http.StatusBadRequest)
+		return
+	}
+
+	_, defToken, defUserInfo, _ := providerDefaults(provider)
+	if tokenURL == "" {
+		tokenURL = defToken
+	}
+	if userInfoURL == "" {
+		userInfoURL = defUserInfo
+	}
+
+	clientSecret, err := s.Secrets.GetSecret(r.Context(), "", secretPath)
+	if err != nil {
+		log.Printf("auth callback: client secret unavailable for org %s provider %s", orgID, provider)
+		http.Error(w, "server auth configuration error", http.StatusInternalServerError)
+		return
+	}
+
+	// 3. Exchange the code for a token and fetch the user's identity.
+	accessToken, err := auth.ExchangeCode(r.Context(), s.httpClient, auth.OAuthConfig{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		TokenURL:     tokenURL,
+		RedirectURI:  redirectURI,
+	}, code)
+	if err != nil {
+		log.Printf("auth callback: token exchange failed: %v", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	userInfo, err := auth.FetchUserInfo(r.Context(), s.httpClient, userInfoURL, accessToken)
+	if err != nil || userInfo.Email == "" {
+		log.Printf("auth callback: userinfo lookup failed: %v", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// 4. Resolve the principal's role within the tenant.
+	principal := auth.Principal{OrgID: orgID, Email: userInfo.Email, Role: auth.RoleViewer, Kind: "session"}
+	var userID uuid.UUID
+	var role string
+	if err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, userInfo.Email,
+	).Scan(&userID, &role); err == nil {
+		principal.UserID = userID
+		principal.Role = role
+	} else if len(userInfo.Groups) > 0 {
+		// Fall back to an SSO group → role mapping.
+		var mappedRole string
+		if err := s.DB.QueryRowContext(r.Context(),
+			`SELECT role FROM sso_group_mappings WHERE org_id = $1 AND external_group = ANY($2) LIMIT 1`,
+			orgID, pq.Array(userInfo.Groups),
+		).Scan(&mappedRole); err == nil {
+			principal.Role = mappedRole
+		}
+	}
+
+	// 5. Establish the session and set a hardened cookie.
+	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
+	if err != nil {
+		http.Error(w, "failed to establish session", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((12 * time.Hour).Seconds()),
+	})
+
+	http.Redirect(w, r, "/?login=success", http.StatusTemporaryRedirect)
 }
 
 type generatePolicyReq struct {
@@ -1311,7 +1634,7 @@ func (s *Server) handleAIGeneratePolicy(w http.ResponseWriter, r *http.Request) 
 
 	var req generatePolicyReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1385,13 +1708,17 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 
 	var req aiChatReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
 	ctx := r.Context()
 	userMsg := req.Message
-	orgID := uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var answer string
 	var executionOutput string
@@ -1466,19 +1793,15 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1488,7 +1811,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		var u models.User
 		var grps pq.StringArray
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &grps, &u.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		u.OrgID = orgID
@@ -1503,13 +1826,16 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 	var u models.User
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	if u.OrgID == uuid.Nil {
-		u.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
+	u.OrgID = orgID
 
 	query := `INSERT INTO users (org_id, name, email, role, groups) 
 	          VALUES ($1, $2, $3, $4, $5) 
@@ -1519,7 +1845,7 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 	              groups = EXCLUDED.groups`
 	_, err := s.DB.ExecContext(r.Context(), query, u.OrgID, u.Name, u.Email, u.Role, pq.StringArray(u.Groups))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1528,19 +1854,15 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1549,7 +1871,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var gm models.SSOGroupMapping
 		if err := rows.Scan(&gm.ID, &gm.ExternalGroup, &gm.Role, &gm.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		gm.OrgID = orgID
@@ -1563,13 +1885,16 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) {
 	var gm models.SSOGroupMapping
 	if err := json.NewDecoder(r.Body).Decode(&gm); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
-	if gm.OrgID == uuid.Nil {
-		gm.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
+	gm.OrgID = orgID
 
 	query := `INSERT INTO sso_group_mappings (org_id, external_group, role) 
 	          VALUES ($1, $2, $3) 
@@ -1577,7 +1902,7 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 	              role = EXCLUDED.role`
 	_, err := s.DB.ExecContext(r.Context(), query, gm.OrgID, gm.ExternalGroup, gm.Role)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1601,7 +1926,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 	          FROM environment_mcp_servers WHERE environment_id = $1`
 	rows, err := s.DB.QueryContext(r.Context(), query, envID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1617,7 +1942,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 			&srv.CreatedAt, &srv.UpdatedAt,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		srv.Args = []string(args)
@@ -1632,7 +1957,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
 	var req models.EnvironmentMCPServer
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1665,7 +1990,7 @@ func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.R
 	).Scan(&req.ID, &req.CreatedAt, &req.UpdatedAt)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to save environment mcp server: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1683,7 +2008,7 @@ type queryMCPReq struct {
 func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
 	var req queryMCPReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1707,7 +2032,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	srv.Args = []string(args)
@@ -1721,7 +2046,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 	// Execute tool call on MCP server
 	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("MCP execution failed: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1740,7 +2065,7 @@ type verifyEnvReq struct {
 func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *http.Request) {
 	var req verifyEnvReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1764,7 +2089,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	srv.Args = []string(args)
@@ -1778,21 +2103,21 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	// Execute tool call on MCP server
 	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("MCP tool execution failed: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	// Evaluate rules deterministically using PolicyEngine
 	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to evaluate policy rules: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"compliant":     compliant,
-		"failed_rules":  failedRules,
-		"raw_response":  output,
+		"compliant":    compliant,
+		"failed_rules": failedRules,
+		"raw_response": output,
 	})
 }

@@ -6,6 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"fides/pkg/ai"
 	"fides/pkg/api"
@@ -22,7 +25,8 @@ func main() {
 
 	dbDSN := os.Getenv("DB_DSN")
 	if dbDSN == "" {
-		dbDSN = "host=localhost port=5433 user=fides_user password=fides_password_secure dbname=fides sslmode=disable"
+		log.Fatal("DB_DSN environment variable is required (e.g. \"host=... user=... password=... dbname=fides sslmode=verify-full\"). " +
+			"Refusing to start with an embedded credential/default.")
 	}
 
 	log.Printf("Connecting to database...")
@@ -79,18 +83,31 @@ func main() {
 	server := api.NewServer(db, store, llm)
 
 	srv := &http.Server{
-		Addr:    ":" + port,
-		Handler: server.Routes(),
+		Addr:              ":" + port,
+		Handler:           server.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MiB
 	}
 
-	log.Printf("Fides API Server running on port %s...", port)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("Server failed: %v", err)
-	}
-}
+	// Graceful shutdown on SIGINT/SIGTERM.
+	go func() {
+		log.Printf("Fides API Server running on port %s...", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
 
-func shutdown(ctx context.Context, srv *http.Server) {
-	if err := srv.Shutdown(ctx); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	<-ctx.Done()
+
+	log.Printf("Shutdown signal received, draining connections...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("HTTP shutdown error: %v", err)
 	}
 }

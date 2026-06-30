@@ -6,9 +6,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
+
+// allowedStdioCommands returns the set of executables permitted for stdio MCP
+// servers, read from FIDES_MCP_ALLOWED_COMMANDS (comma-separated). If the var
+// is unset, stdio execution is denied entirely (fail closed). This prevents
+// arbitrary command execution from attacker-controlled database records.
+func allowedStdioCommands() map[string]bool {
+	allowed := map[string]bool{}
+	for _, c := range strings.Split(os.Getenv("FIDES_MCP_ALLOWED_COMMANDS"), ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			allowed[c] = true
+		}
+	}
+	return allowed
+}
 
 // MCP Client structs
 type JsonRpcRequest struct {
@@ -58,6 +74,13 @@ type ToolCallResult struct {
 
 // CallToolStdio launches a stdio-based MCP server, calls a tool, and returns the result string
 func CallToolStdio(command string, args []string, env map[string]string, toolName string, arguments interface{}) (string, error) {
+	// Security: only execute explicitly allowlisted binaries. The command and
+	// args originate from database records that may be attacker-controlled, so
+	// an unrestricted exec here is a remote-code-execution sink.
+	if !allowedStdioCommands()[command] {
+		return "", fmt.Errorf("stdio MCP command %q is not in the allowlist (set FIDES_MCP_ALLOWED_COMMANDS)", command)
+	}
+
 	cmd := exec.Command(command, args...)
 
 	// Pass env variables
@@ -130,7 +153,9 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 		Method:  "notifications/initialized",
 	}
 	initializedBytes, _ := json.Marshal(initializedReq)
-	stdin.Write(append(initializedBytes, '\n'))
+	if _, err := stdin.Write(append(initializedBytes, '\n')); err != nil {
+		log.Printf("MCP client failed to write initialized notification: %v", err)
+	}
 
 	// Step 3: Send Call Tool Request (ID 2)
 	callParams := CallToolParams{

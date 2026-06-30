@@ -7,6 +7,23 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+
+	"golang.org/x/crypto/scrypt"
+)
+
+// kdfSalt is a fixed application salt used to stretch passphrase-based keys.
+// A fixed salt is required here because the key must be derived identically on
+// both the encrypting (CLI) and decrypting (server) sides from a shared secret
+// that is never transmitted alongside the ciphertext. For stronger guarantees,
+// operators should supply a full 32-byte key (base64-encoded) instead of a
+// passphrase, in which case it is used directly without stretching.
+var kdfSalt = []byte("fides-kdf-v1-static-salt-0001")
+
+// scrypt cost parameters (interactive use).
+const (
+	scryptN = 1 << 15 // CPU/memory cost
+	scryptR = 8
+	scryptP = 1
 )
 
 // Encrypt encrypts plainText using the provided key (must be 32 bytes for AES-256)
@@ -64,16 +81,26 @@ func Decrypt(cipherTextBase64 string, key []byte) ([]byte, error) {
 	return gcm.Open(nil, nonce, actualCipherText, nil)
 }
 
-// DeriveKey derives a 32-byte key from any arbitrary passphrase/string by padding or truncating
-func DeriveKey(passphrase string) []byte {
-	key := make([]byte, 32)
-	copy(key, passphrase)
-	// If passphrase is shorter than 32, we pad with a repeating pattern.
-	// If it is longer, it naturally truncates via copy.
-	if len(passphrase) < 32 {
-		for i := len(passphrase); i < 32; i++ {
-			key[i] = byte(i)
-		}
+// DeriveKey derives a 32-byte AES-256 key from the supplied secret.
+//
+// If the secret is a base64-encoded 32-byte value it is used directly (the
+// recommended configuration). Otherwise the secret is treated as a passphrase
+// and stretched with scrypt and a fixed application salt, which eliminates the
+// low-entropy/predictable-padding weakness of naive truncation.
+func DeriveKey(secret string) ([]byte, error) {
+	if secret == "" {
+		return nil, errors.New("encryption secret must not be empty")
 	}
-	return key
+
+	// Preferred path: a full 32-byte key provided as base64.
+	if raw, err := base64.StdEncoding.DecodeString(secret); err == nil && len(raw) == 32 {
+		return raw, nil
+	}
+
+	// Fallback: stretch the passphrase with scrypt into a 32-byte key.
+	key, err := scrypt.Key([]byte(secret), kdfSalt, scryptN, scryptR, scryptP, 32)
+	if err != nil {
+		return nil, err
+	}
+	return key, nil
 }
