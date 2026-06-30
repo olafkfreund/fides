@@ -1,0 +1,16 @@
+# Binaries
+fides-server
+fides
+fides.exe
+fides-server.exe
+
+# Local storage data directories
+data/
+web-evidence/
+fides-evidence/
+
+# Dev files
+.env
+.idea/
+.vscode/
+*.log
