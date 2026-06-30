@@ -357,7 +357,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, name, description, created_at FROM organizations ORDER BY name`
+	query := `SELECT id, name, COALESCE(description, '') AS description, created_at FROM organizations ORDER BY name`
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), query)
 	if err != nil {
 		internalError(w, err)
@@ -460,7 +460,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
+	query := `SELECT id, org_id, name, COALESCE(description, '') AS description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
@@ -1042,7 +1042,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	queryEnv := `SELECT id, name, type, description FROM environments WHERE org_id = $1`
+	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE org_id = $1`
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
 		internalError(w, err)
@@ -1134,7 +1134,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, name, description, rules FROM policies WHERE org_id = $1`
+	query := `SELECT id, name, COALESCE(description, '') AS description, rules FROM policies WHERE org_id = $1`
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
@@ -1793,7 +1793,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		if flowName != "" {
 			answer = fmt.Sprintf("I've successfully created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
 		} else if userMsg == "list flows" || userMsg == "show flows" {
-			rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, description FROM flows")
+			rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
 			defer rows.Close()
 			answer = "Here are the currently configured compliance flows in Fides:\n\n"
 			for rows.Next() {
