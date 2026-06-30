@@ -146,6 +146,10 @@ func (s *Server) Routes() http.Handler {
 	// calls are authenticated by the session cookie, like the rest of the portal).
 	mux.HandleFunc("GET /servicenow", s.handleServiceNowAdminPage)
 
+	// Unified Go-served admin console (tabs: ServiceNow, Slack, service accounts,
+	// git/webhooks, environments policies/allow-lists, metrics).
+	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
+
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
@@ -184,6 +188,7 @@ func (s *Server) Routes() http.Handler {
 	// Service accounts + API keys (machine-to-machine auth, rotation/revocation)
 	mux.HandleFunc("GET /api/v1/tenant/service-accounts", s.handleListServiceAccounts)
 	mux.HandleFunc("POST /api/v1/tenant/service-accounts", s.handleCreateServiceAccount)
+	mux.HandleFunc("GET /api/v1/tenant/service-accounts/{id}/keys", s.handleListServiceAccountKeys)
 	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/keys", s.handleIssueServiceAccountKey)
 	mux.HandleFunc("DELETE /api/v1/tenant/service-accounts/{id}/keys/{keyId}", s.handleRevokeServiceAccountKey)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
