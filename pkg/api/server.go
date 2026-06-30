@@ -81,6 +81,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
+	// DORA-style delivery metrics
+	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
+
 	// Logical environments (aggregate physical environments)
 	mux.HandleFunc("GET /api/v1/logical-environments", s.handleListLogicalEnv)
 	mux.HandleFunc("POST /api/v1/logical-environments", s.handleCreateLogicalEnv)
