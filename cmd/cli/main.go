@@ -80,6 +80,8 @@ func main() {
 		handleAudit(config, os.Args[2:])
 	case "policy":
 		handlePolicy(config, os.Args[2:])
+	case "logical-env":
+		handleLogicalEnv(config, os.Args[2:])
 	case "env":
 		if len(os.Args) > 2 && os.Args[2] == "diff" {
 			handleEnvDiff(config, os.Args[3:])
@@ -115,6 +117,7 @@ func printUsage() {
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
 	fmt.Println("  policy           Manage/check environment policies (add|list|check --env <id>)")
+	fmt.Println("  logical-env      Aggregate physical environments (create|list|add-member|state)")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")

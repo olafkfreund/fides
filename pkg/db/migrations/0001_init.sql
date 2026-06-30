@@ -342,6 +342,21 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 22a. Logical environments (aggregate one or more physical environments)
+CREATE TABLE IF NOT EXISTS logical_environments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, name)
+);
+CREATE TABLE IF NOT EXISTS logical_environment_members (
+    logical_id UUID NOT NULL REFERENCES logical_environments(id) ON DELETE CASCADE,
+    environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    PRIMARY KEY (logical_id, environment_id)
+);
+
 -- 22b. Environment compliance policies (required attestation types, optionally
 -- conditional on the trail's flow tags) + environment tags.
 ALTER TABLE environments ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '{}'::jsonb;
