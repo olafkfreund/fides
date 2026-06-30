@@ -14,6 +14,8 @@ import (
 	"fides/pkg/api"
 	"fides/pkg/events"
 	"fides/pkg/storage"
+	"fides/pkg/vault"
+	"fides/pkg/webhooks"
 
 	_ "github.com/lib/pq"
 )
@@ -121,8 +123,9 @@ func main() {
 	// registered by integration features (webhooks, ServiceNow, CI/CD gates);
 	// with none registered it idles, leaving events durably queued. Stops with ctx.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		go events.NewDispatcher(db).Run(ctx)
-		log.Printf("Event dispatcher enabled")
+		sink := webhooks.NewSink(webhooks.NewDBLoader(db, vault.NewEnvSecretsProvider()))
+		go events.NewDispatcher(db, sink).Run(ctx)
+		log.Printf("Event dispatcher enabled (webhook sink)")
 	}
 
 	<-ctx.Done()

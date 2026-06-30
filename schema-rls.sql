@@ -41,7 +41,8 @@ DECLARE
     'policies',
     'system_audit_logs',
     'users',
-    'sso_group_mappings'
+    'sso_group_mappings',
+    'tenant_webhooks'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
