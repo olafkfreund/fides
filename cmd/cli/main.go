@@ -84,7 +84,7 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  trail start      Initialize a new build trail")
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
-	fmt.Println("  attest           Report tests, security scans, or custom evidence")
+	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy report (fides attest junit --file ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  snapshot         Snapshot running container runtimes and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
@@ -194,6 +194,12 @@ func handleArtifact(config CLIConfig, args []string) {
 
 // 3. Attestation Reporting
 func handleAttest(config CLIConfig, args []string) {
+	// Format-specific evidence: `fides attest junit|snyk|trivy --file <report> --trail <id>`.
+	if len(args) > 0 && isEvidenceFormat(args[0]) {
+		handleAttestEvidence(config, args[0], args[1:])
+		return
+	}
+
 	cmd := flag.NewFlagSet("attest", flag.ExitOnError)
 	trailID := cmd.String("trail", "", "Trail UUID")
 	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256")
@@ -483,7 +489,7 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 	}
 
 	for _, path := range filePaths {
-		file, err := os.Open(path) // #nosec G304 -- CLI opens a user-specified attachment by design
+		file, err := os.Open(path) // #nosec G304 G703 -- CLI opens a user-specified attachment by design
 		if err != nil {
 			return "", fmt.Errorf("failed to open attachment: %w", err)
 		}
