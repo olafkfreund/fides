@@ -130,6 +130,7 @@ func main() {
 			webhooks.NewSink(webhooks.NewDBLoader(db, secrets)),
 			gitstatus.NewSink(gitstatus.NewDBLoader(db, secrets), os.Getenv("FIDES_PUBLIC_URL")),
 			servicenow.NewITOMSink(servicenow.NewDBLoader(db, secrets)),
+			servicenow.NewCMDBSink(servicenow.NewDBLoader(db, secrets)),
 		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
 		log.Printf("Event dispatcher enabled (webhook + git-commit-status sinks)")
