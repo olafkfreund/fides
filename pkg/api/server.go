@@ -92,6 +92,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
 
+	// Tenant Webhooks (signed outbound delivery)
+	mux.HandleFunc("GET /api/v1/tenant/webhooks", s.handleListWebhooks)
+	mux.HandleFunc("POST /api/v1/tenant/webhooks", s.handleSaveWebhook)
+
 	// Environment MCP Connections API
 	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
 	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
@@ -2271,6 +2275,66 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
+}
+
+func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT id, org_id, name, url, secret_path, event_types, enabled, created_at, updated_at
+		 FROM tenant_webhooks WHERE org_id = $1 ORDER BY name`, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	var list []models.TenantWebhook
+	for rows.Next() {
+		var wh models.TenantWebhook
+		var types pq.StringArray
+		if err := rows.Scan(&wh.ID, &wh.OrgID, &wh.Name, &wh.URL, &wh.SecretPath, &types, &wh.Enabled, &wh.CreatedAt, &wh.UpdatedAt); err != nil {
+			internalError(w, err)
+			return
+		}
+		wh.EventTypes = []string(types)
+		list = append(list, wh)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(list)
+}
+
+func (s *Server) handleSaveWebhook(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var wh models.TenantWebhook
+	if err := json.NewDecoder(r.Body).Decode(&wh); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if wh.Name == "" || !strings.HasPrefix(wh.URL, "https://") || wh.SecretPath == "" {
+		http.Error(w, "name, an https url, and secret_path are required", http.StatusBadRequest)
+		return
+	}
+	_, err := s.q(r.Context()).ExecContext(r.Context(),
+		`INSERT INTO tenant_webhooks (org_id, name, url, secret_path, event_types, enabled, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, now())
+		 ON CONFLICT (org_id, name) DO UPDATE SET
+		   url = EXCLUDED.url, secret_path = EXCLUDED.secret_path,
+		   event_types = EXCLUDED.event_types, enabled = EXCLUDED.enabled, updated_at = now()`,
+		orgID, wh.Name, wh.URL, wh.SecretPath, pq.StringArray(wh.EventTypes), wh.Enabled)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"success"}`))
 }

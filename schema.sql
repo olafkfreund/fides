@@ -302,5 +302,21 @@ CREATE INDEX IF NOT EXISTS idx_integration_events_dispatch
     ON integration_events(next_attempt_at)
     WHERE status = 'pending';
 
+-- 22. Tenant Webhooks (signed outbound delivery targets)
+CREATE TABLE IF NOT EXISTS tenant_webhooks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    url VARCHAR(512) NOT NULL,
+    secret_path VARCHAR(255) NOT NULL, -- HMAC signing secret reference (env/vault)
+    event_types TEXT[] DEFAULT '{}',   -- empty = subscribe to all event types
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_webhooks_org_id ON tenant_webhooks(org_id);
+
 
 
