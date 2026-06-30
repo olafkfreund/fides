@@ -14,6 +14,19 @@ spec:
     requests:
       storage: 15Gi
 ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fides-db-pvc
+  namespace: fides
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 10Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -37,12 +50,14 @@ spec:
           value: fides
         - name: POSTGRES_USER
           value: fides_user
-        # NOTE: kept inline (not secretKeyRef) intentionally — changing this
-        # rolls the fides-db pod, which uses emptyDir and would WIPE the database
-        # (schema + data). Move to secretKeyRef only together with a PVC +
-        # schema migration. See the db-persistence follow-up.
+        # Password kept inline (not secretKeyRef) so this Deployment's spec
+        # matches what's running; data now survives rolls via the PVC below.
         - name: POSTGRES_PASSWORD
           value: fides_password_secure
+        # PGDATA must be a SUBDIRECTORY of the mount: an EBS/gp3 volume root
+        # contains lost+found, which makes Postgres initdb refuse "not empty".
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
         ports:
         - containerPort: 5432
         volumeMounts:
@@ -50,7 +65,8 @@ spec:
           mountPath: /var/lib/postgresql/data
       volumes:
       - name: db-data
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: fides-db-pvc
 ---
 apiVersion: v1
 kind: Service
