@@ -24,7 +24,10 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO environments (id, org_id, name, type, description, created_at)
 VALUES 
 ('9f3c7ea1-420a-4288-ae31-716d1ba1f021', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Production K8s', 'K8S', 'Primary production cluster hosted on AWS EKS', CURRENT_TIMESTAMP),
-('0a12cd31-df14-4a0b-bc11-55cc281728e1', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Production ECS Host', 'ECS', 'Fargate container host for transactional tasks', CURRENT_TIMESTAMP)
+('0a12cd31-df14-4a0b-bc11-55cc281728e1', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Production ECS Host', 'ECS', 'Fargate container host for transactional tasks', CURRENT_TIMESTAMP),
+('9f3c7ea1-420a-4288-ae31-716d1ba1f0d1', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Development K8s', 'K8S', 'Development environment hosted on AWS EKS', CURRENT_TIMESTAMP),
+('9f3c7ea1-420a-4288-ae31-716d1ba1f0a1', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'UAT K8s', 'K8S', 'UAT environment hosted on AWS EKS', CURRENT_TIMESTAMP),
+('9f3c7ea1-420a-4288-ae31-716d1ba1f0e1', '5d57b8c7-4328-4e1b-93df-4161b9a918a3', 'Production K8s (CLI)', 'K8S', 'Production environment hosted on AWS EKS', CURRENT_TIMESTAMP)
 ON CONFLICT (id) DO NOTHING;
 
 -- 5. Insert Release Policies

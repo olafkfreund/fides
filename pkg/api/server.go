@@ -654,12 +654,45 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
 
-		// Fallback mock check to keep SBOM dynamic for testing
-		av.SBOMStatus = "Compliant"
-		av.SBOM = []interface{}{
-			map[string]string{"name": "libc-bin", "version": "2.36-9", "license": "LGPL-2.1", "vulnerabilities": "None"},
-			map[string]string{"name": "openssl", "version": "3.0.8-1", "license": "Apache-2.0", "vulnerabilities": "None"},
-			map[string]string{"name": "go-uuid", "version": "1.6.0", "license": "BSD-3-Clause", "vulnerabilities": "None"},
+		// Fetch actual SBOM from database attestations if present
+		var payloadBytes []byte
+		var isCompliant bool
+		querySBOM := `SELECT payload, is_compliant FROM attestations WHERE artifact_sha256 = $1 AND (name = 'sbom' OR type_name = 'sbom' OR type_name = 'sbom-scan') LIMIT 1`
+		err = s.q(r.Context()).QueryRowContext(r.Context(), querySBOM, av.SHA256).Scan(&payloadBytes, &isCompliant)
+		if err == nil {
+			if isCompliant {
+				av.SBOMStatus = "Compliant"
+			} else {
+				av.SBOMStatus = "Non-Compliant"
+			}
+
+			// Try to unmarshal payload as a list of packages
+			var packages []interface{}
+			if errUnmarshal := json.Unmarshal(payloadBytes, &packages); errUnmarshal == nil {
+				av.SBOM = packages
+			} else {
+				// If not a list, maybe it's an object with "packages" or "components" key
+				var obj map[string]interface{}
+				if errUnmarshalObj := json.Unmarshal(payloadBytes, &obj); errUnmarshalObj == nil {
+					if pkgs, ok := obj["packages"]; ok {
+						if pkgsList, ok := pkgs.([]interface{}); ok {
+							av.SBOM = pkgsList
+						}
+					} else if comps, ok := obj["components"]; ok {
+						if compsList, ok := comps.([]interface{}); ok {
+							av.SBOM = compsList
+						}
+					} else {
+						// Otherwise, just wrap the object in a slice
+						av.SBOM = []interface{}{obj}
+					}
+				} else {
+					av.SBOM = []interface{}{}
+				}
+			}
+		} else {
+			av.SBOMStatus = "Pending"
+			av.SBOM = []interface{}{}
 		}
 		list = append(list, &av)
 	}
