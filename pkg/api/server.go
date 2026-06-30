@@ -18,6 +18,7 @@ import (
 	"fides/pkg/ai"
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
+	"fides/pkg/db"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
@@ -196,7 +197,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// 1. Interactive session cookie.
 		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
 			if p, ok := s.Sessions.Get(c.Value, time.Now()); ok {
-				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), &p)))
+				s.serveAuthenticated(w, r, &p, next)
 				return
 			}
 		}
@@ -231,8 +232,39 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "service"}
-		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
+		s.serveAuthenticated(w, r, principal, next)
 	})
+}
+
+// serveAuthenticated attaches the principal to the request context and, when
+// RLS scoping is enabled (FIDES_RLS_ENABLED=true), pins a tenant-scoped DB
+// connection (app.current_org set to the principal's org) into the context so
+// handlers' s.q(ctx) calls are isolated by Postgres RLS. The connection is
+// released after the handler returns.
+func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
+	ctx := auth.WithPrincipal(r.Context(), p)
+
+	if os.Getenv("FIDES_RLS_ENABLED") == "true" && s.DB != nil {
+		conn, release, err := db.ScopedConn(ctx, s.DB, p.OrgID.String())
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		defer release()
+		ctx = db.WithQuerier(ctx, conn)
+	}
+
+	next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// q returns the tenant-scoped Querier for this request when RLS scoping is
+// active, otherwise the unscoped connection pool. This makes handler queries
+// behavior-identical when RLS is disabled.
+func (s *Server) q(ctx context.Context) db.Querier {
+	if scoped, ok := db.QuerierFromContext(ctx); ok {
+		return scoped
+	}
+	return s.DB
 }
 
 // principalOrg returns the authenticated tenant for the request. Handlers use
@@ -313,7 +345,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `INSERT INTO organizations (id, name, description, created_at) VALUES ($1, $2, $3, $4)`
-	_, err := s.DB.ExecContext(r.Context(), query, org.ID, org.Name, org.Description, org.CreatedAt)
+	_, err := s.q(r.Context()).ExecContext(r.Context(), query, org.ID, org.Name, org.Description, org.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -326,7 +358,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, description, created_at FROM organizations ORDER BY name`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -380,7 +412,7 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err = s.DB.ExecContext(r.Context(), query, flow.ID, flow.OrgID, flow.Name, flow.Description, marshalJSONB(flow.Tags), flow.CreatedAt, flow.UpdatedAt)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, flow.ID, flow.OrgID, flow.Name, flow.Description, marshalJSONB(flow.Tags), flow.CreatedAt, flow.UpdatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -412,7 +444,7 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
-	_, err = s.DB.ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -429,7 +461,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
-	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -488,7 +520,7 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err = s.DB.ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -546,7 +578,7 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO artifacts (sha256, org_id, trail_id, name, type, tags, created_at) 
 	          VALUES ($1, $2, $3, $4, $5, $6, $7)
 	          ON CONFLICT (sha256) DO UPDATE SET trail_id = EXCLUDED.trail_id`
-	_, err = s.DB.ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -569,7 +601,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	          LEFT JOIN trails t ON a.trail_id = t.id
 	          WHERE a.org_id = $1
 	          ORDER BY a.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -642,7 +674,7 @@ func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Requ
 	}
 
 	query := `INSERT INTO attestation_types (id, org_id, name, description, schema, jq_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err = s.DB.ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -742,7 +774,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// Fetch rules for verification
 	var rules []string
 	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryType, req.TypeName).Scan(pq.Array(&rules))
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName).Scan(pq.Array(&rules))
 	if err != nil && err != sql.ErrNoRows {
 		internalError(w, err)
 		return
@@ -779,7 +811,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, created_at)
 	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
-	_, err = s.DB.ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, attestation.CreatedAt)
+	_, err = s.q(r.Context()).ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, attestation.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -800,7 +832,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		attachmentID := uuid.New()
 		queryAttach := `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
 		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-		_, err = s.DB.ExecContext(r.Context(), queryAttach, attachmentID, attestation.ID, fileNames[i], 0, "hash", path, "application/octet-stream", time.Now())
+		_, err = s.q(r.Context()).ExecContext(r.Context(), queryAttach, attachmentID, attestation.ID, fileNames[i], 0, "hash", path, "application/octet-stream", time.Now())
 		if err != nil {
 			log.Printf("Failed to record attachment in DB: %v", err)
 		}
@@ -821,7 +853,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
 			             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-			_, err = s.DB.ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
+			_, err = s.q(ctx).ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
 			if err != nil {
 				log.Printf("Failed to write LLM assessment to DB: %v", err)
 			}
@@ -960,7 +992,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 	var name string
 	var trailID sql.NullString
 	queryArt := `SELECT name, trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`
-	err := s.DB.QueryRowContext(r.Context(), queryArt, sha).Scan(&name, &trailID)
+	err := s.q(r.Context()).QueryRowContext(r.Context(), queryArt, sha).Scan(&name, &trailID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
@@ -974,7 +1006,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 
 	if trailID.Valid && trailID.String != "" {
 		queryAtt := `SELECT name, type_name, is_compliant FROM attestations WHERE trail_id = $1`
-		rows, err := s.DB.QueryContext(r.Context(), queryAtt, trailID.String)
+		rows, err := s.q(r.Context()).QueryContext(r.Context(), queryAtt, trailID.String)
 		if err != nil {
 			internalError(w, err)
 			return
@@ -1011,7 +1043,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	queryEnv := `SELECT id, name, type, description FROM environments WHERE org_id = $1`
-	rows, err := s.DB.QueryContext(r.Context(), queryEnv, orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1053,7 +1085,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		var latestSnapID string
 		var snapTime time.Time
 		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-		err = s.DB.QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
+		err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
 
 		if err == nil {
 			ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
@@ -1063,7 +1095,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 			            FROM snapshot_artifacts sa
 			            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
 			            WHERE sa.snapshot_id = $1`
-			saRows, err := s.DB.QueryContext(r.Context(), querySA, latestSnapID)
+			saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
 			if err == nil {
 				defer saRows.Close()
 				for saRows.Next() {
@@ -1076,10 +1108,10 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 						} else {
 							// Check if registered artifact has drift (failing controls)
 							var trailID sql.NullString
-							s.DB.QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
 							if trailID.Valid {
 								var compliantCount, totalCount int
-								s.DB.QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+								s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
 								if totalCount > 0 && compliantCount < totalCount {
 									ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 								}
@@ -1103,7 +1135,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := `SELECT id, name, description, rules FROM policies WHERE org_id = $1`
-	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1155,7 +1187,7 @@ func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Scope the update to the caller's tenant so one org cannot modify another's policy.
-	res, err := s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
+	res, err := s.q(r.Context()).ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
 	if err != nil {
 		http.Error(w, "failed to save policy", http.StatusInternalServerError)
 		return
@@ -1182,7 +1214,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 	          JOIN flows f ON tr.flow_id = f.id
 	          WHERE f.org_id = $1
 	          ORDER BY la.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1238,7 +1270,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 	// 1. Fetch SSO/Auth Settings
 	queryAuth := `SELECT id, org_id, provider_name, client_id, client_secret_path, COALESCE(auth_url, ''), COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled 
 	              FROM tenant_auth_configs WHERE org_id = $1 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryAuth, orgID).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryAuth, orgID).Scan(
 		&authConfig.ID, &authConfig.OrgID, &authConfig.ProviderName, &authConfig.ClientID,
 		&authConfig.ClientSecretPath, &authConfig.AuthURL, &authConfig.TokenURL, &authConfig.UserInfoURL,
 		&authConfig.RedirectURI, &authConfig.Enabled,
@@ -1255,7 +1287,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 	// 2. Fetch Storage Settings
 	queryStorage := `SELECT id, org_id, storage_driver, COALESCE(s3_endpoint, ''), COALESCE(s3_bucket, ''), COALESCE(s3_access_key_path, ''), COALESCE(s3_secret_key_path, ''), COALESCE(s3_region, ''), COALESCE(gcs_bucket, ''), COALESCE(gcs_credentials_path, ''), COALESCE(azure_container, ''), COALESCE(azure_connection_string_path, '') 
 	                 FROM tenant_storage_settings WHERE org_id = $1 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryStorage, orgID).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryStorage, orgID).Scan(
 		&storageConfig.ID, &storageConfig.OrgID, &storageConfig.StorageDriver, &storageConfig.S3Endpoint,
 		&storageConfig.S3Bucket, &storageConfig.S3AccessKeyPath, &storageConfig.S3SecretKeyPath, &storageConfig.S3Region,
 		&storageConfig.GCSBucket, &storageConfig.GCSCredentialsPath, &storageConfig.AzureContainer, &storageConfig.AzureConnectionStringPath,
@@ -1271,7 +1303,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 	// 3. Fetch Vault Settings
 	queryVault := `SELECT id, org_id, vault_provider, COALESCE(vault_address, ''), COALESCE(vault_token_path, ''), COALESCE(vault_role, '') 
 	               FROM tenant_vault_settings WHERE org_id = $1 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryVault, orgID).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryVault, orgID).Scan(
 		&vaultConfig.ID, &vaultConfig.OrgID, &vaultConfig.VaultProvider, &vaultConfig.VaultAddress,
 		&vaultConfig.VaultTokenPath, &vaultConfig.VaultRole,
 	)
@@ -1286,7 +1318,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 	// 4. Fetch LLM Settings
 	queryLLM := `SELECT id, org_id, provider_name, model_name, COALESCE(endpoint_url, ''), COALESCE(api_key_path, ''), COALESCE(aws_region, ''), COALESCE(azure_deployment, '')
 	             FROM tenant_llm_settings WHERE org_id = $1 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryLLM, orgID).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryLLM, orgID).Scan(
 		&llmConfig.ID, &llmConfig.OrgID, &llmConfig.ProviderName, &llmConfig.ModelName,
 		&llmConfig.EndpointURL, &llmConfig.APIKeyPath, &llmConfig.AWSRegion, &llmConfig.AzureDeployment,
 	)
@@ -1338,6 +1370,13 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer tx.Rollback()
+
+	// Scope this transaction to the tenant so the RLS backstop is enforced on
+	// the tenant_* writes below (no-op when RLS is disabled).
+	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	if req.Auth != nil {
 		queryAuthUpsert := `
@@ -1484,7 +1523,7 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 
 	var authConfig models.TenantAuthConfig
 	queryAuth := `SELECT client_id, COALESCE(auth_url, ''), redirect_uri, enabled FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&authConfig.ClientID, &authConfig.AuthURL, &authConfig.RedirectURI, &authConfig.Enabled)
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&authConfig.ClientID, &authConfig.AuthURL, &authConfig.RedirectURI, &authConfig.Enabled)
 	if err != nil {
 		http.Error(w, "no SSO provider is configured for this organization", http.StatusBadRequest)
 		return
@@ -1542,7 +1581,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	var enabled bool
 	queryAuth := `SELECT client_id, client_secret_path, COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled
 	              FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
-	if err := s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&clientID, &secretPath, &tokenURL, &userInfoURL, &redirectURI, &enabled); err != nil || !enabled {
+	if err := s.q(r.Context()).QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&clientID, &secretPath, &tokenURL, &userInfoURL, &redirectURI, &enabled); err != nil || !enabled {
 		http.Error(w, "SSO provider not available", http.StatusBadRequest)
 		return
 	}
@@ -1586,7 +1625,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	principal := auth.Principal{OrgID: orgID, Email: userInfo.Email, Role: auth.RoleViewer, Kind: "session"}
 	var userID uuid.UUID
 	var role string
-	if err := s.DB.QueryRowContext(r.Context(),
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
 		`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, userInfo.Email,
 	).Scan(&userID, &role); err == nil {
 		principal.UserID = userID
@@ -1594,7 +1633,7 @@ func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
 	} else if len(userInfo.Groups) > 0 {
 		// Fall back to an SSO group → role mapping.
 		var mappedRole string
-		if err := s.DB.QueryRowContext(r.Context(),
+		if err := s.q(r.Context()).QueryRowContext(r.Context(),
 			`SELECT role FROM sso_group_mappings WHERE org_id = $1 AND external_group = ANY($2) LIMIT 1`,
 			orgID, pq.Array(userInfo.Groups),
 		).Scan(&mappedRole); err == nil {
@@ -1727,7 +1766,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	if n, _ := fmt.Sscanf(userMsg, "create flow %s description %s", &flowName, &flowDesc); n >= 1 {
 		flowID := uuid.New()
 		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-		_, err := s.DB.ExecContext(ctx, query, flowID, orgID, flowName, flowDesc)
+		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName, flowDesc)
 		if err != nil {
 			executionOutput = fmt.Sprintf("\n*(Failed to create flow: %v)*", err)
 		} else {
@@ -1736,7 +1775,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	} else if n, _ := fmt.Sscanf(userMsg, "create flow %s", &flowName); n == 1 {
 		flowID := uuid.New()
 		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, 'Created via LLM Assistant', '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-		_, err := s.DB.ExecContext(ctx, query, flowID, orgID, flowName)
+		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName)
 		if err != nil {
 			executionOutput = fmt.Sprintf("\n*(Failed to create flow: %v)*", err)
 		} else {
@@ -1754,7 +1793,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		if flowName != "" {
 			answer = fmt.Sprintf("I've successfully created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
 		} else if userMsg == "list flows" || userMsg == "show flows" {
-			rows, _ := s.DB.QueryContext(ctx, "SELECT name, description FROM flows")
+			rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, description FROM flows")
 			defer rows.Close()
 			answer = "Here are the currently configured compliance flows in Fides:\n\n"
 			for rows.Next() {
@@ -1768,7 +1807,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 			          JOIN trails t ON att.trail_id = t.id
 			          JOIN flows f ON t.flow_id = f.id
 			          WHERE att.is_compliant = false`
-			rows, _ := s.DB.QueryContext(ctx, query)
+			rows, _ := s.q(ctx).QueryContext(ctx, query)
 			defer rows.Close()
 			answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
 			found := false
@@ -1799,7 +1838,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1843,7 +1882,7 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 	              name = EXCLUDED.name, 
 	              role = EXCLUDED.role, 
 	              groups = EXCLUDED.groups`
-	_, err := s.DB.ExecContext(r.Context(), query, u.OrgID, u.Name, u.Email, u.Role, pq.StringArray(u.Groups))
+	_, err := s.q(r.Context()).ExecContext(r.Context(), query, u.OrgID, u.Name, u.Email, u.Role, pq.StringArray(u.Groups))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1860,7 +1899,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1900,7 +1939,7 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 	          VALUES ($1, $2, $3) 
 	          ON CONFLICT (org_id, external_group) DO UPDATE SET 
 	              role = EXCLUDED.role`
-	_, err := s.DB.ExecContext(r.Context(), query, gm.OrgID, gm.ExternalGroup, gm.Role)
+	_, err := s.q(r.Context()).ExecContext(r.Context(), query, gm.OrgID, gm.ExternalGroup, gm.Role)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1924,7 +1963,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 
 	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at 
 	          FROM environment_mcp_servers WHERE environment_id = $1`
-	rows, err := s.DB.QueryContext(r.Context(), query, envID)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, envID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1985,7 +2024,7 @@ func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.R
 			updated_at = CURRENT_TIMESTAMP
 		RETURNING id, created_at, updated_at`
 
-	err = s.DB.QueryRowContext(r.Context(), query,
+	err = s.q(r.Context()).QueryRowContext(r.Context(), query,
 		req.EnvironmentID, req.Name, req.Transport, req.Command, pq.Array(req.Args), envVarsJSON, req.URL, req.AuthHeader,
 	).Scan(&req.ID, &req.CreatedAt, &req.UpdatedAt)
 
@@ -2024,7 +2063,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 	var envVarsBytes []byte
 	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, '')
 	          FROM environment_mcp_servers WHERE environment_id = $1 AND name = $2 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
 		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
 		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
 	)
@@ -2081,7 +2120,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	var envVarsBytes []byte
 	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, '')
 	          FROM environment_mcp_servers WHERE environment_id = $1 AND name = $2 LIMIT 1`
-	err = s.DB.QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
+	err = s.q(r.Context()).QueryRowContext(r.Context(), query, envID, req.ServerName).Scan(
 		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
 		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
 	)
