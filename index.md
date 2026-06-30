@@ -2,6 +2,9 @@
 
 Fides is a self-hosted, multi-cloud compatible compliance tracking system. It records and evaluates every state change in the software delivery lifecycle (SDLC) in real-time, acting as an audit-ready single source of truth to satisfy strict compliance frameworks such as SOC 2, ISO 27001, and FDA 21 CFR Part 11.
 
+> [!TIP]
+> Check out the comprehensive **[Fides Integration & Setup Guide](/guide.html)** for detailed walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits.
+
 ---
 
 ## 1. Architectural Blueprint & Overview
