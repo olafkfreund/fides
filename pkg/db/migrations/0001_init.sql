@@ -342,6 +342,23 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 22b. Environment compliance policies (required attestation types, optionally
+-- conditional on the trail's flow tags) + environment tags.
+ALTER TABLE environments ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '{}'::jsonb;
+
+CREATE TABLE IF NOT EXISTS environment_policies (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    required_types TEXT[] NOT NULL DEFAULT '{}', -- attestation type names that must be present & compliant
+    if_tag VARCHAR(100),   -- only enforce when the trail's flow tag if_tag == if_value
+    if_value VARCHAR(255),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(environment_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_environment_policies_env ON environment_policies(environment_id);
+
 -- 23a. Environment artifact allow-list (explicit per-environment approvals)
 CREATE TABLE IF NOT EXISTS environment_allowlist (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -81,6 +81,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
+	// Environment policies (required attestation types, tag-conditional) + tags
+	mux.HandleFunc("GET /api/v1/environments/{id}/policies", s.handleListEnvPolicies)
+	mux.HandleFunc("POST /api/v1/environments/{id}/policies", s.handleCreatePolicy)
+	mux.HandleFunc("DELETE /api/v1/environments/{id}/policies/{policyId}", s.handleDeletePolicy)
+	mux.HandleFunc("GET /api/v1/environments/{id}/policy-check", s.handlePolicyCheck)
+	mux.HandleFunc("POST /api/v1/environments/{id}/tags", s.handleSetEnvTags)
+	mux.HandleFunc("POST /api/v1/flows/{id}/tags", s.handleSetFlowTags)
+
 	// Per-environment artifact allow-list (explicit approvals)
 	mux.HandleFunc("GET /api/v1/environments/{id}/allowlist", s.handleListAllowlist)
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)

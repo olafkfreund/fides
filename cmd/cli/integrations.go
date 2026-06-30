@@ -239,6 +239,56 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	}
 }
 
+// fides policy add|list|check --env <id> ...
+func handlePolicy(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides policy <add|list|check> --env <id> [--name --require t1,t2 --if-tag --if-value | --trail]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("policy "+args[0], flag.ExitOnError)
+	env := cmd.String("env", "", "environment UUID")
+	name := cmd.String("name", "", "policy name")
+	require := cmd.String("require", "", "comma-separated required attestation types")
+	ifTag := cmd.String("if-tag", "", "only enforce when flow tag == value")
+	ifValue := cmd.String("if-value", "", "tag value")
+	trail := cmd.String("trail", "", "trail UUID (for check)")
+	cmd.Parse(args[1:])
+	if *env == "" {
+		fmt.Println("Error: --env is required")
+		os.Exit(1)
+	}
+	base := "/api/v1/environments/" + *env
+	switch args[0] {
+	case "add":
+		if *name == "" || *require == "" {
+			fmt.Println("Error: --name and --require are required")
+			os.Exit(1)
+		}
+		post(config, base+"/policies", map[string]any{
+			"name": *name, "required_types": strings.Split(*require, ","),
+			"if_tag": *ifTag, "if_value": *ifValue,
+		}, "Policy saved")
+	case "list":
+		body, err := getRequest(config, base+"/policies")
+		fail(err, "list policies")
+		fmt.Println(body)
+	case "check":
+		if *trail == "" {
+			fmt.Println("Error: --trail is required for check")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, base+"/policy-check?trail="+*trail)
+		fail(err, "policy check")
+		fmt.Println(body)
+		if strings.Contains(body, "\"compliant\":false") {
+			os.Exit(2) // non-zero so CI can gate a deploy
+		}
+	default:
+		fmt.Println("Usage: fides policy <add|list|check> --env <id>")
+		os.Exit(1)
+	}
+}
+
 // fides audit --trail <id> [--output <file.zip>]
 func handleAudit(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("audit", flag.ExitOnError)
