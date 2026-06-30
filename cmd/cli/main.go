@@ -75,6 +75,8 @@ func main() {
 		handleAllowlist(config, os.Args[2:])
 	case "search":
 		handleSearch(config, os.Args[2:])
+	case "audit":
+		handleAudit(config, os.Args[2:])
 	case "env":
 		if len(os.Args) > 2 && os.Args[2] == "diff" {
 			handleEnvDiff(config, os.Args[3:])
@@ -109,6 +111,7 @@ func printUsage() {
 	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
+	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")
 	fmt.Println()

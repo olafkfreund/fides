@@ -239,6 +239,40 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	}
 }
 
+// fides audit --trail <id> [--output <file.zip>]
+func handleAudit(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("audit", flag.ExitOnError)
+	trail := cmd.String("trail", "", "trail UUID")
+	output := cmd.String("output", "", "output zip path")
+	cmd.Parse(args)
+	if *trail == "" {
+		fmt.Println("Usage: fides audit --trail <id> [--output <file.zip>]")
+		os.Exit(1)
+	}
+	dest := *output
+	if dest == "" {
+		dest = "trail-" + *trail + "-audit.zip"
+	}
+	req, _ := http.NewRequest("GET", config.ServerURL+"/api/v1/trails/"+*trail+"/audit-package", nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
+	if config.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+config.Token)
+	}
+	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
+	fail(err, "download audit package")
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		fail(fmt.Errorf("server returned %d: %s", resp.StatusCode, string(b)), "download audit package")
+	}
+	f, err := os.Create(dest) // #nosec G304 G703 -- CLI writes to a user-specified output path by design
+	fail(err, "create output file")
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		fail(err, "write audit package")
+	}
+	fmt.Printf("Wrote audit package to %s\n", dest)
+}
+
 // fides search artifacts|attestations
 func handleSearch(config CLIConfig, args []string) {
 	if len(args) < 1 {
