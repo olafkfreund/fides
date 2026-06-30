@@ -2030,6 +2030,7 @@ func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 
 	portalUser := os.Getenv("PORTAL_USERNAME")
 	portalPass := os.Getenv("PORTAL_PASSWORD")
+	portalConfigured := portalUser != "" && portalPass != ""
 
 	var req localLoginReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2037,24 +2038,40 @@ func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID, configured := portalTenant()
-	if !configured {
-		http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
-		return
-	}
+	orgID, tenantConfigured := portalTenant()
 
 	// Two local-login paths: the shared portal-admin credential (env) and
-	// per-user passwords stored on the users table. Both comparisons run
-	// regardless of username match to avoid leaking it via timing.
-	adminUser := portalUser != "" && constantTimeEquals(req.Username, portalUser)
-	adminPass := portalPass != "" && constantTimeEquals(req.Password, portalPass)
-
+	// per-user passwords on the users table. Both need a configured tenant to
+	// build a principal.
 	var principal auth.Principal
-	if adminUser && adminPass {
-		principal = *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
-	} else if p, ok := s.localUserLogin(r.Context(), orgID, req.Username, req.Password); ok {
-		principal = p
-	} else {
+	authed := false
+
+	if portalConfigured {
+		// Both comparisons run regardless of username match (no timing leak).
+		adminUser := constantTimeEquals(req.Username, portalUser)
+		adminPass := constantTimeEquals(req.Password, portalPass)
+		if adminUser && adminPass {
+			if !tenantConfigured {
+				http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+				return
+			}
+			principal = *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
+			authed = true
+		}
+	}
+
+	if !authed && tenantConfigured {
+		if p, ok := s.localUserLogin(r.Context(), orgID, req.Username, req.Password); ok {
+			principal = p
+			authed = true
+		}
+	}
+
+	if !authed {
+		if !portalConfigured && !tenantConfigured {
+			http.Error(w, "local authentication is not configured", http.StatusForbidden)
+			return
+		}
 		http.Error(w, "invalid username or password", http.StatusUnauthorized)
 		return
 	}
