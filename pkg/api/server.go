@@ -140,6 +140,7 @@ func (s *Server) Routes() http.Handler {
 	// User Management and SSO group mappings API
 	mux.HandleFunc("GET /api/v1/tenant/users", s.handleListUsers)
 	mux.HandleFunc("POST /api/v1/tenant/users", s.handleSaveUser)
+	mux.HandleFunc("POST /api/v1/tenant/users/{id}/password", s.handleSetUserPassword)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
 	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
 
@@ -1979,6 +1980,29 @@ func constantTimeEquals(a, b string) bool {
 // scope (so it is correct even when RLS is enabled). If the admin is not
 // provisioned as a user, they retain the bootstrap Admin role implied by holding
 // the configured PORTAL_PASSWORD secret.
+// localUserLogin verifies an email/password against the users table (per-user
+// local login). Returns false if the user has no password set or it mismatches.
+func (s *Server) localUserLogin(ctx context.Context, orgID uuid.UUID, email, password string) (auth.Principal, bool) {
+	var p auth.Principal
+	if s.DB == nil {
+		return p, false
+	}
+	var uid uuid.UUID
+	var role, hash string
+	err := db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`SELECT id, role, COALESCE(password_hash, '') FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`,
+			orgID, email).Scan(&uid, &role, &hash)
+	})
+	if err != nil || hash == "" {
+		return p, false
+	}
+	if !crypto.VerifyPassword(password, hash) {
+		return p, false
+	}
+	return auth.Principal{OrgID: orgID, UserID: uid, Email: email, Role: role, Kind: "session"}, true
+}
+
 func (s *Server) resolvePortalPrincipal(ctx context.Context, orgID uuid.UUID, email string) *auth.Principal {
 	p := &auth.Principal{OrgID: orgID, Email: email, Role: auth.RoleAdmin, Kind: "session"}
 	if s.DB != nil {
@@ -2007,22 +2031,9 @@ func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	portalUser := os.Getenv("PORTAL_USERNAME")
 	portalPass := os.Getenv("PORTAL_PASSWORD")
 
-	if portalUser == "" || portalPass == "" {
-		http.Error(w, "local authentication is not configured", http.StatusForbidden)
-		return
-	}
-
 	var req localLoginReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
-		return
-	}
-
-	// Constant-time credential comparison.
-	userOK := constantTimeEquals(req.Username, portalUser)
-	passOK := constantTimeEquals(req.Password, portalPass)
-	if !userOK || !passOK {
-		http.Error(w, "invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
@@ -2032,7 +2043,21 @@ func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal := *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
+	// Two local-login paths: the shared portal-admin credential (env) and
+	// per-user passwords stored on the users table. Both comparisons run
+	// regardless of username match to avoid leaking it via timing.
+	adminUser := portalUser != "" && constantTimeEquals(req.Username, portalUser)
+	adminPass := portalPass != "" && constantTimeEquals(req.Password, portalPass)
+
+	var principal auth.Principal
+	if adminUser && adminPass {
+		principal = *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
+	} else if p, ok := s.localUserLogin(r.Context(), orgID, req.Username, req.Password); ok {
+		principal = p
+	} else {
+		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+		return
+	}
 
 	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
 	if err != nil {
@@ -2255,6 +2280,51 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
+}
+
+type setPasswordReq struct {
+	Password string `json:"password"`
+}
+
+// handleSetUserPassword lets an Admin set/reset a user's local-login password.
+func (s *Server) handleSetUserPassword(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if principal.Role != auth.RoleAdmin {
+		http.Error(w, "only Admins can set user passwords", http.StatusForbidden)
+		return
+	}
+	userID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid user id", http.StatusBadRequest)
+		return
+	}
+	var req setPasswordReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	hash, err := crypto.HashPassword(req.Password)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest) // e.g. too short
+		return
+	}
+	res, err := s.q(r.Context()).ExecContext(r.Context(),
+		`UPDATE users SET password_hash = $1 WHERE id = $2 AND org_id = $3`,
+		hash, userID, principal.OrgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {

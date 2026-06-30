@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'Viewer', -- 'Admin', 'Auditor', 'Writer', 'Viewer'
     groups VARCHAR(255)[] DEFAULT '{}',
+    password_hash VARCHAR(255), -- scrypt hash for local login; NULL for SSO-only users
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
