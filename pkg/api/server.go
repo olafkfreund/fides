@@ -110,6 +110,11 @@ func (s *Server) Routes() http.Handler {
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
 
+	// ServiceNow read/action endpoints (backing the MCP tools)
+	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
+	mux.HandleFunc("POST /api/v1/servicenow/incident", s.handleServiceNowCreateIncident)
+	mux.HandleFunc("GET /api/v1/servicenow/cmdb", s.handleServiceNowSearchCMDB)
+
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
 	mux.HandleFunc("POST /api/v1/admission/validate", s.handleAdmissionValidate)
@@ -2430,6 +2435,136 @@ func (s *Server) handleAdmissionValidate(w http.ResponseWriter, r *http.Request)
 
 	rv := &admission.Reviewer{Checker: admission.NewDBChecker(s.DB), Mode: mode}
 	writeReview(rv.Review(r.Context(), orgID, review.Request))
+}
+
+// snowClient builds a ServiceNow client for the tenant. The bool is false when
+// ServiceNow is not configured/enabled for the org.
+func (s *Server) snowClient(ctx context.Context, orgID uuid.UUID) (*servicenow.Client, bool, error) {
+	cfg, enabled, err := servicenow.NewDBLoader(s.DB, s.Secrets).ServiceNowConfig(ctx, orgID)
+	if err != nil || !enabled {
+		return nil, enabled, err
+	}
+	c, err := servicenow.New(cfg)
+	return c, true, err
+}
+
+// handleServiceNowChangeStatus reads a change request's status (no attestation).
+func (s *Server) handleServiceNowChangeStatus(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	num := r.URL.Query().Get("change_number")
+	ci := r.URL.Query().Get("ci")
+	if num == "" && ci == "" {
+		http.Error(w, "change_number or ci query param is required", http.StatusBadRequest)
+		return
+	}
+	client, enabled, err := s.snowClient(r.Context(), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !enabled {
+		http.Error(w, "ServiceNow is not configured", http.StatusBadRequest)
+		return
+	}
+	query := "number=" + num
+	if num == "" {
+		query = "cmdb_ci.name=" + ci + "^active=true^ORDERBYDESCsys_updated_on"
+	}
+	cr, found, err := servicenow.QueryChangeRequest(r.Context(), client, query)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	out := map[string]any{"found": false}
+	if found {
+		out = servicenow.NormalizeChange(cr)
+		out["found"] = true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(out)
+}
+
+type incidentReq struct {
+	ShortDescription string `json:"short_description"`
+	Description      string `json:"description"`
+	Urgency          string `json:"urgency"`
+	CmdbCI           string `json:"cmdb_ci"`
+}
+
+// handleServiceNowCreateIncident opens a ServiceNow incident (e.g. on a failed gate).
+func (s *Server) handleServiceNowCreateIncident(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req incidentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if req.ShortDescription == "" {
+		http.Error(w, "short_description is required", http.StatusBadRequest)
+		return
+	}
+	client, enabled, err := s.snowClient(r.Context(), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !enabled {
+		http.Error(w, "ServiceNow is not configured", http.StatusBadRequest)
+		return
+	}
+	fields := map[string]any{"short_description": req.ShortDescription, "description": req.Description}
+	if req.Urgency != "" {
+		fields["urgency"] = req.Urgency
+	}
+	if req.CmdbCI != "" {
+		fields["cmdb_ci"] = req.CmdbCI
+	}
+	rec, err := client.CreateRecord(r.Context(), "incident", fields)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"number": rec["number"], "sys_id": rec["sys_id"]})
+}
+
+// handleServiceNowSearchCMDB searches the CMDB for configuration items by name.
+func (s *Server) handleServiceNowSearchCMDB(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		http.Error(w, "name query param is required", http.StatusBadRequest)
+		return
+	}
+	client, enabled, err := s.snowClient(r.Context(), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !enabled {
+		http.Error(w, "ServiceNow is not configured", http.StatusBadRequest)
+		return
+	}
+	res, err := client.QueryTable(r.Context(), "cmdb_ci", "nameLIKE"+name,
+		"name", "sys_class_name", "sys_id", "short_description", "managed_by", "owned_by")
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res.Result)
 }
 
 type changeCheckReq struct {
