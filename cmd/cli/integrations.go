@@ -239,6 +239,23 @@ func handleServiceAccount(config CLIConfig, args []string) {
 	}
 }
 
+// fides slack config --secret-path <ref> [--disable]
+func handleSlack(config CLIConfig, args []string) {
+	if len(args) < 1 || args[0] != "config" {
+		fmt.Println("Usage: fides slack config --secret-path <ref> [--disable]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("slack config", flag.ExitOnError)
+	secretPath := cmd.String("secret-path", "", "Slack incoming-webhook URL secret reference")
+	disable := cmd.Bool("disable", false, "disable Slack notifications")
+	cmd.Parse(args[1:])
+	if *secretPath == "" {
+		fmt.Println("Error: --secret-path is required")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
+}
+
 // fides metrics [--days N]
 func handleMetrics(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)

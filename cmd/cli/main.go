@@ -84,6 +84,8 @@ func main() {
 		handleLogicalEnv(config, os.Args[2:])
 	case "metrics":
 		handleMetrics(config, os.Args[2:])
+	case "slack":
+		handleSlack(config, os.Args[2:])
 	case "env":
 		if len(os.Args) > 2 && os.Args[2] == "diff" {
 			handleEnvDiff(config, os.Args[3:])
