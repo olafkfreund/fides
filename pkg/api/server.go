@@ -259,6 +259,21 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// internalError logs the underlying error server-side and returns a generic
+// message to the client, so DB/driver/internal details are not leaked (M3).
+func internalError(w http.ResponseWriter, err error) {
+	log.Printf("internal error: %v", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
+}
+
+// badRequest returns a generic 400 without echoing parse/validation detail.
+func badRequest(w http.ResponseWriter, err error) {
+	if err != nil {
+		log.Printf("bad request: %v", err)
+	}
+	http.Error(w, "invalid request", http.StatusBadRequest)
+}
+
 // Helper JSONB conversion
 func marshalJSONB(m map[string]string) []byte {
 	if m == nil {
@@ -286,7 +301,7 @@ type createOrgReq struct {
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	var req createOrgReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -300,7 +315,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO organizations (id, name, description, created_at) VALUES ($1, $2, $3, $4)`
 	_, err := s.DB.ExecContext(r.Context(), query, org.ID, org.Name, org.Description, org.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -313,7 +328,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, description, created_at FROM organizations ORDER BY name`
 	rows, err := s.DB.QueryContext(r.Context(), query)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -322,7 +337,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var o models.Organization
 		if err := rows.Scan(&o.ID, &o.Name, &o.Description, &o.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		list = append(list, &o)
@@ -342,7 +357,7 @@ type createFlowReq struct {
 func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	var req createFlowReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -367,7 +382,7 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err = s.DB.ExecContext(r.Context(), query, flow.ID, flow.OrgID, flow.Name, flow.Description, marshalJSONB(flow.Tags), flow.CreatedAt, flow.UpdatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -386,7 +401,7 @@ type updateFlowReq struct {
 func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	var req updateFlowReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -399,7 +414,7 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
 	_, err = s.DB.ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database update error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -416,7 +431,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
 	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -426,7 +441,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		var f models.Flow
 		var tagsBytes []byte
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.Name, &f.Description, &tagsBytes, &f.CreatedAt, &f.UpdatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		f.Tags = unmarshalJSONB(tagsBytes)
@@ -450,7 +465,7 @@ type createTrailReq struct {
 func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	var req createTrailReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -475,7 +490,7 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err = s.DB.ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -496,7 +511,7 @@ type reportArtifactReq struct {
 func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	var req reportArtifactReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -533,7 +548,7 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	          ON CONFLICT (sha256) DO UPDATE SET trail_id = EXCLUDED.trail_id`
 	_, err = s.DB.ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -556,7 +571,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	          ORDER BY a.created_at DESC`
 	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -574,7 +589,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		var av ArtifactView
 		var tagsBytes []byte
 		if err := rows.Scan(&av.SHA256, &av.OrgID, &av.TrailID, &av.Name, &av.Type, &tagsBytes, &av.CreatedAt, &av.TrailName); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
@@ -604,7 +619,7 @@ type createAttestationTypeReq struct {
 func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Request) {
 	var req createAttestationTypeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -629,7 +644,7 @@ func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Requ
 	query := `INSERT INTO attestation_types (id, org_id, name, description, schema, jq_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
 	_, err = s.DB.ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -659,13 +674,13 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	if contentType == "application/json" || contentType == "" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			badRequest(w, err)
 			return
 		}
 	} else {
 		err := r.ParseMultipartForm(32 << 20)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			badRequest(w, err)
 			return
 		}
 
@@ -683,7 +698,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		for _, fHeaders := range files {
 			f, err := fHeaders.Open()
 			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			defer f.Close()
@@ -729,7 +744,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 LIMIT 1`
 	err = s.DB.QueryRowContext(r.Context(), queryType, req.TypeName).Scan(pq.Array(&rules))
 	if err != nil && err != sql.ErrNoRows {
-		http.Error(w, fmt.Sprintf("database read error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -738,7 +753,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	if len(rules) > 0 {
 		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(req.Payload, rules)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("policy evaluation error: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		if !ok {
@@ -766,7 +781,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
 	_, err = s.DB.ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, attestation.CreatedAt)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("database write error: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -778,7 +793,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
 		path, err := s.Storage.Upload(r.Context(), "fides-evidence", key, reader, "application/octet-stream")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to upload attachment: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -836,7 +851,7 @@ type snapshotReportResponse struct {
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	var req reportSnapshotReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -848,7 +863,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -857,7 +872,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	querySnap := `INSERT INTO environment_snapshots (id, environment_id, created_at) VALUES ($1, $2, $3)`
 	_, err = tx.ExecContext(r.Context(), querySnap, snapshotID, envID, time.Now())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -883,7 +898,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			tx.ExecContext(r.Context(), querySA, saID, snapshotID, a.ServiceName, a.SHA256, time.Now())
 			continue
 		} else if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -893,7 +908,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		            VALUES ($1, $2, $3, $4, $5, $6)`
 		_, err = tx.ExecContext(r.Context(), querySA, saID, snapshotID, dbSHA, a.ServiceName, a.SHA256, time.Now())
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 
@@ -901,7 +916,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		queryAtt := `SELECT name, is_compliant FROM attestations WHERE trail_id = $1`
 		rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		defer rows.Close()
@@ -910,7 +925,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			var attName string
 			var compliant bool
 			if err := rows.Scan(&attName, &compliant); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			if !compliant {
@@ -921,7 +936,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -950,7 +965,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -961,7 +976,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 		queryAtt := `SELECT name, type_name, is_compliant FROM attestations WHERE trail_id = $1`
 		rows, err := s.DB.QueryContext(r.Context(), queryAtt, trailID.String)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		defer rows.Close()
@@ -970,7 +985,7 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 			var attName, typeName string
 			var compliant bool
 			if err := rows.Scan(&attName, &typeName, &compliant); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				internalError(w, err)
 				return
 			}
 			if !compliant {
@@ -998,7 +1013,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	queryEnv := `SELECT id, name, type, description FROM environments WHERE org_id = $1`
 	rows, err := s.DB.QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1026,7 +1041,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		ev.LastSnapshot = "No snapshot reported yet"
@@ -1090,7 +1105,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, description, rules FROM policies WHERE org_id = $1`
 	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1107,7 +1122,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		var p PolicyView
 		var rulesBytes []byte
 		if err := rows.Scan(&p.ID, &p.Name, &p.Target, &rulesBytes); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		p.YAML = string(rulesBytes)
@@ -1169,7 +1184,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 	          ORDER BY la.created_at DESC`
 	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1188,7 +1203,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var av AssessmentView
 		if err := rows.Scan(&av.ID, &av.AttestationName, &av.ModelProvider, &av.ModelName, &av.AssessmentRaw, &av.ComplianceScore, &av.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		list = append(list, &av)
@@ -1233,7 +1248,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		authConfig.ProviderName = "github"
 		authConfig.Enabled = false
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (auth): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1249,7 +1264,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		storageConfig.OrgID = orgID
 		storageConfig.StorageDriver = "local"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (storage): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1264,7 +1279,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		vaultConfig.OrgID = orgID
 		vaultConfig.VaultProvider = "env"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (vault): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1280,7 +1295,7 @@ func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request)
 		llmConfig.ProviderName = "ollama"
 		llmConfig.ModelName = "llama3:8b"
 	} else if err != nil {
-		http.Error(w, fmt.Sprintf("database error (llm): %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1305,7 +1320,7 @@ type saveTenantSettingsReq struct {
 func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request) {
 	var req saveTenantSettingsReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1319,7 +1334,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -1342,7 +1357,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.Auth.AuthURL, req.Auth.TokenURL, req.Auth.UserInfoURL, req.Auth.RedirectURI, req.Auth.Enabled,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save auth settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1369,7 +1384,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.Storage.GCSBucket, req.Storage.GCSCredentialsPath, req.Storage.AzureContainer, req.Storage.AzureConnectionStringPath,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save storage settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1388,7 +1403,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			orgID, req.Vault.VaultProvider, req.Vault.VaultAddress, req.Vault.VaultTokenPath, req.Vault.VaultRole,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save vault settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
@@ -1410,13 +1425,13 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 			req.LLM.APIKeyPath, req.LLM.AWSRegion, req.LLM.AzureDeployment,
 		)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to save llm settings: %v", err), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1619,7 +1634,7 @@ func (s *Server) handleAIGeneratePolicy(w http.ResponseWriter, r *http.Request) 
 
 	var req generatePolicyReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1693,7 +1708,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 
 	var req aiChatReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1786,7 +1801,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1796,7 +1811,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		var u models.User
 		var grps pq.StringArray
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Role, &grps, &u.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		u.OrgID = orgID
@@ -1811,7 +1826,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 	var u models.User
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1830,7 +1845,7 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 	              groups = EXCLUDED.groups`
 	_, err := s.DB.ExecContext(r.Context(), query, u.OrgID, u.Name, u.Email, u.Role, pq.StringArray(u.Groups))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1847,7 +1862,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 
 	rows, err := s.DB.QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1856,7 +1871,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var gm models.SSOGroupMapping
 		if err := rows.Scan(&gm.ID, &gm.ExternalGroup, &gm.Role, &gm.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		gm.OrgID = orgID
@@ -1870,7 +1885,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) {
 	var gm models.SSOGroupMapping
 	if err := json.NewDecoder(r.Body).Decode(&gm); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1887,7 +1902,7 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 	              role = EXCLUDED.role`
 	_, err := s.DB.ExecContext(r.Context(), query, gm.OrgID, gm.ExternalGroup, gm.Role)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1911,7 +1926,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 	          FROM environment_mcp_servers WHERE environment_id = $1`
 	rows, err := s.DB.QueryContext(r.Context(), query, envID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -1927,7 +1942,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 			&srv.CreatedAt, &srv.UpdatedAt,
 		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		srv.Args = []string(args)
@@ -1942,7 +1957,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
 	var req models.EnvironmentMCPServer
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -1975,7 +1990,7 @@ func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.R
 	).Scan(&req.ID, &req.CreatedAt, &req.UpdatedAt)
 
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to save environment mcp server: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -1993,7 +2008,7 @@ type queryMCPReq struct {
 func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
 	var req queryMCPReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -2017,7 +2032,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	srv.Args = []string(args)
@@ -2031,7 +2046,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 	// Execute tool call on MCP server
 	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("MCP execution failed: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -2050,7 +2065,7 @@ type verifyEnvReq struct {
 func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *http.Request) {
 	var req verifyEnvReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		badRequest(w, err)
 		return
 	}
 
@@ -2074,7 +2089,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	srv.Args = []string(args)
@@ -2088,14 +2103,14 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	// Execute tool call on MCP server
 	output, err := mcp.CallToolStdio(srv.Command, srv.Args, srv.EnvVars, req.ToolName, req.Arguments)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("MCP tool execution failed: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	// Evaluate rules deterministically using PolicyEngine
 	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to evaluate policy rules: %v", err), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
