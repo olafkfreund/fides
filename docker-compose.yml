@@ -107,6 +107,9 @@ services:
       # API authentication token (required to call /api/v1 endpoints)
       - FIDES_API_TOKEN=${FIDES_API_TOKEN:?FIDES_API_TOKEN must be set}
 
+      # Tenant the static service token is scoped to (required with FIDES_API_TOKEN)
+      - FIDES_API_ORG_ID=${FIDES_API_ORG_ID:?FIDES_API_ORG_ID must be set}
+
       # AI Verification Gate Configuration
       - AI_PROVIDER=ollama
       - AI_OLLAMA_ENDPOINT=http://ollama:11434

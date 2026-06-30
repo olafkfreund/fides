@@ -9,18 +9,21 @@ import (
 	"io"
 	"log"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"fides/pkg/ai"
+	"fides/pkg/auth"
 	"fides/pkg/crypto"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
 	"fides/pkg/storage"
 	"fides/pkg/telemetry"
+	"fides/pkg/vault"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -31,6 +34,10 @@ type Server struct {
 	Storage      storage.StorageBackend
 	PolicyEngine *policy.PolicyEngine
 	LLM          ai.LLMClient
+	Secrets      vault.SecretsProvider
+	States       *auth.StateStore
+	Sessions     *auth.SessionStore
+	httpClient   *http.Client
 }
 
 func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Server {
@@ -40,6 +47,10 @@ func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Serv
 		Storage:      store,
 		PolicyEngine: policy.NewPolicyEngine(),
 		LLM:          llm,
+		Secrets:      vault.NewEnvSecretsProvider(),
+		States:       auth.NewStateStore(),
+		Sessions:     auth.NewSessionStore(),
+		httpClient:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -165,9 +176,16 @@ func isPublicPath(path string) bool {
 	return !strings.HasPrefix(path, "/api/v1/")
 }
 
-// authMiddleware enforces bearer-token authentication on the API surface.
-// The expected token is read from FIDES_API_TOKEN; if it is unset the API
-// fails closed (returns 503) rather than serving unauthenticated requests.
+const sessionCookieName = "fides_session"
+
+// authMiddleware authenticates the API surface and attaches a Principal to the
+// request context. Two credential types are accepted:
+//   - an interactive SSO session cookie (set by the OAuth callback), or
+//   - the static service bearer token FIDES_API_TOKEN (used by the CLI/MCP),
+//     whose tenant scope is fixed by FIDES_API_ORG_ID.
+//
+// The Principal's OrgID is the ONLY source of tenant scoping downstream; handlers
+// must never trust an org_id from the request body or query (see H2 / IDOR).
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublicPath(r.URL.Path) {
@@ -175,6 +193,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// 1. Interactive session cookie.
+		if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+			if p, ok := s.Sessions.Get(c.Value, time.Now()); ok {
+				next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), &p)))
+				return
+			}
+		}
+
+		// 2. Static service bearer token.
 		expected := os.Getenv("FIDES_API_TOKEN")
 		if expected == "" {
 			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
@@ -185,19 +212,38 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		authz := r.Header.Get("Authorization")
 		if !strings.HasPrefix(authz, prefix) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
-			http.Error(w, "missing or malformed Authorization header", http.StatusUnauthorized)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
 
 		presented := strings.TrimPrefix(authz, prefix)
 		// Constant-time comparison to avoid token-timing leaks.
 		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
-			http.Error(w, "invalid API token", http.StatusUnauthorized)
+			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// The service token must be bound to a tenant via FIDES_API_ORG_ID.
+		orgID, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
+		if err != nil {
+			http.Error(w, "service token tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "service"}
+		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), principal)))
 	})
+}
+
+// principalOrg returns the authenticated tenant for the request. Handlers use
+// this as the sole source of org scoping. The bool is false only if the request
+// somehow bypassed authMiddleware (defensive).
+func principalOrg(r *http.Request) (uuid.UUID, bool) {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		return uuid.UUID{}, false
+	}
+	return p.OrgID, true
 }
 
 // securityHeaders adds baseline hardening headers to every response.
@@ -300,11 +346,13 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	flow := &models.Flow{
 		ID:          uuid.New(),
@@ -360,8 +408,13 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows ORDER BY name`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query := `SELECT id, org_id, name, description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -447,11 +500,13 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	var trailID *uuid.UUID
 	if req.TrailID != "" {
@@ -488,12 +543,18 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	// Joining trail name for simple UI rendering
-	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '') 
+	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '')
 	          FROM artifacts a
 	          LEFT JOIN trails t ON a.trail_id = t.id
+	          WHERE a.org_id = $1
 	          ORDER BY a.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -547,11 +608,13 @@ func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	attType := &models.AttestationType{
 		ID:          uuid.New(),
@@ -927,8 +990,13 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
-	queryEnv := `SELECT id, name, type, description FROM environments`
-	rows, err := s.DB.QueryContext(r.Context(), queryEnv)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	queryEnv := `SELECT id, name, type, description FROM environments WHERE org_id = $1`
+	rows, err := s.DB.QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1014,8 +1082,13 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, name, description, rules FROM policies`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query := `SELECT id, name, description, rules FROM policies WHERE org_id = $1`
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1051,9 +1124,14 @@ type savePolicyReq struct {
 }
 
 func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req savePolicyReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 	policyID, err := uuid.Parse(req.ID)
@@ -1061,9 +1139,14 @@ func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid policy id", http.StatusBadRequest)
 		return
 	}
-	_, err = s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2", req.YAML, policyID)
+	// Scope the update to the caller's tenant so one org cannot modify another's policy.
+	res, err := s.DB.ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to save policy: %v", err), http.StatusInternalServerError)
+		http.Error(w, "failed to save policy", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "policy not found", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusOK)
@@ -1071,11 +1154,20 @@ func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Scope to the caller's tenant via attestation -> trail -> flow -> org.
 	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
 	          FROM llm_assessments la
 	          JOIN attestations att ON la.attestation_id = att.id
+	          JOIN trails tr ON att.trail_id = tr.id
+	          JOIN flows f ON tr.flow_id = f.id
+	          WHERE f.org_id = $1
 	          ORDER BY la.created_at DESC`
-	rows, err := s.DB.QueryContext(r.Context(), query)
+	rows, err := s.DB.QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1115,15 +1207,13 @@ type tenantSettingsResp struct {
 }
 
 func (s *Server) handleGetTenantSettings(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	orgIDStr := orgID.String()
+	var err error
 
 	var authConfig models.TenantAuthConfig
 	var storageConfig models.TenantStorageSettings
@@ -1219,11 +1309,13 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	orgID, err := uuid.Parse(req.OrgID)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	var err error
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -1332,67 +1424,186 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(`{"status":"success"}`))
 }
 
+// providerDefaults returns the well-known OAuth endpoints and scope for a
+// provider, used when the tenant config leaves them blank.
+func providerDefaults(provider string) (authURL, tokenURL, userInfoURL, scope string) {
+	switch provider {
+	case "github":
+		return "https://github.com/login/oauth/authorize",
+			"https://github.com/login/oauth/access_token",
+			"https://api.github.com/user",
+			"read:user user:email"
+	case "gitlab":
+		return "https://gitlab.com/oauth/authorize",
+			"https://gitlab.com/oauth/token",
+			"https://gitlab.com/api/v4/user",
+			"read_user"
+	case "google":
+		return "https://accounts.google.com/o/oauth2/v2/auth",
+			"https://oauth2.googleapis.com/token",
+			"https://openidconnect.googleapis.com/v1/userinfo",
+			"openid email profile"
+	case "okta":
+		return "https://okta.com/oauth2/v1/authorize",
+			"https://okta.com/oauth2/v1/token",
+			"https://okta.com/oauth2/v1/userinfo",
+			"openid email profile groups"
+	default:
+		return "", "", "", "openid email"
+	}
+}
+
 func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 	provider := r.URL.Query().Get("provider")
 	if provider == "" {
 		provider = "github"
 	}
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
+	// org_id selects which tenant's SSO configuration to use. This is the only
+	// place an org_id is accepted from the client, and it is bound into a signed,
+	// single-use state nonce — the resulting session's org comes from that state.
+	orgID, err := uuid.Parse(r.URL.Query().Get("org_id"))
 	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+		http.Error(w, "valid org_id query parameter is required", http.StatusBadRequest)
 		return
 	}
 
 	var authConfig models.TenantAuthConfig
 	queryAuth := `SELECT client_id, COALESCE(auth_url, ''), redirect_uri, enabled FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
 	err = s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&authConfig.ClientID, &authConfig.AuthURL, &authConfig.RedirectURI, &authConfig.Enabled)
-
 	if err != nil {
-		redirectURL := fmt.Sprintf("/api/v1/auth/callback?code=mock_code&state=%s&provider=%s", orgIDStr, provider)
-		http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
+		http.Error(w, "no SSO provider is configured for this organization", http.StatusBadRequest)
 		return
 	}
-
 	if !authConfig.Enabled {
 		http.Error(w, "auth provider disabled for tenant", http.StatusForbidden)
 		return
 	}
 
 	authURL := authConfig.AuthURL
+	defAuth, _, _, scope := providerDefaults(provider)
 	if authURL == "" {
-		switch provider {
-		case "github":
-			authURL = "https://github.com/login/oauth/authorize"
-		case "gitlab":
-			authURL = "https://gitlab.com/oauth/authorize"
-		case "google":
-			authURL = "https://accounts.google.com/o/oauth2/v2/auth"
-		case "okta":
-			authURL = "https://okta.com/oauth2/v1/authorize"
-		}
+		authURL = defAuth
+	}
+	if authURL == "" {
+		http.Error(w, "unknown auth provider", http.StatusBadRequest)
+		return
 	}
 
-	targetURL := fmt.Sprintf("%s?client_id=%s&redirect_uri=%s&response_type=code&state=%s", authURL, authConfig.ClientID, authConfig.RedirectURI, orgIDStr)
-	http.Redirect(w, r, targetURL, http.StatusTemporaryRedirect)
+	state, err := s.States.New(orgID, provider, 10*time.Minute, time.Now())
+	if err != nil {
+		http.Error(w, "failed to initialize login", http.StatusInternalServerError)
+		return
+	}
+
+	q := neturl.Values{}
+	q.Set("client_id", authConfig.ClientID)
+	q.Set("redirect_uri", authConfig.RedirectURI)
+	q.Set("response_type", "code")
+	q.Set("scope", scope)
+	q.Set("state", state)
+	http.Redirect(w, r, authURL+"?"+q.Encode(), http.StatusTemporaryRedirect)
 }
 
 func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	state := r.URL.Query().Get("state")
-	provider := r.URL.Query().Get("provider")
-	// Do not log the OAuth authorization code — it is a short-lived credential.
-	log.Printf("Authentication callback received for org: %s, provider: %s", state, provider)
+	code := r.URL.Query().Get("code")
+	stateParam := r.URL.Query().Get("state")
+	if code == "" || stateParam == "" {
+		http.Error(w, "missing code or state", http.StatusBadRequest)
+		return
+	}
 
-	// SECURITY TODO (C3): this handler does NOT yet implement a real OAuth flow.
-	// Before production it must:
-	//   1. Validate `state` against a server-stored nonce (CSRF protection).
-	//   2. Exchange the authorization code for a token at the provider's token URL.
-	//   3. Verify the resulting identity and establish a signed server session,
-	//      from which the org_id is derived (never trust org_id from the client).
-	http.Redirect(w, r, fmt.Sprintf("/?login=success&org_id=%s&provider=%s", state, provider), http.StatusTemporaryRedirect)
+	// 1. Validate the single-use state nonce (CSRF / replay defense). The tenant
+	// and provider come from the server-side state, never from the client.
+	stateData, ok := s.States.Consume(stateParam, time.Now())
+	if !ok {
+		http.Error(w, "invalid or expired login state", http.StatusBadRequest)
+		return
+	}
+	orgID := stateData.OrgID
+	provider := stateData.Provider
+
+	// 2. Load the tenant's provider configuration and resolve the client secret.
+	var clientID, secretPath, tokenURL, userInfoURL, redirectURI string
+	var enabled bool
+	queryAuth := `SELECT client_id, client_secret_path, COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled
+	              FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
+	if err := s.DB.QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&clientID, &secretPath, &tokenURL, &userInfoURL, &redirectURI, &enabled); err != nil || !enabled {
+		http.Error(w, "SSO provider not available", http.StatusBadRequest)
+		return
+	}
+
+	_, defToken, defUserInfo, _ := providerDefaults(provider)
+	if tokenURL == "" {
+		tokenURL = defToken
+	}
+	if userInfoURL == "" {
+		userInfoURL = defUserInfo
+	}
+
+	clientSecret, err := s.Secrets.GetSecret(r.Context(), "", secretPath)
+	if err != nil {
+		log.Printf("auth callback: client secret unavailable for org %s provider %s", orgID, provider)
+		http.Error(w, "server auth configuration error", http.StatusInternalServerError)
+		return
+	}
+
+	// 3. Exchange the code for a token and fetch the user's identity.
+	accessToken, err := auth.ExchangeCode(r.Context(), s.httpClient, auth.OAuthConfig{
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
+		TokenURL:     tokenURL,
+		RedirectURI:  redirectURI,
+	}, code)
+	if err != nil {
+		log.Printf("auth callback: token exchange failed: %v", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	userInfo, err := auth.FetchUserInfo(r.Context(), s.httpClient, userInfoURL, accessToken)
+	if err != nil || userInfo.Email == "" {
+		log.Printf("auth callback: userinfo lookup failed: %v", err)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// 4. Resolve the principal's role within the tenant.
+	principal := auth.Principal{OrgID: orgID, Email: userInfo.Email, Role: auth.RoleViewer, Kind: "session"}
+	var userID uuid.UUID
+	var role string
+	if err := s.DB.QueryRowContext(r.Context(),
+		`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, userInfo.Email,
+	).Scan(&userID, &role); err == nil {
+		principal.UserID = userID
+		principal.Role = role
+	} else if len(userInfo.Groups) > 0 {
+		// Fall back to an SSO group → role mapping.
+		var mappedRole string
+		if err := s.DB.QueryRowContext(r.Context(),
+			`SELECT role FROM sso_group_mappings WHERE org_id = $1 AND external_group = ANY($2) LIMIT 1`,
+			orgID, pq.Array(userInfo.Groups),
+		).Scan(&mappedRole); err == nil {
+			principal.Role = mappedRole
+		}
+	}
+
+	// 5. Establish the session and set a hardened cookie.
+	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
+	if err != nil {
+		http.Error(w, "failed to establish session", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionToken,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   int((12 * time.Hour).Seconds()),
+	})
+
+	http.Redirect(w, r, "/?login=success", http.StatusTemporaryRedirect)
 }
 
 type generatePolicyReq struct {
@@ -1488,7 +1699,11 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 	userMsg := req.Message
-	orgID := uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	var answer string
 	var executionOutput string
@@ -1563,13 +1778,9 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -1604,9 +1815,12 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if u.OrgID == uuid.Nil {
-		u.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
+	u.OrgID = orgID
 
 	query := `INSERT INTO users (org_id, name, email, role, groups) 
 	          VALUES ($1, $2, $3, $4, $5) 
@@ -1625,13 +1839,9 @@ func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request) {
-	orgIDStr := r.URL.Query().Get("org_id")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		http.Error(w, "invalid org_id", http.StatusBadRequest)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -1664,9 +1874,12 @@ func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if gm.OrgID == uuid.Nil {
-		gm.OrgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
 	}
+	gm.OrgID = orgID
 
 	query := `INSERT INTO sso_group_mappings (org_id, external_group, role) 
 	          VALUES ($1, $2, $3) 
