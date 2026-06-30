@@ -21,6 +21,7 @@ import (
 	"fides/pkg/crypto"
 	"fides/pkg/db"
 	"fides/pkg/events"
+	"fides/pkg/inbound"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
@@ -109,6 +110,10 @@ func (s *Server) Routes() http.Handler {
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
+
+	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
+	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
+	mux.HandleFunc("POST /api/v1/webhooks/{provider}", s.handleInboundWebhook)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
@@ -204,6 +209,10 @@ func isPublicPath(path string) bool {
 		"/api/v1/admission/validate": true,
 	}
 	if publicExact[path] {
+		return true
+	}
+	// Inbound webhooks authenticate via the provider's HMAC/token signature.
+	if strings.HasPrefix(path, "/api/v1/webhooks/") {
 		return true
 	}
 	// The static web portal and its assets are public; the API surface is not.
@@ -2437,6 +2446,100 @@ func (s *Server) handleAdmissionValidate(w http.ResponseWriter, r *http.Request)
 	writeReview(rv.Review(r.Context(), orgID, review.Request))
 }
 
+// handleInboundWebhook ingests a signed GitHub/GitLab push webhook and auto-
+// creates a flow + trail for the commit. Authenticated by the provider's
+// HMAC/token signature against the tenant's configured inbound secret.
+func (s *Server) handleInboundWebhook(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if provider != inbound.GitHub && provider != inbound.GitLab {
+		http.Error(w, "unknown provider", http.StatusNotFound)
+		return
+	}
+	orgID, err := uuid.Parse(r.URL.Query().Get("org"))
+	if err != nil {
+		http.Error(w, "valid org query param is required", http.StatusBadRequest)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		badRequest(w, err)
+		return
+	}
+
+	// Resolve the tenant's inbound secret for this provider.
+	var secretPath string
+	_ = db.WithOrgScope(r.Context(), s.DB, orgID.String(), func(tx *sql.Tx) error {
+		return tx.QueryRowContext(r.Context(),
+			`SELECT COALESCE(inbound_secret_path, '') FROM tenant_git_providers
+			 WHERE org_id = $1 AND provider = $2 AND enabled AND inbound_secret_path IS NOT NULL LIMIT 1`,
+			orgID, provider).Scan(&secretPath)
+	})
+	if secretPath == "" {
+		http.Error(w, "inbound webhooks not configured for this provider", http.StatusBadRequest)
+		return
+	}
+	secret, err := s.Secrets.GetSecret(r.Context(), "", secretPath)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	sig := r.Header.Get("X-Hub-Signature-256")
+	if provider == inbound.GitLab {
+		sig = r.Header.Get("X-Gitlab-Token")
+	}
+	if !inbound.Verify(provider, secret, sig, body) {
+		http.Error(w, "invalid webhook signature", http.StatusUnauthorized)
+		return
+	}
+
+	ti, ok := inbound.ParsePush(provider, body)
+	if !ok {
+		// Not a push (or unparseable) — acknowledge without creating a trail.
+		w.WriteHeader(http.StatusAccepted)
+		w.Write([]byte(`{"status":"ignored"}`))
+		return
+	}
+
+	// Find/create the flow (by repo full name) and create the trail, org-scoped.
+	trailID := uuid.New()
+	err = db.WithOrgScope(r.Context(), s.DB, orgID.String(), func(tx *sql.Tx) error {
+		var flowID uuid.UUID
+		e := tx.QueryRowContext(r.Context(), `SELECT id FROM flows WHERE org_id = $1 AND name = $2`, orgID, ti.FullName).Scan(&flowID)
+		if e == sql.ErrNoRows {
+			flowID = uuid.New()
+			if _, e = tx.ExecContext(r.Context(),
+				`INSERT INTO flows (id, org_id, name, description) VALUES ($1, $2, $3, $4)`,
+				flowID, orgID, ti.FullName, "Auto-created from "+provider+" webhook"); e != nil {
+				return e
+			}
+		} else if e != nil {
+			return e
+		}
+		commit := ti.Commit
+		name := commit
+		if len(name) > 12 {
+			name = name[:12]
+		}
+		_, e = tx.ExecContext(r.Context(),
+			`INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			trailID, flowID, name, ti.Repository, commit, ti.Branch, ti.Message)
+		return e
+	})
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": "trail_created", "trail_id": trailID.String(),
+		"repository": ti.FullName, "commit": ti.Commit, "branch": ti.Branch,
+	})
+}
+
 // snowClient builds a ServiceNow client for the tenant. The bool is false when
 // ServiceNow is not configured/enabled for the org.
 func (s *Server) snowClient(ctx context.Context, orgID uuid.UUID) (*servicenow.Client, bool, error) {
@@ -2731,7 +2834,7 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT id, org_id, provider, host, api_base, token_path, enabled, created_at, updated_at
+		`SELECT id, org_id, provider, host, api_base, token_path, COALESCE(inbound_secret_path, ''), enabled, created_at, updated_at
 		 FROM tenant_git_providers WHERE org_id = $1 ORDER BY host`, orgID)
 	if err != nil {
 		internalError(w, err)
@@ -2742,7 +2845,7 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 	var list []models.TenantGitProvider
 	for rows.Next() {
 		var gp models.TenantGitProvider
-		if err := rows.Scan(&gp.ID, &gp.OrgID, &gp.Provider, &gp.Host, &gp.APIBase, &gp.TokenPath, &gp.Enabled, &gp.CreatedAt, &gp.UpdatedAt); err != nil {
+		if err := rows.Scan(&gp.ID, &gp.OrgID, &gp.Provider, &gp.Host, &gp.APIBase, &gp.TokenPath, &gp.InboundSecretPath, &gp.Enabled, &gp.CreatedAt, &gp.UpdatedAt); err != nil {
 			internalError(w, err)
 			return
 		}
@@ -2768,12 +2871,13 @@ func (s *Server) handleSaveGitProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO tenant_git_providers (org_id, provider, host, api_base, token_path, enabled, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, now())
+		`INSERT INTO tenant_git_providers (org_id, provider, host, api_base, token_path, inbound_secret_path, enabled, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
 		 ON CONFLICT (org_id, host) DO UPDATE SET
 		   provider = EXCLUDED.provider, api_base = EXCLUDED.api_base,
-		   token_path = EXCLUDED.token_path, enabled = EXCLUDED.enabled, updated_at = now()`,
-		orgID, gp.Provider, gp.Host, gp.APIBase, gp.TokenPath, gp.Enabled)
+		   token_path = EXCLUDED.token_path, inbound_secret_path = EXCLUDED.inbound_secret_path,
+		   enabled = EXCLUDED.enabled, updated_at = now()`,
+		orgID, gp.Provider, gp.Host, gp.APIBase, gp.TokenPath, gp.InboundSecretPath, gp.Enabled)
 	if err != nil {
 		internalError(w, err)
 		return
