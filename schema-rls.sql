@@ -43,7 +43,8 @@ DECLARE
     'users',
     'sso_group_mappings',
     'tenant_webhooks',
-    'tenant_git_providers'
+    'tenant_git_providers',
+    'tenant_servicenow_settings'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP

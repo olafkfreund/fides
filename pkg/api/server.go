@@ -101,6 +101,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
 	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
 
+	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
+	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
+	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
+
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
 	mux.HandleFunc("POST /api/v1/admission/validate", s.handleAdmissionValidate)
@@ -2405,6 +2409,60 @@ func (s *Server) handleAdmissionValidate(w http.ResponseWriter, r *http.Request)
 
 	rv := &admission.Reviewer{Checker: admission.NewDBChecker(s.DB), Mode: mode}
 	writeReview(rv.Review(r.Context(), orgID, review.Request))
+}
+
+func (s *Server) handleGetServiceNow(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var sn models.TenantServiceNowSettings
+	err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT id, org_id, instance_url, auth_type, client_id, secret_path, enabled, created_at, updated_at
+		 FROM tenant_servicenow_settings WHERE org_id = $1`, orgID).
+		Scan(&sn.ID, &sn.OrgID, &sn.InstanceURL, &sn.AuthType, &sn.ClientID, &sn.SecretPath, &sn.Enabled, &sn.CreatedAt, &sn.UpdatedAt)
+	w.Header().Set("Content-Type", "application/json")
+	if err == sql.ErrNoRows {
+		json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	json.NewEncoder(w).Encode(sn)
+}
+
+func (s *Server) handleSaveServiceNow(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var sn models.TenantServiceNowSettings
+	if err := json.NewDecoder(r.Body).Decode(&sn); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if !strings.HasPrefix(sn.InstanceURL, "https://") || (sn.AuthType != "basic" && sn.AuthType != "oauth2") || sn.ClientID == "" || sn.SecretPath == "" {
+		http.Error(w, "https instance_url, auth_type (basic|oauth2), client_id, and secret_path are required", http.StatusBadRequest)
+		return
+	}
+	_, err := s.q(r.Context()).ExecContext(r.Context(),
+		`INSERT INTO tenant_servicenow_settings (org_id, instance_url, auth_type, client_id, secret_path, enabled, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, now())
+		 ON CONFLICT (org_id) DO UPDATE SET
+		   instance_url = EXCLUDED.instance_url, auth_type = EXCLUDED.auth_type,
+		   client_id = EXCLUDED.client_id, secret_path = EXCLUDED.secret_path,
+		   enabled = EXCLUDED.enabled, updated_at = now()`,
+		orgID, sn.InstanceURL, sn.AuthType, sn.ClientID, sn.SecretPath, sn.Enabled)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
 }
 
 func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) {
