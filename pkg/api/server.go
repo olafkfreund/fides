@@ -24,6 +24,7 @@ import (
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
+	"fides/pkg/servicenow"
 	"fides/pkg/storage"
 	"fides/pkg/telemetry"
 	"fides/pkg/vault"
@@ -104,6 +105,10 @@ func (s *Server) Routes() http.Handler {
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
 	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
+
+	// ITSM change-control gate: fetch a ServiceNow change request and record a
+	// servicenow-change attestation evaluated against its jq rules.
+	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
 
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
@@ -2425,6 +2430,109 @@ func (s *Server) handleAdmissionValidate(w http.ResponseWriter, r *http.Request)
 
 	rv := &admission.Reviewer{Checker: admission.NewDBChecker(s.DB), Mode: mode}
 	writeReview(rv.Review(r.Context(), orgID, review.Request))
+}
+
+type changeCheckReq struct {
+	TrailID        string `json:"trail_id"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
+	ChangeNumber   string `json:"change_number"`
+	CI             string `json:"ci"` // service / cmdb_ci name (alternative to change_number)
+}
+
+// handleServiceNowChangeCheck fetches a ServiceNow change request, evaluates it
+// against the servicenow-change attestation type's jq rules, records the
+// attestation on the trail, and emits compliance.evaluated. This lets pipelines
+// gate on an approved, in-window change record.
+func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req changeCheckReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	trailID, err := uuid.Parse(req.TrailID)
+	if err != nil {
+		http.Error(w, "valid trail_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.ChangeNumber == "" && req.CI == "" {
+		http.Error(w, "change_number or ci is required", http.StatusBadRequest)
+		return
+	}
+
+	cfg, enabled, err := servicenow.NewDBLoader(s.DB, s.Secrets).ServiceNowConfig(r.Context(), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !enabled {
+		http.Error(w, "ServiceNow is not configured for this organization", http.StatusBadRequest)
+		return
+	}
+	client, err := servicenow.New(cfg)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	query := "number=" + req.ChangeNumber
+	if req.ChangeNumber == "" {
+		query = "cmdb_ci.name=" + req.CI + "^active=true^ORDERBYDESCsys_updated_on"
+	}
+	cr, found, err := servicenow.QueryChangeRequest(r.Context(), client, query)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	payload := map[string]any{"found": false}
+	if found {
+		payload = servicenow.NormalizeChange(cr)
+		payload["found"] = true
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	// Evaluate against the servicenow-change attestation type's jq rules.
+	var rules pq.StringArray
+	_ = s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT jq_rules FROM attestation_types WHERE name = 'servicenow-change' AND org_id = $1 LIMIT 1`, orgID).Scan(&rules)
+	rulesOK, failed, _ := s.PolicyEngine.EvaluateAttestation(string(payloadJSON), []string(rules))
+	compliant := found && rulesOK
+
+	// Record the attestation on the trail.
+	_, err = s.q(r.Context()).ExecContext(r.Context(),
+		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, now())`,
+		uuid.New(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		_ = events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+			"trail_id": trailID.String(), "attestation": "servicenow-change", "compliant": compliant,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"compliant":     compliant,
+		"found":         found,
+		"change_number": str2(payload["number"]),
+		"failed_rules":  failed,
+	})
+}
+
+func str2(v any) string {
+	if sv, ok := v.(string); ok {
+		return sv
+	}
+	return ""
 }
 
 func (s *Server) handleGetServiceNow(w http.ResponseWriter, r *http.Request) {
