@@ -521,3 +521,33 @@ AI agents can run queries conversational style inside cursor/claude interface:
   * **Agent Action**: Calls `check_compliance` tool on `fides-mcp`.
 * **User Query**: *"Are there any active security alerts or container drifts?"*
   * **Agent Action**: Calls `list_environments` tool on `fides-mcp` to identify mismatches.
+
+---
+
+## 7. New Capabilities (Feature Reference)
+
+Recent releases added a broad set of capabilities. See the dedicated, example-rich
+references:
+
+* **[Feature guide with real examples](docs/features.md)** — evidence parsers, tamper-evidence chain, service accounts, allow-lists, environment policies, search/diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics, Slack.
+* **[Full CLI reference](docs/cli-reference.md)** — every `fides` command and flag.
+* **[ServiceNow integration](docs/servicenow-integration.md)** — CMDB / ITOM / ITSM / MCP, plus the Go-served admin page at `/servicenow`.
+* **[AWS Secrets Manager](docs/aws-secrets-manager.md)** — IRSA-based secret resolution.
+* **[Environment MCP compliance](docs/environment-mcp-compliance.md)** — live runtime verification via a real MCP server.
+
+### Quick examples
+
+```bash
+# Parse a real JUnit/Snyk/Trivy report directly into an attestation
+fides attest junit  --trail $TRAIL --file ./reports/junit.xml --artifact-sha $DIGEST
+fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
+
+# Gate a deploy on policy + approval + tamper-evidence (each exits non-zero on failure)
+fides policy check    --env $ENV --trail $TRAIL
+fides allowlist check --env $ENV --sha $DIGEST
+fides verify-chain    --trail $TRAIL
+
+# Issue a rotatable CI key and download an auditor package
+fides service-account issue-key --account $SA_ID --label github-actions --expires-hours 720
+fides audit --trail $TRAIL --output trail-audit.zip
+```
