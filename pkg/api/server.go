@@ -906,7 +906,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
 			assessment, score, err := s.LLM.EvaluateAttestation(ctx, attestation.Name, attestation.TypeName, attestation.Payload)
 			if err != nil {
