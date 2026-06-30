@@ -328,3 +328,15 @@ Fides prioritizes the secure flow of evidence. To prevent eavesdropping or tampe
    - Provide the `--encrypt` flag when running `fides attest`.
    - The CLI will automatically encrypt the payload, flag the request as encrypted, and transmit the ciphertext.
    - The Fides server will decrypt the payload on receipt using the matching key, validate policies, and store the resulting compliance data.
+
+---
+
+## New Capabilities
+
+Recent releases added evidence parsers, a tamper-evident attestation chain,
+service accounts with rotatable keys, per-environment allow-lists, environment
+policies with tags, search & snapshot diff, audit packages, ECS/Lambda
+snapshots, logical environments, DORA metrics, Slack notifications, and a
+ServiceNow admin page at `/servicenow`.
+
+See **[features.md](features.md)** for real examples and **[cli-reference.md](cli-reference.md)** for the full command list.

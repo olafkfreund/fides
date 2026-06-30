@@ -12,3 +12,17 @@
 ## Full Documentation
 
 - [Fides Full Documentation](/llms-full.txt): Concatenated version of all documentation, configuration templates, database schemas, and integration guides for direct LLM ingestion.
+
+## New capabilities (see /features.md and /cli-reference.md)
+- Evidence parsers: `fides attest junit|snyk|trivy --file <report>`
+- Tamper-evidence: `fides verify-chain --trail <id>`; GET /api/v1/trails/{id}/verify-chain
+- Service accounts + rotatable keys: `fides service-account create|issue-key|revoke-key`
+- Allow-lists: `fides allowlist add|check --env <id> --sha <hex>`
+- Environment policies + tags: `fides policy add|check --env <id>`; GET /api/v1/environments/{id}/policy-check
+- Search/diff: `fides search artifacts|attestations`; `fides env diff --env <id>`
+- Audit package: `fides audit --trail <id>`; GET /api/v1/trails/{id}/audit-package
+- Runtimes: `fides snapshot ecs|lambda`
+- Logical environments: `fides logical-env create|add-member|state`
+- DORA metrics: `fides metrics --days N`; GET /api/v1/metrics/dora
+- Slack: `fides slack config --secret-path <ref>`
+- ServiceNow admin page: /servicenow

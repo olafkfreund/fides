@@ -238,3 +238,17 @@ Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group clai
 A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
 ![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
 
+
+---
+
+## 8. Feature Reference & CLI
+
+For the capabilities added across recent releases — built-in evidence parsers,
+tamper-evident attestation chains, service accounts with rotatable keys,
+per-environment allow-lists, environment policies with tags, search & snapshot
+diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics,
+and Slack notifications — see:
+
+* **[Feature guide with real examples](/docs/features.md)**
+* **[Full CLI reference](/docs/cli-reference.md)**
+* **[ServiceNow integration](/docs/servicenow-integration.md)** (admin page at `/servicenow`)
