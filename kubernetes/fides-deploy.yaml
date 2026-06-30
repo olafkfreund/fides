@@ -169,6 +169,8 @@ spec:
           value: fides-evidence-synechron
         - name: AWS_REGION
           value: eu-west-2
+        - name: FIDES_MCP_ALLOWED_COMMANDS
+          value: "echo,/bin/echo,/usr/bin/echo"
 ---
 apiVersion: v1
 kind: Service
