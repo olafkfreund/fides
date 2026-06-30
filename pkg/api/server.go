@@ -19,6 +19,7 @@ import (
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
 	"fides/pkg/db"
+	"fides/pkg/events"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
 	"fides/pkg/policy"
@@ -1035,6 +1036,24 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := tx.Commit(); err != nil {
 		internalError(w, err)
 		return
+	}
+
+	// Emit an integration event for downstream gates/alerts (opt-in via
+	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
+	// failure here must not fail the request.
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
+		if orgID, ok := principalOrg(r); ok {
+			payload := map[string]any{
+				"environment_id": envID.String(),
+				"snapshot_id":    snapshotID.String(),
+				"compliant":      isCompliant,
+				"shadows":        shadows,
+				"drifts":         drifts,
+			}
+			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.noncompliant", payload); err != nil {
+				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

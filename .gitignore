@@ -19,3 +19,6 @@ fides-evidence/
 .idea/
 .vscode/
 *.log
+
+# devenv
+.devenv/
