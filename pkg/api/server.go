@@ -163,15 +163,15 @@ func limitBody(next http.Handler) http.Handler {
 // Everything else under /api/v1 requires a valid bearer token.
 func isPublicPath(path string) bool {
 	publicExact := map[string]bool{
-		"/healthz":                  true,
-		"/metrics":                  true,
-		"/api/v1/auth/login":        true,
-		"/api/v1/auth/callback":     true,
-		"/api/v1/auth/local-login":  true,
-		"/api/v1/swagger.json":      true,
-		"/swagger":                  true,
-		"/llms.txt":                 true,
-		"/llms-full.txt":            true,
+		"/healthz":                 true,
+		"/metrics":                 true,
+		"/api/v1/auth/login":       true,
+		"/api/v1/auth/callback":    true,
+		"/api/v1/auth/local-login": true,
+		"/api/v1/swagger.json":     true,
+		"/swagger":                 true,
+		"/llms.txt":                true,
+		"/llms-full.txt":           true,
 	}
 	if publicExact[path] {
 		return true
@@ -204,13 +204,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// 1. Basic Auth check if portal credentials are set
 		if portalUser != "" && portalPass != "" {
 			username, password, ok := r.BasicAuth()
-			if ok && username == portalUser && password == portalPass {
-				orgIDStr := os.Getenv("FIDES_API_ORG_ID")
-				if orgIDStr == "" {
-					orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
+			if ok && constantTimeEquals(username, portalUser) && constantTimeEquals(password, portalPass) {
+				orgID, configured := portalTenant()
+				if !configured {
+					http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+					return
 				}
-				orgID, _ := uuid.Parse(orgIDStr)
-				principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "session", Email: "admin@fides.internal"}
+				principal := s.resolvePortalPrincipal(r.Context(), orgID, username)
 				s.serveAuthenticated(w, r, principal, next)
 				return
 			}
@@ -1228,14 +1228,14 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 	}
 
 	type EnvironmentView struct {
-		ID            string             `json:"id"`
-		Name          string             `json:"name"`
-		Type          string             `json:"type"`
-		Description   string             `json:"description"`
-		LastSnapshot  string             `json:"lastSnapshot"`
-		Running       []RuntimeArtifact  `json:"running"`
-		Drifts        []string           `json:"drifts"`
-		ShadowChanges []string           `json:"shadowChanges"`
+		ID            string            `json:"id"`
+		Name          string            `json:"name"`
+		Type          string            `json:"type"`
+		Description   string            `json:"description"`
+		LastSnapshot  string            `json:"lastSnapshot"`
+		Running       []RuntimeArtifact `json:"running"`
+		Drifts        []string          `json:"drifts"`
+		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
 	ev := EnvironmentView{
@@ -1254,10 +1254,10 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 	var snapTime time.Time
 	querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
 	err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, envID).Scan(&latestSnapID, &snapTime)
-	
+
 	if err == nil {
 		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-		
+
 		// Query running artifacts in snapshot
 		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
 		            FROM snapshot_artifacts sa
@@ -1270,7 +1270,7 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 				var ra RuntimeArtifact
 				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
 					ev.Running = append(ev.Running, ra)
-					
+
 					if !ra.Registered {
 						ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
 					} else {
@@ -1292,13 +1292,13 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 
 	// Fetch MCP servers configured for this environment
 	type MCPServerView struct {
-		ID            string             `json:"id"`
-		Name          string             `json:"name"`
-		Transport     string             `json:"transport"`
-		Command       string             `json:"command"`
-		Args          []string           `json:"args"`
-		URL           string             `json:"url"`
-		AuthHeader    string             `json:"auth_header"`
+		ID         string   `json:"id"`
+		Name       string   `json:"name"`
+		Transport  string   `json:"transport"`
+		Command    string   `json:"command"`
+		Args       []string `json:"args"`
+		URL        string   `json:"url"`
+		AuthHeader string   `json:"auth_header"`
 	}
 	var mcpServers []MCPServerView
 	queryMcp := `SELECT id, name, transport, COALESCE(command, ''), args, COALESCE(url, ''), COALESCE(auth_header, '') 
@@ -1870,6 +1870,46 @@ type localLoginReq struct {
 	Password string `json:"password"`
 }
 
+// portalTenant returns the tenant for portal/basic auth. The org MUST be
+// configured via FIDES_API_ORG_ID — there is no hardcoded default (H2/IDOR).
+func portalTenant() (uuid.UUID, bool) {
+	id, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
+	if err != nil {
+		return uuid.UUID{}, false
+	}
+	return id, true
+}
+
+// constantTimeEquals compares two strings without leaking length-independent
+// timing, used for credential checks.
+func constantTimeEquals(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+// resolvePortalPrincipal builds the principal for an authenticated portal admin.
+// The role is read from the user's DB record resolved WITHIN the tenant's org
+// scope (so it is correct even when RLS is enabled). If the admin is not
+// provisioned as a user, they retain the bootstrap Admin role implied by holding
+// the configured PORTAL_PASSWORD secret.
+func (s *Server) resolvePortalPrincipal(ctx context.Context, orgID uuid.UUID, email string) *auth.Principal {
+	p := &auth.Principal{OrgID: orgID, Email: email, Role: auth.RoleAdmin, Kind: "session"}
+	if s.DB != nil {
+		_ = db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
+			var id uuid.UUID
+			var role string
+			if err := tx.QueryRowContext(ctx,
+				`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, email,
+			).Scan(&id, &role); err != nil {
+				return err
+			}
+			p.UserID = id
+			p.Role = role
+			return nil
+		})
+	}
+	return p
+}
+
 func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1890,38 +1930,21 @@ func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Username != portalUser || req.Password != portalPass {
+	// Constant-time credential comparison.
+	userOK := constantTimeEquals(req.Username, portalUser)
+	passOK := constantTimeEquals(req.Password, portalPass)
+	if !userOK || !passOK {
 		http.Error(w, "invalid username or password", http.StatusUnauthorized)
 		return
 	}
 
-	orgIDStr := os.Getenv("FIDES_API_ORG_ID")
-	if orgIDStr == "" {
-		orgIDStr = "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
-	}
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		orgID = uuid.MustParse("5d57b8c7-4328-4e1b-93df-4161b9a918a3")
+	orgID, configured := portalTenant()
+	if !configured {
+		http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+		return
 	}
 
-	principal := auth.Principal{
-		OrgID: orgID,
-		Email: req.Username,
-		Role:  auth.RoleAdmin,
-		Kind:  "session",
-	}
-
-	if s.DB != nil {
-		var userID uuid.UUID
-		var role string
-		err = s.DB.QueryRowContext(r.Context(),
-			`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, req.Username,
-		).Scan(&userID, &role)
-		if err == nil {
-			principal.UserID = userID
-			principal.Role = role
-		}
-	}
+	principal := *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
 
 	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
 	if err != nil {

@@ -165,7 +165,9 @@ func TestLocalLoginFlow(t *testing.T) {
 		t.Fatalf("expected 401, got %d", rec.Code)
 	}
 
-	// 3. Correct credentials -> returns 200 and sets cookie
+	// 3. Correct credentials -> returns 200 and sets cookie.
+	// The portal tenant must be configured (no hardcoded default org — H2).
+	t.Setenv("FIDES_API_ORG_ID", uuid.NewString())
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/local-login", strings.NewReader(`{"username":"admin","password":"secret"}`))
 	rec = httptest.NewRecorder()
 	s.handleLocalLogin(rec, req)
