@@ -147,6 +147,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/users", s.handleListUsers)
 	mux.HandleFunc("POST /api/v1/tenant/users", s.handleSaveUser)
 	mux.HandleFunc("POST /api/v1/tenant/users/{id}/password", s.handleSetUserPassword)
+
+	// Service accounts + API keys (machine-to-machine auth, rotation/revocation)
+	mux.HandleFunc("GET /api/v1/tenant/service-accounts", s.handleListServiceAccounts)
+	mux.HandleFunc("POST /api/v1/tenant/service-accounts", s.handleCreateServiceAccount)
+	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/keys", s.handleIssueServiceAccountKey)
+	mux.HandleFunc("DELETE /api/v1/tenant/service-accounts/{id}/keys/{keyId}", s.handleRevokeServiceAccountKey)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
 	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
 
@@ -277,6 +283,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		// 4. Static service bearer token.
+		// The env service token gates whether API auth is configured at all.
 		expected := os.Getenv("FIDES_API_TOKEN")
 		if expected == "" {
 			http.Error(w, "API authentication is not configured on the server", http.StatusServiceUnavailable)
@@ -290,23 +297,26 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
 		}
-
 		presented := strings.TrimPrefix(authz, prefix)
-		// Constant-time comparison to avoid token-timing leaks.
-		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) != 1 {
-			http.Error(w, "invalid credentials", http.StatusUnauthorized)
+
+		// 1) Static env service token (constant-time compare; tenant from FIDES_API_ORG_ID).
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(expected)) == 1 {
+			orgID, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
+			if err != nil {
+				http.Error(w, "service token tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+				return
+			}
+			s.serveAuthenticated(w, r, &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "service"}, next)
 			return
 		}
 
-		// The service token must be bound to a tenant via FIDES_API_ORG_ID.
-		orgID, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
-		if err != nil {
-			http.Error(w, "service token tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
+		// 2) Per-tenant service-account API key.
+		if p := s.authServiceAccountKey(r.Context(), presented); p != nil {
+			s.serveAuthenticated(w, r, p, next)
 			return
 		}
 
-		principal := &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin, Kind: "service"}
-		s.serveAuthenticated(w, r, principal, next)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 	})
 }
 

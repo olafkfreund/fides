@@ -342,6 +342,30 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 23b. Service Accounts (machine-to-machine auth) + their API keys
+CREATE TABLE IF NOT EXISTS service_accounts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    role VARCHAR(50) NOT NULL DEFAULT 'Writer', -- 'Admin','Auditor','Writer','Viewer'
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS service_account_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_account_id UUID NOT NULL REFERENCES service_accounts(id) ON DELETE CASCADE,
+    prefix VARCHAR(32) NOT NULL UNIQUE, -- public lookup id (the secret is never stored)
+    key_hash VARCHAR(255) NOT NULL,     -- scrypt hash of the key secret
+    label VARCHAR(100),
+    expires_at TIMESTAMP WITH TIME ZONE, -- NULL = no expiry
+    revoked_at TIMESTAMP WITH TIME ZONE,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_service_account_keys_prefix ON service_account_keys(prefix);
+
 -- 24. Tenant ServiceNow Settings (CMDB / ITOM / ITSM integration)
 CREATE TABLE IF NOT EXISTS tenant_servicenow_settings (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
