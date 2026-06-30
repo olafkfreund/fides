@@ -252,3 +252,15 @@ type TenantGitProvider struct {
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
+
+type TenantServiceNowSettings struct {
+	ID          uuid.UUID `json:"id" db:"id"`
+	OrgID       uuid.UUID `json:"org_id" db:"org_id"`
+	InstanceURL string    `json:"instance_url" db:"instance_url"`
+	AuthType    string    `json:"auth_type" db:"auth_type"` // basic | oauth2
+	ClientID    string    `json:"client_id" db:"client_id"`
+	SecretPath  string    `json:"secret_path" db:"secret_path"` // reference, not the secret
+	Enabled     bool      `json:"enabled" db:"enabled"`
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+}

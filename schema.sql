@@ -334,5 +334,20 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 24. Tenant ServiceNow Settings (CMDB / ITOM / ITSM integration)
+CREATE TABLE IF NOT EXISTS tenant_servicenow_settings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE UNIQUE,
+    instance_url VARCHAR(512) NOT NULL,    -- https://<instance>.service-now.com
+    auth_type VARCHAR(20) NOT NULL DEFAULT 'basic', -- 'basic' | 'oauth2'
+    client_id VARCHAR(255) NOT NULL,       -- Basic username OR OAuth client_id
+    secret_path VARCHAR(255) NOT NULL,     -- password/client_secret reference (env/vault)
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_tenant_servicenow_settings_org_id ON tenant_servicenow_settings(org_id);
+
 
 
