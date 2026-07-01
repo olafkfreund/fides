@@ -71,8 +71,13 @@ func TestDeriveKeyRejectsEmpty(t *testing.T) {
 func TestDecryptRejectsTamperedCiphertext(t *testing.T) {
 	key, _ := DeriveKey("another-test-passphrase")
 	ct, _ := Encrypt([]byte("data"), key)
-	// Flip a character in the base64 ciphertext.
-	tampered := "A" + ct[1:]
+	// Flip the first base64 character to one guaranteed to differ from the
+	// original (the random nonce means it could already be 'A').
+	first := "A"
+	if ct[0] == 'A' {
+		first = "B"
+	}
+	tampered := first + ct[1:]
 	if _, err := Decrypt(tampered, key); err == nil {
 		t.Fatalf("expected decryption of tampered ciphertext to fail")
 	}
