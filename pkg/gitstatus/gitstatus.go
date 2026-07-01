@@ -11,8 +11,10 @@ import (
 
 // Provider identifies the SCM platform.
 const (
-	ProviderGitHub = "github"
-	ProviderGitLab = "gitlab"
+	ProviderGitHub      = "github"
+	ProviderGitLab      = "gitlab"
+	ProviderBitbucket   = "bitbucket"
+	ProviderAzureDevOps = "azure-devops"
 )
 
 // Repo is a parsed git remote.
@@ -84,6 +86,20 @@ func githubState(compliant bool) string {
 func gitlabState(compliant bool) string {
 	if compliant {
 		return "success"
+	}
+	return "failed"
+}
+
+func bitbucketState(compliant bool) string {
+	if compliant {
+		return "SUCCESSFUL"
+	}
+	return "FAILED"
+}
+
+func azureState(compliant bool) string {
+	if compliant {
+		return "succeeded"
 	}
 	return "failed"
 }

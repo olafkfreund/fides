@@ -272,7 +272,7 @@ function GitWebhooksTab() {
       <div className={panel}>
         <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Git provider</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <select className={input} value={gp.provider} onChange={(e) => setGp({ ...gp, provider: e.target.value })}><option>github</option><option>gitlab</option></select>
+          <select className={input} value={gp.provider} onChange={(e) => setGp({ ...gp, provider: e.target.value })}><option>github</option><option>gitlab</option><option value="bitbucket">bitbucket</option><option value="azure-devops">azure-devops</option></select>
           <input className={input} placeholder="host (github.com)" onChange={(e) => setGp({ ...gp, host: e.target.value })} />
           <input className={input} placeholder="api base" onChange={(e) => setGp({ ...gp, api_base: e.target.value })} />
           <input className={input} placeholder="token reference" onChange={(e) => setGp({ ...gp, token_path: e.target.value })} />

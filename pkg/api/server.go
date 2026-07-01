@@ -3043,8 +3043,9 @@ func (s *Server) handleSaveGitProvider(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	if (gp.Provider != "github" && gp.Provider != "gitlab") || gp.Host == "" || gp.APIBase == "" || gp.TokenPath == "" {
-		http.Error(w, "provider (github|gitlab), host, api_base, and token_path are required", http.StatusBadRequest)
+	validGitProvider := map[string]bool{"github": true, "gitlab": true, "bitbucket": true, "azure-devops": true}
+	if !validGitProvider[gp.Provider] || gp.Host == "" || gp.APIBase == "" || gp.TokenPath == "" {
+		http.Error(w, "provider (github|gitlab|bitbucket|azure-devops), host, api_base, and token_path are required", http.StatusBadRequest)
 		return
 	}
 	_, err := s.q(r.Context()).ExecContext(r.Context(),
