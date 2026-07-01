@@ -71,6 +71,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PUT /api/v1/flows", s.handleUpdateFlow)
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
 	mux.HandleFunc("GET /api/v1/flows/{id}/trails", s.handleListFlowTrails)
+	mux.HandleFunc("GET /api/v1/flows/{id}/artifacts", s.handleListFlowArtifacts)
 
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)

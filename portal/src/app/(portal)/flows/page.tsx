@@ -6,6 +6,7 @@ import { apiGet, apiPost } from "@/lib/api";
 
 type Flow = { id: string; name: string; description?: string; created_at?: string; updated_at?: string; tags?: Record<string, string> | string[] | null };
 type Trail = { id: string; name: string; git_commit?: string; git_branch?: string; created_at?: string; attestations: number; compliant: boolean };
+type FlowArtifact = { sha256: string; name: string; type?: string; git_commit?: string; created_at?: string; compliant: boolean };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
 
 function tagList(tags: Flow["tags"]): string[] {
@@ -23,6 +24,8 @@ export default function Flows() {
   const [nName, setNName] = useState(""); const [nDesc, setNDesc] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [trailsByFlow, setTrailsByFlow] = useState<Record<string, Trail[]>>({});
+  const [artifactsByFlow, setArtifactsByFlow] = useState<Record<string, FlowArtifact[]>>({});
+  const [subtab, setSubtab] = useState<Record<string, "trails" | "artifacts">>({});
   const [chain, setChain] = useState<Record<string, ChainVerdict>>({});
   const [err, setErr] = useState("");
 
@@ -44,6 +47,12 @@ export default function Flows() {
         setTrailsByFlow((m) => ({ ...m, [id]: trails || [] }));
       } catch (e) { setErr(String((e as Error).message || e)); }
     }
+  };
+
+  const loadArtifacts = async (id: string) => {
+    if (artifactsByFlow[id]) return;
+    try { const a = await apiGet<FlowArtifact[]>(`/api/v1/flows/${id}/artifacts`); setArtifactsByFlow((m) => ({ ...m, [id]: a || [] })); }
+    catch (e) { setErr(String((e as Error).message || e)); }
   };
 
   const verifyTrail = async (trailId: string) => {
@@ -80,6 +89,8 @@ export default function Flows() {
             {shown.map((f) => {
               const open = expanded === f.id;
               const trails = trailsByFlow[f.id];
+              const arts = artifactsByFlow[f.id];
+              const tab = subtab[f.id] || "trails";
               return (
                 <div key={f.id} className="rounded-md border border-border">
                   <button onClick={() => toggle(f.id)} className="flex w-full items-start justify-between gap-4 p-3 text-left hover:bg-accent/50">
@@ -100,7 +111,25 @@ export default function Flows() {
 
                   {open && (
                     <div className="border-t border-border p-3">
-                      {!trails ? <p className="text-sm text-muted-foreground">Loading trails…</p> : trails.length === 0 ? (
+                      <div className="mb-3 flex gap-1">
+                        <button onClick={() => setSubtab((s) => ({ ...s, [f.id]: "trails" }))} className={`rounded-md px-3 py-1 text-xs ${tab === "trails" ? "bg-primary/15 text-foreground" : "text-muted-foreground"}`}>Trails</button>
+                        <button onClick={() => { setSubtab((s) => ({ ...s, [f.id]: "artifacts" })); loadArtifacts(f.id); }} className={`rounded-md px-3 py-1 text-xs ${tab === "artifacts" ? "bg-primary/15 text-foreground" : "text-muted-foreground"}`}>Artifacts</button>
+                      </div>
+                      {tab === "artifacts" ? (
+                        !arts ? <p className="text-sm text-muted-foreground">Loading artifacts…</p> : arts.length === 0 ? <p className="text-sm text-muted-foreground">No artifacts recorded for this flow.</p> : (
+                          <div className="flex flex-col gap-2">
+                            {arts.map((a) => (
+                              <div key={a.sha256} className="rounded-md border border-border p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="flex items-center gap-1.5 text-sm font-medium">{a.compliant ? <ShieldCheck className="size-4 text-green-400" /> : <ShieldAlert className="size-4 text-red-400" />}{a.name} <span className="text-xs font-normal text-muted-foreground">· {a.type}</span></span>
+                                  <span className="font-mono text-xs text-muted-foreground">{a.git_commit ? a.git_commit.slice(0, 10) : ""}</span>
+                                </div>
+                                <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{a.sha256}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      ) : !trails ? <p className="text-sm text-muted-foreground">Loading trails…</p> : trails.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No trails recorded for this flow yet.</p>
                       ) : (
                         <div className="flex flex-col gap-2">
