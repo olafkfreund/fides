@@ -259,7 +259,7 @@ func handleSlack(config CLIConfig, args []string) {
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive> [flags]")
+		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|archive|unarchive> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -295,6 +295,19 @@ func handleControl(config CLIConfig, args []string) {
 		body, err := getRequest(config, "/api/v1/controls/coverage")
 		fail(err, "controls coverage")
 		fmt.Println(body)
+	case "frameworks":
+		body, err := getRequest(config, "/api/v1/frameworks")
+		fail(err, "list frameworks")
+		fmt.Println(body)
+	case "import":
+		cmd := flag.NewFlagSet("control import", flag.ExitOnError)
+		framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+		cmd.Parse(args[1:])
+		if *framework == "" {
+			fmt.Println("Error: --framework is required (see: fides control frameworks)")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/controls/import-framework", map[string]any{"framework": *framework}, "Framework controls imported")
 	case "archive", "unarchive":
 		cmd := flag.NewFlagSet("control "+args[0], flag.ExitOnError)
 		id := cmd.String("id", "", "control UUID")
@@ -305,7 +318,7 @@ func handleControl(config CLIConfig, args []string) {
 		}
 		post(config, "/api/v1/controls/"+*id+"/"+args[0], map[string]any{}, "Done")
 	default:
-		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive>")
+		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|archive|unarchive>")
 		os.Exit(1)
 	}
 }
