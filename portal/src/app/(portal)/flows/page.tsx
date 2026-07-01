@@ -3,8 +3,14 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 
-type Flow = { id: string; name: string; description?: string; created_at?: string };
+type Flow = { id: string; name: string; description?: string; created_at?: string; updated_at?: string; tags?: Record<string, string> | string[] | null };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
+
+function tagList(tags: Flow["tags"]): string[] {
+  if (!tags) return [];
+  if (Array.isArray(tags)) return tags.map(String);
+  return Object.entries(tags).map(([k, v]) => `${k}=${v}`);
+}
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 const panel = "rounded-xl border border-border bg-card p-5";
@@ -14,6 +20,7 @@ export default function Flows() {
   const [trail, setTrail] = useState("");
   const [chain, setChain] = useState<ChainVerdict | null>(null);
   const [nName, setNName] = useState(""); const [nDesc, setNDesc] = useState("");
+  const [ffilter, setFfilter] = useState("");
   const [err, setErr] = useState("");
 
   const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
@@ -47,18 +54,32 @@ export default function Flows() {
           </div>
         </div>
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Flows</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Flows</h2>
+            <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={ffilter} onChange={(e) => setFfilter(e.target.value)} placeholder="Filter by name…" />
+          </div>
           {flows.length > 0 ? (
-            <table className="w-full text-left text-sm">
-              <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Description</th><th>Created</th></tr></thead>
-              <tbody>{flows.map((f) => (
-                <tr key={f.id} className="border-t border-border">
-                  <td className="py-2 font-mono">{f.name}</td>
-                  <td className="text-muted-foreground">{f.description}</td>
-                  <td className="text-muted-foreground">{(f.created_at || "").replace("T", " ").slice(0, 19)}</td>
-                </tr>
-              ))}</tbody>
-            </table>
+            <div className="flex flex-col gap-2">
+              {flows.filter((f) => f.name.toLowerCase().includes(ffilter.toLowerCase())).map((f) => (
+                <div key={f.id} className="rounded-md border border-border p-3">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <span className="font-semibold">{f.name}</span>
+                      {f.description && <div className="mt-0.5 text-sm text-muted-foreground">{f.description}</div>}
+                      {tagList(f.tags).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {tagList(f.tags).map((t) => <span key={t} className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t}</span>)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right text-xs text-muted-foreground">
+                      <div>last change</div>
+                      <div>{((f.updated_at || f.created_at) || "").replace("T", " ").slice(0, 19)}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : <p className="text-sm text-muted-foreground">No flows.</p>}
         </div>
 
