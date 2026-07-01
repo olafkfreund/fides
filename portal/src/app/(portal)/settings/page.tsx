@@ -12,6 +12,15 @@ function Msg({ m }: { m: { t: string; ok: boolean } }) {
   return m.t ? <span className={`ml-3 text-sm ${m.ok ? "text-green-400" : "text-red-400"}`}>{m.t}</span> : null;
 }
 
+function Help({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-4 flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
+      <svg className="mt-0.5 size-4 shrink-0 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
+      <span>{children}</span>
+    </div>
+  );
+}
+
 type Dict = Record<string, unknown>;
 function Field({ label, obj, set, k, ph, type }: { label: string; obj: Dict; set: (o: Dict) => void; k: string; ph?: string; type?: string }) {
   return (
@@ -128,6 +137,7 @@ function DirectoryTab() {
   };
   return (
     <div className={panel}>
+      <Help>When SSO is enabled, users sign in via your identity provider. These mappings translate an <strong>IdP group</strong> (e.g. <code className="rounded bg-muted px-1">platform-admins</code>) into a Fides <strong>role</strong>, so access is managed centrally in your directory instead of per-user here.</Help>
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Map an SSO/IdP group to a Fides role</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input className={input} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="external group (e.g. platform-admins)" />
@@ -179,6 +189,7 @@ function SlackTab() {
   const save = async () => { try { await apiPost("/api/v1/tenant/slack", { webhook_secret_path: secret, enabled }); setM({ t: "Saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <div className={panel}>
+      <Help>Send real-time compliance alerts to Slack. Store your Slack incoming-webhook URL in your secrets backend and reference it here (e.g. <code className="rounded bg-muted px-1">fides/slack-webhook</code>). Fides posts to it when a build fails a policy or an environment drifts.</Help>
       <label className="text-sm"><span className="text-muted-foreground">Incoming-webhook secret reference</span><input className={input} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="fides/slack-webhook" /></label>
       <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
       <div className="mt-4"><button onClick={save} className={btn}>Save</button><Msg m={m} /></div>
@@ -197,13 +208,23 @@ function ServiceAccountsTab() {
   const issue = async (id: string) => { try { const r = await apiPost<{ api_key: string }>(`/api/v1/tenant/service-accounts/${id}/keys`, { label: "portal", expires_hours: 0 }); setKey(r.api_key); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <div className={panel}>
+      <Help>A <strong>service account</strong> is a machine identity for CI/CD. Your pipeline authenticates as one (via an API key set as <code className="rounded bg-muted px-1">FIDES_API_TOKEN</code>) to record attestations, snapshots, and approvals — no human login. Create an account, choose a role (Writer for pipelines, Auditor for read-only), then <strong>issue a key</strong> and paste it into your CI secrets.</Help>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
+        <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="name (ci-pipeline)" />
         <select className={input} value={role} onChange={(e) => setRole(e.target.value)}><option>Writer</option><option>Admin</option><option>Auditor</option><option>Viewer</option></select>
         <button onClick={create} className={btn}>Create</button>
       </div>
       <Msg m={m} />
-      {key && <pre className="mt-3 rounded-md border border-border bg-background p-3 text-xs text-green-400">Save this key now (shown once):{"\n"}{key}</pre>}
+      {key && (
+        <div className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3">
+          <div className="mb-1 text-xs font-semibold text-foreground">API key — copy it now, it is shown only once:</div>
+          <div className="flex items-center gap-2">
+            <code className="select-all break-all font-mono text-xs text-green-400">{key}</code>
+            <button onClick={() => navigator.clipboard?.writeText(key)} className="shrink-0 rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground">Copy</button>
+          </div>
+          <div className="mt-1 text-[11px] text-muted-foreground">Use as: <code className="rounded bg-muted px-1">export FIDES_API_TOKEN=…</code> in your CI.</div>
+        </div>
+      )}
       {list.length > 0 && (
         <table className="mt-4 w-full text-left text-sm font-mono">
           <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Role</th><th>Keys</th><th></th></tr></thead>
@@ -247,6 +268,7 @@ function GitWebhooksTab() {
   const saveHook = async () => { try { await api("POST", "/api/v1/tenant/webhooks", { name: wh.name || "", url: wh.url || "", secret_path: wh.secret_path || "", event_types: [], enabled: true }); setM({ t: "Webhook saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <div className="flex flex-col gap-5">
+      <Help>Connect a <strong>Git provider</strong> so Fides can post commit-status checks back to PRs and receive signed push webhooks that auto-create trails. <strong>Outbound webhooks</strong> forward compliance events to any HTTPS endpoint (HMAC-signed) — e.g. your own automation or an incident tool.</Help>
       <div className={panel}>
         <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Git provider</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
