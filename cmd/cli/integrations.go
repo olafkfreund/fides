@@ -256,6 +256,20 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
+// fides report --framework <name> — auditor-ready framework report.
+func handleReport(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("report", flag.ExitOnError)
+	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+	cmd.Parse(args)
+	if *framework == "" {
+		fmt.Println("Usage: fides report --framework <name>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/reports/framework/"+*framework)
+	fail(err, "framework report")
+	fmt.Println(body)
+}
+
 // fides change-gate --trail <id> — evidence-backed approval verdict + risk score.
 func handleChangeGate(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("change-gate", flag.ExitOnError)
