@@ -13,10 +13,10 @@ type Dora = {
 
 function Card({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-5">
-      <div className="text-xs uppercase tracking-wide text-neutral-500">{label}</div>
+    <div className="rounded-xl border border-border bg-card p-5">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="mt-2 text-2xl font-semibold">{value}</div>
-      {sub && <div className="mt-1 text-xs text-neutral-500">{sub}</div>}
+      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
     </div>
   );
 }
@@ -34,7 +34,7 @@ export default function Overview() {
   return (
     <div>
       <h1 className="text-xl font-semibold">Overview</h1>
-      <p className="mt-1 text-sm text-neutral-500">Real-time compliance status (last 30 days).</p>
+      <p className="mt-1 text-sm text-muted-foreground">Real-time compliance status (last 30 days).</p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card label="Flows" value={flows === null ? "…" : String(flows)} />

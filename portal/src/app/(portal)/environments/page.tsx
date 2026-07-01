@@ -8,8 +8,8 @@ type MCPConn = { id: string; name: string; transport: string; command?: string }
 type Verdict = { compliant: boolean; failed_rules?: string[]; raw_response?: string };
 type Approval = { artifact_sha256: string; approved_by?: string; reason?: string };
 
-const input = "w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-200";
-const panel = "rounded-xl border border-neutral-800 bg-neutral-900 p-5";
+const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
+const panel = "rounded-xl border border-border bg-card p-5";
 
 export default function Environments() {
   const [envs, setEnvs] = useState<Env[]>([]);
@@ -64,12 +64,12 @@ export default function Environments() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-xl font-semibold">Environments</h1>
-      <p className="mt-1 text-sm text-neutral-500">Runtime compliance verification and artifact approvals.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Runtime compliance verification and artifact approvals.</p>
 
       <div className="mt-6 flex flex-col gap-5">
         <div className={panel}>
           <label className="text-sm">
-            <span className="text-neutral-500">Environment</span>
+            <span className="text-muted-foreground">Environment</span>
             <select className={input} value={sel} onChange={(e) => setSel(e.target.value)}>
               {envs.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
             </select>
@@ -77,46 +77,46 @@ export default function Environments() {
         </div>
 
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">MCP compliance check</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">MCP compliance check</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="text-sm"><span className="text-neutral-500">Connection</span>
+            <label className="text-sm"><span className="text-muted-foreground">Connection</span>
               <select className={input} value={server} onChange={(e) => setServer(e.target.value)}>
                 {conns.map((c) => <option key={c.id} value={c.name}>{c.name} ({c.transport})</option>)}
               </select>
             </label>
-            <label className="text-sm"><span className="text-neutral-500">Tool</span>
+            <label className="text-sm"><span className="text-muted-foreground">Tool</span>
               <input className={input} value={tool} onChange={(e) => setTool(e.target.value)} />
             </label>
           </div>
-          <label className="mt-3 block text-sm"><span className="text-neutral-500">Compliance jq rules (one per line)</span>
+          <label className="mt-3 block text-sm"><span className="text-muted-foreground">Compliance jq rules (one per line)</span>
             <textarea className={`${input} h-24`} value={rules} onChange={(e) => setRules(e.target.value)} />
           </label>
           <div className="mt-3">
-            <button onClick={runVerify} className="rounded-md bg-purple-600 px-4 py-2 text-sm font-semibold text-white">Verify Compliance</button>
+            <button onClick={runVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify Compliance</button>
           </div>
           {verdict && (
             <div className="mt-4">
               <div className={`text-sm font-semibold ${verdict.compliant ? "text-green-400" : "text-red-400"}`}>
                 {verdict.compliant ? "✅ COMPLIANT" : `❌ NON-COMPLIANT — failed: ${(verdict.failed_rules || []).join("  |  ")}`}
               </div>
-              {verdict.raw_response && <pre className="mt-2 overflow-auto rounded-md border border-neutral-800 bg-neutral-950 p-3 text-xs text-green-400">{verdict.raw_response}</pre>}
+              {verdict.raw_response && <pre className="mt-2 overflow-auto rounded-md border border-border bg-background p-3 text-xs text-green-400">{verdict.raw_response}</pre>}
             </div>
           )}
         </div>
 
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Approved artifacts (allow-list)</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Approved artifacts (allow-list)</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <label className="text-sm"><span className="text-neutral-500">Artifact SHA256</span><input className={input} value={sha} onChange={(e) => setSha(e.target.value)} /></label>
-            <label className="text-sm"><span className="text-neutral-500">Reason</span><input className={input} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
+            <label className="text-sm"><span className="text-muted-foreground">Artifact SHA256</span><input className={input} value={sha} onChange={(e) => setSha(e.target.value)} /></label>
+            <label className="text-sm"><span className="text-muted-foreground">Reason</span><input className={input} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
           </div>
-          <div className="mt-3"><button onClick={addAllow} className="rounded-md bg-purple-600 px-4 py-2 text-sm font-semibold text-white">Approve</button></div>
+          <div className="mt-3"><button onClick={addAllow} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Approve</button></div>
           {allow.length > 0 ? (
             <table className="mt-4 w-full text-left text-xs font-mono">
-              <thead className="text-neutral-500"><tr><th className="py-1">SHA256</th><th>By</th><th>Reason</th></tr></thead>
-              <tbody>{allow.map((a, i) => <tr key={i} className="border-t border-neutral-800"><td className="py-1">{a.artifact_sha256}</td><td>{a.approved_by}</td><td>{a.reason}</td></tr>)}</tbody>
+              <thead className="text-muted-foreground"><tr><th className="py-1">SHA256</th><th>By</th><th>Reason</th></tr></thead>
+              <tbody>{allow.map((a, i) => <tr key={i} className="border-t border-border"><td className="py-1">{a.artifact_sha256}</td><td>{a.approved_by}</td><td>{a.reason}</td></tr>)}</tbody>
             </table>
-          ) : <p className="mt-3 text-sm text-neutral-500">No approvals.</p>}
+          ) : <p className="mt-3 text-sm text-muted-foreground">No approvals.</p>}
         </div>
 
         {err && <p className="text-sm text-red-400">{err}</p>}
