@@ -74,6 +74,7 @@ export default function Controls() {
               <option value="SOC2">SOC 2</option><option value="ISO27001">ISO 27001</option><option value="NIST-800-53">NIST 800-53</option><option value="PCI-DSS">PCI-DSS</option><option value="DORA">DORA</option><option value="PSD2">PSD2</option><option value="SOX">SOX</option>
             </select>
             <button onClick={importFramework} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Import controls</button>
+            <a href={`/api/v1/reports/framework/${adopt}`} target="_blank" className="rounded-md border border-border px-4 py-2 text-sm">Audit report</a>
           </div>
         </div>
 
