@@ -1,17 +1,22 @@
-// Fides portal enhancement: injects an "Integrations" tab into the Settings
-// page's tab strip and renders the Go-served /admin console inside it.
-//
-// The portal is a pre-compiled React SPA (no source in the repo), so this is a
-// runtime enhancement served by the Go server from web/. It does NOT modify the
-// SPA bundle; it clones the existing tab styling and overlays an iframe of
-// /admin. A poll re-injects the tab if React re-renders the strip.
+// Fides portal enhancement: injects Go-served admin pages as tabs in the
+// Settings page's tab strip. The portal is a pre-compiled React SPA (no source
+// in the repo), so this is a runtime enhancement served by the Go server from
+// web/ — it does NOT modify the SPA bundle. It clones the existing tab styling,
+// injects our tabs, and renders the target page in a shared same-origin iframe.
+// A poll re-injects if React re-renders; everything is try/catch-guarded so it
+// can never break the portal.
 (function () {
   "use strict";
-  var BTN_ID = "fides-integrations-tab";
-  var FRAME_ID = "fides-admin-frame";
+  var FRAME_ID = "fides-embed-frame";
   var BASE = "px-4 py-2 text-xs font-semibold rounded-lg border transition-all";
   var ACTIVE = "bg-primary/10 border-primary/20 text-foreground";
   var INACTIVE = "bg-transparent border-transparent text-muted-foreground hover:text-foreground";
+
+  // Tabs to inject (order = display order after the native tabs).
+  var TABS = [
+    { id: "fides-servicenow-tab", label: "ServiceNow", src: "/servicenow" },
+    { id: "fides-integrations-tab", label: "Integrations", src: "/admin" }
+  ];
 
   function onSettings() {
     return Array.prototype.some.call(
@@ -31,8 +36,7 @@
     if (!f) {
       f = document.createElement("iframe");
       f.id = FRAME_ID;
-      f.src = "/admin";
-      f.title = "Fides Admin Console";
+      f.title = "Fides embedded admin";
       f.style.cssText = "position:fixed;border:1px solid #262626;border-radius:10px;background:#0a0a0a;z-index:40;display:none";
       document.body.appendChild(f);
       window.addEventListener("resize", position);
@@ -51,38 +55,56 @@
     f.style.width = r.width + "px";
     f.style.height = (window.innerHeight - r.bottom - 30) + "px";
   }
-  function show() { getFrame().style.display = "block"; position(); }
-  function hide() { var f = document.getElementById(FRAME_ID); if (f) f.style.display = "none"; }
-  function setActive(on) {
-    var b = document.getElementById(BTN_ID);
-    if (b) b.className = BASE + " " + (on ? ACTIVE : INACTIVE);
+  function showSrc(src) {
+    var f = getFrame();
+    if (f.getAttribute("src") !== src) f.setAttribute("src", src);
+    f.style.display = "block";
+    position();
   }
+  function hide() { var f = document.getElementById(FRAME_ID); if (f) f.style.display = "none"; }
+
+  // Which of our tabs (if any) is currently active (frame visible on that src).
+  function activeSrc() {
+    var f = document.getElementById(FRAME_ID);
+    return (f && f.style.display === "block") ? f.getAttribute("src") : null;
+  }
+  function syncActive() {
+    var cur = activeSrc();
+    TABS.forEach(function (t) {
+      var b = document.getElementById(t.id);
+      if (b) b.className = BASE + " " + (cur === t.src ? ACTIVE : INACTIVE);
+    });
+  }
+
   function ensure() {
     try {
       if (!onSettings()) { hide(); return; }
       var s = tabStrip();
       if (!s) return;
-      // Hide our panel when a native settings tab is clicked.
+      var ourIds = TABS.map(function (t) { return t.id; });
+      // Native tabs hide our frame when clicked.
       Array.prototype.forEach.call(s.children, function (c) {
-        if (c.id !== BTN_ID && !c.__fidesHook) {
+        if (ourIds.indexOf(c.id) === -1 && !c.__fidesHook) {
           c.__fidesHook = 1;
-          c.addEventListener("click", function () { hide(); setActive(false); });
+          c.addEventListener("click", function () { hide(); syncActive(); });
         }
       });
-      var b = document.getElementById(BTN_ID);
-      if (!b) {
-        b = document.createElement("button");
-        b.id = BTN_ID;
-        b.type = "button";
-        b.textContent = "Integrations";
-        b.className = BASE + " " + INACTIVE;
-        b.addEventListener("click", function () { setActive(true); show(); });
-        s.appendChild(b);
-      } else if (b.parentElement !== s) {
-        s.appendChild(b); // React recreated the strip — re-attach.
-      }
-      var f = document.getElementById(FRAME_ID);
-      setActive(!!(f && f.style.display === "block"));
+      // Inject each of our tabs if missing / re-attach if React moved them.
+      TABS.forEach(function (t) {
+        var b = document.getElementById(t.id);
+        if (!b) {
+          b = document.createElement("button");
+          b.id = t.id;
+          b.type = "button";
+          b.textContent = t.label;
+          b.className = BASE + " " + INACTIVE;
+          b.addEventListener("click", function () { showSrc(t.src); syncActive(); });
+          s.appendChild(b);
+        } else if (b.parentElement !== s) {
+          s.appendChild(b);
+        }
+      });
+      syncActive();
     } catch (e) { /* never break the portal */ }
   }
   setInterval(ensure, 700);
