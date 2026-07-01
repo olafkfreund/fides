@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, X, Send } from "lucide-react";
 import { apiPost } from "@/lib/api";
+import Md from "@/components/Md";
 
 type Msg = { role: "user" | "assistant"; content: string };
 
@@ -45,8 +46,8 @@ export default function AIAssistant() {
           <div className="flex-1 space-y-3 overflow-auto p-3 text-sm">
             {msgs.map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
-                <span className={`inline-block max-w-[85%] whitespace-pre-wrap rounded-lg px-3 py-2 text-left ${m.role === "user" ? "bg-primary/15 text-foreground" : "bg-muted text-foreground"}`}>
-                  {m.content}
+                <span className={`inline-block max-w-[90%] rounded-lg px-3 py-2 text-left ${m.role === "user" ? "whitespace-pre-wrap bg-primary/15 text-foreground" : "bg-muted text-foreground [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"}`}>
+                  {m.role === "assistant" ? <Md>{m.content}</Md> : m.content}
                 </span>
               </div>
             ))}
