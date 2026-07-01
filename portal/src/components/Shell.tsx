@@ -10,7 +10,7 @@ type NavItem = { href: string; label: string; ready?: boolean };
 const NAV: NavItem[] = [
   { href: "/", label: "Overview", ready: true },
   { href: "/settings", label: "Settings", ready: true },
-  { href: "/flows", label: "Flows & Trails" },
+  { href: "/flows", label: "Flows & Trails", ready: true },
   { href: "/artifacts", label: "Artifacts & SBOM" },
   { href: "/environments", label: "Environments", ready: true },
   { href: "/policies", label: "Policies" },
