@@ -260,17 +260,39 @@ function UsersTab() {
 }
 
 /* ---------- Git & Webhooks ---------- */
+type GitProvider = { id: string; provider: string; host: string; api_base?: string; enabled: boolean };
+type Webhook = { id: string; name: string; url: string; enabled: boolean };
 function GitWebhooksTab() {
   const [gp, setGp] = useState<Record<string, string>>({ provider: "github" });
   const [wh, setWh] = useState<Record<string, string>>({});
+  const [providers, setProviders] = useState<GitProvider[]>([]);
+  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [m, setM] = useState({ t: "", ok: true });
-  const saveGit = async () => { try { await apiPost("/api/v1/tenant/git-providers", { provider: gp.provider || "github", host: gp.host || "", api_base: gp.api_base || "", token_path: gp.token_path || "", inbound_secret_path: gp.inbound_secret_path || "", enabled: true }); setM({ t: "Git provider saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
-  const saveHook = async () => { try { await api("POST", "/api/v1/tenant/webhooks", { name: wh.name || "", url: wh.url || "", secret_path: wh.secret_path || "", event_types: [], enabled: true }); setM({ t: "Webhook saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
+  const load = () => {
+    apiGet<GitProvider[]>("/api/v1/tenant/git-providers").then((p) => setProviders(p || [])).catch(() => {});
+    apiGet<Webhook[]>("/api/v1/tenant/webhooks").then((h) => setWebhooks(h || [])).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+  const saveGit = async () => { try { await apiPost("/api/v1/tenant/git-providers", { provider: gp.provider || "github", host: gp.host || "", api_base: gp.api_base || "", token_path: gp.token_path || "", inbound_secret_path: gp.inbound_secret_path || "", enabled: true }); setM({ t: "Git provider saved.", ok: true }); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
+  const saveHook = async () => { try { await api("POST", "/api/v1/tenant/webhooks", { name: wh.name || "", url: wh.url || "", secret_path: wh.secret_path || "", event_types: [], enabled: true }); setM({ t: "Webhook saved.", ok: true }); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <div className="flex flex-col gap-5">
       <Help>Connect a <strong>Git provider</strong> so Fides can post commit-status checks back to PRs and receive signed push webhooks that auto-create trails. <strong>Outbound webhooks</strong> forward compliance events to any HTTPS endpoint (HMAC-signed) — e.g. your own automation or an incident tool.</Help>
+      {providers.length > 0 && (
+        <div className={panel}>
+          <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Configured Git providers</h3>
+          <div className="flex flex-col gap-2">
+            {providers.map((p) => (
+              <div key={p.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+                <span><span className="font-medium">{p.provider}</span> <span className="text-muted-foreground">· {p.host}</span></span>
+                <span className={`rounded px-2 py-0.5 text-xs font-medium ${p.enabled ? "bg-green-500/15 text-green-400" : "bg-muted text-muted-foreground"}`}>{p.enabled ? "enabled" : "disabled"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Git provider</h3>
+        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Add Git provider</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <select className={input} value={gp.provider} onChange={(e) => setGp({ ...gp, provider: e.target.value })}><option>github</option><option>gitlab</option><option value="bitbucket">bitbucket</option><option value="azure-devops">azure-devops</option></select>
           <input className={input} placeholder="host (github.com)" onChange={(e) => setGp({ ...gp, host: e.target.value })} />
@@ -280,8 +302,21 @@ function GitWebhooksTab() {
         </div>
         <div className="mt-3"><button onClick={saveGit} className={btn}>Save provider</button></div>
       </div>
+      {webhooks.length > 0 && (
+        <div className={panel}>
+          <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Configured outbound webhooks</h3>
+          <div className="flex flex-col gap-2">
+            {webhooks.map((h) => (
+              <div key={h.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+                <span><span className="font-medium">{h.name}</span> <span className="font-mono text-xs text-muted-foreground">· {h.url}</span></span>
+                <span className={`rounded px-2 py-0.5 text-xs font-medium ${h.enabled ? "bg-green-500/15 text-green-400" : "bg-muted text-muted-foreground"}`}>{h.enabled ? "enabled" : "disabled"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Outbound webhook</h3>
+        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Add outbound webhook</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input className={input} placeholder="name" onChange={(e) => setWh({ ...wh, name: e.target.value })} />
           <input className={input} placeholder="https url" onChange={(e) => setWh({ ...wh, url: e.target.value })} />
