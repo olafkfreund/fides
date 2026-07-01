@@ -33,8 +33,8 @@ export default function Environments() {
 
   useEffect(() => {
     if (!sel) return;
-    setVerdict(null);
     apiGet<MCPConn[]>(`/api/v1/environments/mcp?environment_id=${sel}`).then((c) => {
+      setVerdict(null);
       setConns(c || []);
       if (c && c.length) setServer(c[0].name);
     }).catch(() => setConns([]));

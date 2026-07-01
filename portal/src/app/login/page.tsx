@@ -18,7 +18,7 @@ export default function Login() {
     try {
       await login(username, password);
       router.replace("/");
-    } catch (ex) {
+    } catch {
       setErr("Invalid username or password.");
     } finally {
       setBusy(false);
