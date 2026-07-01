@@ -19,6 +19,7 @@ const NAV: NavItem[] = [
   { href: "/controls", label: "Controls", ready: true },
   { href: "/ai-audits", label: "AI Audits", ready: true },
   { href: "/telemetry", label: "Telemetry", ready: true },
+  { href: "/help", label: "Help & Docs", ready: true },
 ];
 
 function ThemeToggle() {
