@@ -13,9 +13,9 @@ const NAV: NavItem[] = [
   { href: "/flows", label: "Flows & Trails", ready: true },
   { href: "/artifacts", label: "Artifacts & SBOM", ready: true },
   { href: "/environments", label: "Environments", ready: true },
-  { href: "/policies", label: "Policies" },
-  { href: "/ai-audits", label: "AI Audits" },
-  { href: "/telemetry", label: "Telemetry" },
+  { href: "/policies", label: "Policies", ready: true },
+  { href: "/ai-audits", label: "AI Audits", ready: true },
+  { href: "/telemetry", label: "Telemetry", ready: true },
 ];
 
 export default function Shell({ children }: { children: React.ReactNode }) {
