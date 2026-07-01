@@ -118,7 +118,7 @@ func handleServiceNow(config CLIConfig, args []string) {
 // fides git-provider config
 func handleGitProvider(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "config" {
-		fmt.Println("Usage: fides git-provider config --provider <github|gitlab> --host <h> --api-base <url> --token-path <ref> [--inbound-secret-path <ref>] [--disable]")
+		fmt.Println("Usage: fides git-provider config --provider <github|gitlab|bitbucket|azure-devops> --host <h> --api-base <url> --token-path <ref> [--inbound-secret-path <ref>] [--disable]")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("git-provider config", flag.ExitOnError)
@@ -129,8 +129,8 @@ func handleGitProvider(config CLIConfig, args []string) {
 	inboundSecret := cmd.String("inbound-secret-path", "", "inbound webhook secret reference (optional)")
 	disable := cmd.Bool("disable", false, "disable the provider")
 	cmd.Parse(args[1:])
-	if (*provider != "github" && *provider != "gitlab") || *host == "" || *apiBase == "" || *tokenPath == "" {
-		fmt.Println("Error: --provider (github|gitlab), --host, --api-base, --token-path are required")
+	if !map[string]bool{"github": true, "gitlab": true, "bitbucket": true, "azure-devops": true}[*provider] || *host == "" || *apiBase == "" || *tokenPath == "" {
+		fmt.Println("Error: --provider (github|gitlab|bitbucket|azure-devops), --host, --api-base, --token-path are required")
 		os.Exit(1)
 	}
 	post(config, "/api/v1/tenant/git-providers", map[string]any{
