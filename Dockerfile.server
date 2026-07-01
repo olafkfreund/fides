@@ -1,6 +1,17 @@
 # Dockerfile.server for Fides backend service
 # Multi-stage build for Go backend
 
+# Stage 0: Build the new Next.js portal for side-by-side QA at /next (the
+# existing portal in web/ is untouched). Built with PORTAL_BASE_PATH so all
+# routes/assets resolve under /next.
+FROM node:22-alpine AS portal
+WORKDIR /portal
+COPY portal/package.json portal/package-lock.json ./
+RUN npm ci
+COPY portal/ ./
+ENV PORTAL_BASE_PATH=/next
+RUN npm run build
+
 # Stage 1: Build the Go binary
 FROM golang:alpine AS builder
 
@@ -17,6 +28,10 @@ RUN apk add --no-cache git ca-certificates
 
 # Copy source code
 COPY . .
+
+# Inject the QA portal build into web/next (served at /next, alongside the
+# existing portal). web/next is produced only here, never committed.
+COPY --from=portal /portal/out ./web/next
 
 # Build static binaries: the server and the stdio MCP sensor (real MCP server
 # used by environment compliance checks).
