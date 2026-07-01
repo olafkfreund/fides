@@ -135,6 +135,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
+	mux.HandleFunc("POST /api/v1/policies/create", s.handleCreatePolicyGlobal)
+	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicyGlobal)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
 
 	// Tenant Webhooks (signed outbound delivery)
