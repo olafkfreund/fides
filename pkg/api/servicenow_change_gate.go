@@ -90,7 +90,7 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 	}
 
 	if orgID2, ok := principalOrg(r); ok {
-		_ = events.Enqueue(r.Context(), s.DB, orgID2, "servicenow.change_gate", map[string]any{
+		_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID2, "servicenow.change_gate", map[string]any{
 			"change_number": req.ChangeNumber, "trail_id": req.TrailID,
 			"recommendation": gate["recommendation"], "risk_score": gate["risk_score"],
 		})

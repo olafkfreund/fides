@@ -48,10 +48,13 @@ DECLARE
     'tenant_slack_settings',
     'controls',
     'trail_approvals',
-    'integration_events',
     'logical_environments',
     'service_accounts'
   ];
+  -- NOTE: integration_events is deliberately NOT in this list. It is a system
+  -- outbox that the background events dispatcher drains across ALL tenants on a
+  -- non-request connection (no app.current_org), so RLS would hide every row and
+  -- break delivery. Tenant-facing reads of it are scoped by org_id in the query.
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
