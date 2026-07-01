@@ -2290,46 +2290,52 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.LLM != nil {
-		var err error
-		answer, err = s.LLM.Chat(ctx, req.History, userMsg)
+	// Deterministic commands are answered directly (fast, no LLM). Only freeform
+	// questions hit the LLM, and with a timeout so a slow/unreachable model
+	// returns a friendly message instead of hanging until the gateway 504s.
+	lower := strings.ToLower(strings.TrimSpace(userMsg))
+	switch {
+	case flowName != "":
+		answer = fmt.Sprintf("I've created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
+	case lower == "list flows" || lower == "show flows":
+		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
+		defer rows.Close()
+		answer = "Here are the currently configured compliance flows in Fides:\n\n"
+		for rows.Next() {
+			var name, desc string
+			rows.Scan(&name, &desc)
+			answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
+		}
+	case lower == "find failing trails" || lower == "failing builds":
+		query := `SELECT t.name, f.name, att.name, att.type_name
+		          FROM attestations att
+		          JOIN trails t ON att.trail_id = t.id
+		          JOIN flows f ON t.flow_id = f.id
+		          WHERE att.is_compliant = false`
+		rows, _ := s.q(ctx).QueryContext(ctx, query)
+		defer rows.Close()
+		answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
+		found := false
+		for rows.Next() {
+			var tName, fName, attName, typeName string
+			rows.Scan(&tName, &fName, &attName, &typeName)
+			answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
+			found = true
+		}
+		if !found {
+			answer = "Great news! All recorded build trails are fully compliant against current policies."
+		}
+	case s.LLM != nil:
+		lctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		defer cancel()
+		a, err := s.LLM.Chat(lctx, req.History, userMsg)
 		if err != nil {
-			answer = "I processed your request, but I encountered an error communicating with the local LLM. " + err.Error()
-		}
-	} else {
-		if flowName != "" {
-			answer = fmt.Sprintf("I've successfully created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
-		} else if userMsg == "list flows" || userMsg == "show flows" {
-			rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
-			defer rows.Close()
-			answer = "Here are the currently configured compliance flows in Fides:\n\n"
-			for rows.Next() {
-				var name, desc string
-				rows.Scan(&name, &desc)
-				answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
-			}
-		} else if userMsg == "find failing trails" || userMsg == "failing builds" {
-			query := `SELECT t.name, f.name, att.name, att.type_name
-			          FROM attestations att
-			          JOIN trails t ON att.trail_id = t.id
-			          JOIN flows f ON t.flow_id = f.id
-			          WHERE att.is_compliant = false`
-			rows, _ := s.q(ctx).QueryContext(ctx, query)
-			defer rows.Close()
-			answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
-			found := false
-			for rows.Next() {
-				var tName, fName, attName, typeName string
-				rows.Scan(&tName, &fName, &attName, &typeName)
-				answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
-				found = true
-			}
-			if !found {
-				answer = "Great news! All recorded build trails are fully compliant against current policies."
-			}
+			answer = "The assistant model didn't respond in time, or the LLM isn't reachable. You can still use commands like `list flows` or `find failing trails`, or check **Settings → Infrastructure → LLM Configuration**.\n\n_" + err.Error() + "_"
 		} else {
-			answer = "Hello! I am **Fides**, your compliance & audit conversational assistant. I can help you configure flows and trails, search failing builds, audit artifacts, and verify SOC 2 or ISO 27001 readiness.\n\nTry asking me:\n- `create flow frontend-service` (Creates a pipeline flow)\n- `list flows` (Displays registered pipelines)\n- `find failing trails` (Audits failing CI/CD builds)"
+			answer = a
 		}
+	default:
+		answer = "Hello! I am **Fides**, your compliance & audit conversational assistant. I can help you configure flows and trails, search failing builds, audit artifacts, and verify SOC 2 or ISO 27001 readiness.\n\nTry asking me:\n- `create flow frontend-service` (Creates a pipeline flow)\n- `list flows` (Displays registered pipelines)\n- `find failing trails` (Audits failing CI/CD builds)"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

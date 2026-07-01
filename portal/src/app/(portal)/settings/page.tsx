@@ -50,12 +50,12 @@ function InfrastructureTab() {
               <option value="github">github</option><option value="google">google</option><option value="okta">okta</option><option value="azure">azure</option><option value="generic">generic OIDC</option>
             </select>
           </label>
-          <Field label="Client ID" obj={auth} set={setAuth} k="client_id" />
+          <Field label="Client ID" obj={auth} set={setAuth} k="client_id" ph="your OIDC/OAuth client id" />
           <Field label="Client Secret Reference Path" obj={auth} set={setAuth} k="client_secret_path" ph="fides/oauth-secret" />
           <Field label="Redirect URI" obj={auth} set={setAuth} k="redirect_uri" ph="https://.../api/v1/auth/callback" />
-          <Field label="Auth URL" obj={auth} set={setAuth} k="auth_url" />
-          <Field label="Token URL" obj={auth} set={setAuth} k="token_url" />
-          <Field label="Userinfo URL" obj={auth} set={setAuth} k="userinfo_url" />
+          <Field label="Auth URL" obj={auth} set={setAuth} k="auth_url" ph="https://github.com/login/oauth/authorize" />
+          <Field label="Token URL" obj={auth} set={setAuth} k="token_url" ph="https://github.com/login/oauth/access_token" />
+          <Field label="Userinfo URL" obj={auth} set={setAuth} k="userinfo_url" ph="https://api.github.com/user" />
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!auth.enabled} onChange={(e) => setAuth({ ...auth, enabled: e.target.checked })} /> Enable SSO Login</label>
       </div>
@@ -68,11 +68,11 @@ function InfrastructureTab() {
               <option value="local">local</option><option value="s3">s3</option><option value="gcs">gcs</option><option value="azure">azure</option>
             </select>
           </label>
-          <Field label="Endpoint URL" obj={storage} set={setStorage} k="s3_endpoint" />
-          <Field label="Bucket / Container Name" obj={storage} set={setStorage} k="s3_bucket" />
-          <Field label="Region" obj={storage} set={setStorage} k="s3_region" />
-          <Field label="Access Key Reference" obj={storage} set={setStorage} k="s3_access_key_path" />
-          <Field label="Secret Key Reference" obj={storage} set={setStorage} k="s3_secret_key_path" />
+          <Field label="Endpoint URL" obj={storage} set={setStorage} k="s3_endpoint" ph="https://s3.eu-west-2.amazonaws.com" />
+          <Field label="Bucket / Container Name" obj={storage} set={setStorage} k="s3_bucket" ph="fides-evidence-synechron" />
+          <Field label="Region" obj={storage} set={setStorage} k="s3_region" ph="eu-west-2" />
+          <Field label="Access Key Reference" obj={storage} set={setStorage} k="s3_access_key_path" ph="fides/aws-access-key" />
+          <Field label="Secret Key Reference" obj={storage} set={setStorage} k="s3_secret_key_path" ph="fides/aws-secret-key" />
           <Field label="GCS Bucket" obj={storage} set={setStorage} k="gcs_bucket" />
           <Field label="GCS Credentials Ref" obj={storage} set={setStorage} k="gcs_credentials_path" />
           <Field label="Azure Container" obj={storage} set={setStorage} k="azure_container" />
@@ -88,9 +88,9 @@ function InfrastructureTab() {
               <option value="none">none</option><option value="hashicorp">hashicorp</option><option value="aws">aws</option><option value="azure">azure</option>
             </select>
           </label>
-          <Field label="Vault Address" obj={vault} set={setVault} k="vault_address" />
-          <Field label="Token / Auth Reference Path" obj={vault} set={setVault} k="vault_token_path" />
-          <Field label="IAM / AppRole Role Name" obj={vault} set={setVault} k="vault_role" />
+          <Field label="Vault Address" obj={vault} set={setVault} k="vault_address" ph="https://secretsmanager.eu-west-2.amazonaws.com" />
+          <Field label="Token / Auth Reference Path" obj={vault} set={setVault} k="vault_token_path" ph="fides/vault-token (or IRSA)" />
+          <Field label="IAM / AppRole Role Name" obj={vault} set={setVault} k="vault_role" ph="fides-secrets-reader" />
         </div>
       </div>
 
@@ -98,14 +98,14 @@ function InfrastructureTab() {
         <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM Configuration</h3>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm"><span className="text-muted-foreground">LLM Provider</span>
-            <select className={input} value={(llm.provider_name as string) ?? "anthropic"} onChange={(e) => setLlm({ ...llm, provider_name: e.target.value })}>
-              <option value="anthropic">anthropic</option><option value="openai">openai</option><option value="bedrock">bedrock</option><option value="azure">azure</option>
+            <select className={input} value={(llm.provider_name as string) ?? "ollama"} onChange={(e) => setLlm({ ...llm, provider_name: e.target.value })}>
+              <option value="ollama">ollama (self-hosted)</option><option value="anthropic">anthropic</option><option value="openai">openai</option><option value="bedrock">bedrock (AWS)</option><option value="azure">azure</option>
             </select>
           </label>
           <Field label="Model Name" obj={llm} set={setLlm} k="model_name" ph="claude-opus-4-8" />
-          <Field label="Endpoint URL" obj={llm} set={setLlm} k="endpoint_url" />
-          <Field label="API Key Reference" obj={llm} set={setLlm} k="api_key_path" />
-          <Field label="AWS Region" obj={llm} set={setLlm} k="aws_region" />
+          <Field label="Endpoint URL" obj={llm} set={setLlm} k="endpoint_url" ph="http://fides-ollama:11434" />
+          <Field label="API Key Reference" obj={llm} set={setLlm} k="api_key_path" ph="fides/llm-api-key" />
+          <Field label="AWS Region" obj={llm} set={setLlm} k="aws_region" ph="us-east-1" />
           <Field label="Azure Deployment" obj={llm} set={setLlm} k="azure_deployment" />
         </div>
       </div>
