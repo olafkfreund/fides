@@ -12,6 +12,139 @@ function Msg({ m }: { m: { t: string; ok: boolean } }) {
   return m.t ? <span className={`ml-3 text-sm ${m.ok ? "text-green-400" : "text-red-400"}`}>{m.t}</span> : null;
 }
 
+type Dict = Record<string, unknown>;
+function Field({ label, obj, set, k, ph, type }: { label: string; obj: Dict; set: (o: Dict) => void; k: string; ph?: string; type?: string }) {
+  return (
+    <label className="text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <input className={input} type={type || "text"} value={(obj[k] as string) ?? ""} placeholder={ph} onChange={(e) => set({ ...obj, [k]: e.target.value })} />
+    </label>
+  );
+}
+
+/* ---------- Infrastructure: SSO, Storage, Vault, LLM ---------- */
+function InfrastructureTab() {
+  const [auth, setAuth] = useState<Dict>({ provider_name: "github", enabled: false });
+  const [storage, setStorage] = useState<Dict>({ storage_driver: "local" });
+  const [vault, setVault] = useState<Dict>({ vault_provider: "none" });
+  const [llm, setLlm] = useState<Dict>({ provider_name: "anthropic" });
+  const [m, setM] = useState({ t: "", ok: true });
+
+  const load = () => apiGet<{ auth?: Dict; storage?: Dict; vault?: Dict; llm?: Dict }>("/api/v1/tenant/settings").then((s) => {
+    if (s.auth) setAuth(s.auth); if (s.storage) setStorage(s.storage); if (s.vault) setVault(s.vault); if (s.llm) setLlm(s.llm);
+  }).catch((e) => setM({ t: String(e.message), ok: false }));
+  useEffect(() => { load(); }, []);
+
+  const save = async () => {
+    try { await apiPost("/api/v1/tenant/settings", { auth, storage, vault, llm }); setM({ t: "Saved.", ok: true }); }
+    catch (e) { setM({ t: String((e as Error).message), ok: false }); }
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className={panel}>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">SSO &amp; OAuth</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="text-sm"><span className="text-muted-foreground">Identity Provider</span>
+            <select className={input} value={(auth.provider_name as string) ?? "github"} onChange={(e) => setAuth({ ...auth, provider_name: e.target.value })}>
+              <option value="github">github</option><option value="google">google</option><option value="okta">okta</option><option value="azure">azure</option><option value="generic">generic OIDC</option>
+            </select>
+          </label>
+          <Field label="Client ID" obj={auth} set={setAuth} k="client_id" />
+          <Field label="Client Secret Reference Path" obj={auth} set={setAuth} k="client_secret_path" ph="fides/oauth-secret" />
+          <Field label="Redirect URI" obj={auth} set={setAuth} k="redirect_uri" ph="https://.../api/v1/auth/callback" />
+          <Field label="Auth URL" obj={auth} set={setAuth} k="auth_url" />
+          <Field label="Token URL" obj={auth} set={setAuth} k="token_url" />
+          <Field label="Userinfo URL" obj={auth} set={setAuth} k="userinfo_url" />
+        </div>
+        <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!auth.enabled} onChange={(e) => setAuth({ ...auth, enabled: e.target.checked })} /> Enable SSO Login</label>
+      </div>
+
+      <div className={panel}>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Evidence Storage</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="text-sm"><span className="text-muted-foreground">Storage Driver</span>
+            <select className={input} value={(storage.storage_driver as string) ?? "local"} onChange={(e) => setStorage({ ...storage, storage_driver: e.target.value })}>
+              <option value="local">local</option><option value="s3">s3</option><option value="gcs">gcs</option><option value="azure">azure</option>
+            </select>
+          </label>
+          <Field label="Endpoint URL" obj={storage} set={setStorage} k="s3_endpoint" />
+          <Field label="Bucket / Container Name" obj={storage} set={setStorage} k="s3_bucket" />
+          <Field label="Region" obj={storage} set={setStorage} k="s3_region" />
+          <Field label="Access Key Reference" obj={storage} set={setStorage} k="s3_access_key_path" />
+          <Field label="Secret Key Reference" obj={storage} set={setStorage} k="s3_secret_key_path" />
+          <Field label="GCS Bucket" obj={storage} set={setStorage} k="gcs_bucket" />
+          <Field label="GCS Credentials Ref" obj={storage} set={setStorage} k="gcs_credentials_path" />
+          <Field label="Azure Container" obj={storage} set={setStorage} k="azure_container" />
+          <Field label="Azure Connection Ref" obj={storage} set={setStorage} k="azure_connection_string_path" />
+        </div>
+      </div>
+
+      <div className={panel}>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Secret Key Engines</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="text-sm"><span className="text-muted-foreground">Vault Provider</span>
+            <select className={input} value={(vault.vault_provider as string) ?? "none"} onChange={(e) => setVault({ ...vault, vault_provider: e.target.value })}>
+              <option value="none">none</option><option value="hashicorp">hashicorp</option><option value="aws">aws</option><option value="azure">azure</option>
+            </select>
+          </label>
+          <Field label="Vault Address" obj={vault} set={setVault} k="vault_address" />
+          <Field label="Token / Auth Reference Path" obj={vault} set={setVault} k="vault_token_path" />
+          <Field label="IAM / AppRole Role Name" obj={vault} set={setVault} k="vault_role" />
+        </div>
+      </div>
+
+      <div className={panel}>
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM Configuration</h3>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <label className="text-sm"><span className="text-muted-foreground">LLM Provider</span>
+            <select className={input} value={(llm.provider_name as string) ?? "anthropic"} onChange={(e) => setLlm({ ...llm, provider_name: e.target.value })}>
+              <option value="anthropic">anthropic</option><option value="openai">openai</option><option value="bedrock">bedrock</option><option value="azure">azure</option>
+            </select>
+          </label>
+          <Field label="Model Name" obj={llm} set={setLlm} k="model_name" ph="claude-opus-4-8" />
+          <Field label="Endpoint URL" obj={llm} set={setLlm} k="endpoint_url" />
+          <Field label="API Key Reference" obj={llm} set={setLlm} k="api_key_path" />
+          <Field label="AWS Region" obj={llm} set={setLlm} k="aws_region" />
+          <Field label="Azure Deployment" obj={llm} set={setLlm} k="azure_deployment" />
+        </div>
+      </div>
+
+      <div><button onClick={load} className={ghost}>Reload</button> <button onClick={save} className={btn}>Save Configuration</button><Msg m={m} /></div>
+    </div>
+  );
+}
+
+/* ---------- User Directory & Group Mappings ---------- */
+function DirectoryTab() {
+  const [maps, setMaps] = useState<{ id: string; external_group: string; role: string }[]>([]);
+  const [group, setGroup] = useState(""); const [role, setRole] = useState("Viewer");
+  const [m, setM] = useState({ t: "", ok: true });
+  const load = () => apiGet<typeof maps>("/api/v1/tenant/group-mappings").then(setMaps).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const add = async () => {
+    try { await apiPost("/api/v1/tenant/group-mappings", { external_group: group, role }); setGroup(""); load(); setM({ t: "Mapping saved.", ok: true }); }
+    catch (e) { setM({ t: String((e as Error).message), ok: false }); }
+  };
+  return (
+    <div className={panel}>
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Map an SSO/IdP group to a Fides role</h3>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <input className={input} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="external group (e.g. platform-admins)" />
+        <select className={input} value={role} onChange={(e) => setRole(e.target.value)}><option>Admin</option><option>Writer</option><option>Auditor</option><option>Viewer</option></select>
+        <button onClick={add} className={btn}>Add mapping</button>
+      </div>
+      <Msg m={m} />
+      {maps.length > 0 && (
+        <table className="mt-4 w-full text-left text-sm font-mono">
+          <thead className="text-muted-foreground"><tr><th className="py-1">External group</th><th>Role</th></tr></thead>
+          <tbody>{maps.map((g) => <tr key={g.id} className="border-t border-border"><td className="py-2">{g.external_group}</td><td>{g.role}</td></tr>)}</tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 /* ---------- ServiceNow ---------- */
 function ServiceNowTab() {
   const [c, setC] = useState<Record<string, unknown>>({ auth_type: "basic", enabled: true });
@@ -139,6 +272,8 @@ function GitWebhooksTab() {
 }
 
 const TABS = [
+  { id: "infra", label: "Infrastructure", el: <InfrastructureTab /> },
+  { id: "directory", label: "Directory & Groups", el: <DirectoryTab /> },
   { id: "servicenow", label: "ServiceNow", el: <ServiceNowTab /> },
   { id: "slack", label: "Slack", el: <SlackTab /> },
   { id: "accounts", label: "Service Accounts", el: <ServiceAccountsTab /> },
@@ -147,7 +282,7 @@ const TABS = [
 ];
 
 export default function Settings() {
-  const [tab, setTab] = useState("servicenow");
+  const [tab, setTab] = useState("infra");
   return (
     <div className="max-w-4xl">
       <h1 className="text-xl font-semibold">Settings</h1>
