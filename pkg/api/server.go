@@ -84,6 +84,13 @@ func (s *Server) Routes() http.Handler {
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
 
+	// Governance controls + coverage
+	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
+	mux.HandleFunc("POST /api/v1/controls", s.handleCreateControl)
+	mux.HandleFunc("GET /api/v1/controls/coverage", s.handleControlsCoverage)
+	mux.HandleFunc("POST /api/v1/controls/{id}/archive", s.handleArchiveControl)
+	mux.HandleFunc("POST /api/v1/controls/{id}/unarchive", s.handleUnarchiveControl)
+
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)
 	mux.HandleFunc("POST /api/v1/tenant/slack", s.handleSaveSlack)

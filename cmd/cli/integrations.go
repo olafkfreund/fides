@@ -256,6 +256,60 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
+// fides control add|list|coverage|archive|unarchive
+func handleControl(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive> [flags]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "add":
+		cmd := flag.NewFlagSet("control add", flag.ExitOnError)
+		key := cmd.String("key", "", "control key, e.g. SOC2-CC6.1")
+		name := cmd.String("name", "", "control name")
+		desc := cmd.String("description", "", "description")
+		framework := cmd.String("framework", "", "SOC2 | ISO27001 | FDA-21CFR11")
+		require := cmd.String("require", "", "comma-separated attestation types")
+		cmd.Parse(args[1:])
+		if *key == "" || *name == "" {
+			fmt.Println("Error: --key and --name are required")
+			os.Exit(1)
+		}
+		var types []string
+		if *require != "" {
+			types = strings.Split(*require, ",")
+		}
+		post(config, "/api/v1/controls", map[string]any{"key": *key, "name": *name, "description": *desc, "framework": *framework, "required_types": types}, "Control saved")
+	case "list":
+		cmd := flag.NewFlagSet("control list", flag.ExitOnError)
+		all := cmd.Bool("all", false, "include archived")
+		cmd.Parse(args[1:])
+		p := "/api/v1/controls"
+		if *all {
+			p += "?include_archived=true"
+		}
+		body, err := getRequest(config, p)
+		fail(err, "list controls")
+		fmt.Println(body)
+	case "coverage":
+		body, err := getRequest(config, "/api/v1/controls/coverage")
+		fail(err, "controls coverage")
+		fmt.Println(body)
+	case "archive", "unarchive":
+		cmd := flag.NewFlagSet("control "+args[0], flag.ExitOnError)
+		id := cmd.String("id", "", "control UUID")
+		cmd.Parse(args[1:])
+		if *id == "" {
+			fmt.Println("Error: --id is required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/controls/"+*id+"/"+args[0], map[string]any{}, "Done")
+	default:
+		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive>")
+		os.Exit(1)
+	}
+}
+
 // fides metrics [--days N]
 func handleMetrics(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)

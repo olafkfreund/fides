@@ -84,6 +84,8 @@ func main() {
 		handleLogicalEnv(config, os.Args[2:])
 	case "metrics":
 		handleMetrics(config, os.Args[2:])
+	case "control":
+		handleControl(config, os.Args[2:])
 	case "slack":
 		handleSlack(config, os.Args[2:])
 	case "env":
@@ -130,6 +132,7 @@ func printUsage() {
 	fmt.Println("  policy           Manage/check environment policies (add|list|check --env <id>)")
 	fmt.Println("  logical-env      Aggregate physical environments (create|list|add-member|state)")
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
+	fmt.Println("  control          Governance controls + coverage (add|list|coverage|archive|unarchive)")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")
