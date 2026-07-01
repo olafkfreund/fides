@@ -12,7 +12,7 @@ const NAV: NavItem[] = [
   { href: "/settings", label: "Settings", ready: true },
   { href: "/flows", label: "Flows & Trails" },
   { href: "/artifacts", label: "Artifacts & SBOM" },
-  { href: "/environments", label: "Environments" },
+  { href: "/environments", label: "Environments", ready: true },
   { href: "/policies", label: "Policies" },
   { href: "/ai-audits", label: "AI Audits" },
   { href: "/telemetry", label: "Telemetry" },
