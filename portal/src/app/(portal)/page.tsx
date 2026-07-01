@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Package, ShieldCheck, AlertTriangle, Bot, CheckCircle2 } from "lucide-react";
+import { Package, ShieldCheck, AlertTriangle, Bot, CheckCircle2, Zap } from "lucide-react";
 import { apiGet } from "@/lib/api";
 
 type Dora = {
@@ -13,6 +13,8 @@ type Dora = {
 };
 type Env = { id: string; name: string; type: string };
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; created_at?: string };
+type Coverage = { total_environments: number; controls: { control: string; coverage: number }[] };
+type IntEvent = { event_type: string; status: string; created_at?: string };
 
 function Card({ label, value, sub, icon: Ic, iconClass }: { label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string }>; iconClass?: string }) {
   return (
@@ -33,6 +35,8 @@ export default function Overview() {
   const [aiCount, setAiCount] = useState<number | null>(null);
   const [envs, setEnvs] = useState<Env[]>([]);
   const [atts, setAtts] = useState<Att[]>([]);
+  const [cov, setCov] = useState<Coverage | null>(null);
+  const [events, setEvents] = useState<IntEvent[]>([]);
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -41,6 +45,8 @@ export default function Overview() {
     apiGet<unknown[]>("/api/v1/ai-assessments").then((a) => setAiCount(Array.isArray(a) ? a.length : 0)).catch(() => {});
     apiGet<Env[]>("/api/v1/environments").then((e) => setEnvs(e || [])).catch(() => {});
     apiGet<Att[]>("/api/v1/search/attestations").then((a) => setAtts(a || [])).catch(() => {});
+    apiGet<Coverage>("/api/v1/controls/coverage").then(setCov).catch(() => {});
+    apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => setEvents(e || [])).catch(() => {});
   }, []);
 
   const alerts = atts.filter((a) => !a.is_compliant).length;
@@ -92,6 +98,36 @@ export default function Overview() {
               ))}
             </div>
           ) : <p className="text-sm text-muted-foreground">No recent attestations.</p>}
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Controls Coverage</h2>
+          {cov && cov.controls.length ? (
+            <div className="flex flex-col gap-2.5">
+              {cov.controls.slice(0, 6).map((c) => (
+                <div key={c.control}>
+                  <div className="flex justify-between text-xs"><span className="font-mono">{c.control}</span><span className={c.coverage === 0 ? "text-red-400" : c.coverage < 1 ? "text-amber-400" : "text-green-400"}>{Math.round(c.coverage * 100)}%</span></div>
+                  <div className="mt-1 h-1.5 w-full rounded-full bg-muted"><div className={`h-1.5 rounded-full ${c.coverage === 0 ? "bg-red-500" : c.coverage < 1 ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${Math.round(c.coverage * 100)}%` }} /></div>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-sm text-muted-foreground">No controls defined yet.</p>}
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-5">
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Integration Events <span className="font-normal normal-case text-muted-foreground">· ServiceNow &amp; webhooks</span></h2>
+          {events.length ? (
+            <div className="flex flex-col gap-1.5">
+              {events.slice(0, 8).map((e, i) => (
+                <div key={i} className="flex items-center justify-between border-t border-border pt-1.5 text-xs first:border-t-0 first:pt-0">
+                  <span className="flex items-center gap-1.5 font-mono"><Zap className="size-3.5 text-primary" />{e.event_type}</span>
+                  <span className={e.status === "delivered" || e.status === "success" ? "text-green-400" : e.status === "failed" ? "text-red-400" : "text-amber-400"}>{e.status}</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-sm text-muted-foreground">No integration events yet — ServiceNow change requests and webhook deliveries appear here once enabled.</p>}
         </div>
       </div>
 
