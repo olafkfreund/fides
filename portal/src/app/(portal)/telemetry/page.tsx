@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ResponsiveContainer, LineChart, Line, AreaChart, Area, BarChart, Bar,
-  PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid,
+  PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 import { apiGet } from "@/lib/api";
 
@@ -43,11 +43,19 @@ function fmtUptime(s: number) {
   return h > 0 ? `${h}h ${mn}m` : `${mn}m ${s % 60}s`;
 }
 
+const PALETTE = ["#edb200", "#3b82f6", "#22c55e", "#a855f7", "#ef4444", "#06b6d4"];
+type FreqRow = { environment: string; week: string; deployments: number };
+
 export default function Telemetry() {
   const [m, setM] = useState<Metrics | null>(null);
   const [series, setSeries] = useState<Point[]>([]);
+  const [freq, setFreq] = useState<FreqRow[]>([]);
   const [err, setErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    apiGet<FreqRow[]>("/api/v1/metrics/deployment-frequency?weeks=12").then((f) => setFreq(f || [])).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const poll = () => apiGet<Metrics>("/api/v1/telemetry/metrics").then((d) => {
@@ -70,6 +78,14 @@ export default function Telemetry() {
     { name: "Errors", value: m.total_errors, fill: RED },
   ] : [];
 
+  const envNames = [...new Set(freq.map((f) => f.environment))];
+  const weeks = [...new Set(freq.map((f) => f.week))].sort();
+  const freqData = weeks.map((week) => {
+    const row: Record<string, string | number> = { week };
+    envNames.forEach((env) => { row[env] = freq.find((f) => f.week === week && f.environment === env)?.deployments ?? 0; });
+    return row;
+  });
+
   return (
     <div>
       <h1 className="text-xl font-semibold">Telemetry &amp; OTel</h1>
@@ -81,6 +97,22 @@ export default function Telemetry() {
         <KPI label="Avg Latency" value={m ? `${m.average_latency_ms.toFixed(1)} ms` : "…"} color={GOLD} />
         <KPI label="Uptime" value={m ? fmtUptime(m.uptime_seconds) : "…"} sub={m ? `${m.memory_allocated_mb.toFixed(1)} MB heap` : undefined} />
       </div>
+
+      {freqData.length > 0 && (
+        <div className={`${panel} mt-6`}>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Deployment Frequency — weekly, per environment (last 12 weeks)</h2>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={freqData} margin={{ left: -10, right: 8, top: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+              <XAxis dataKey="week" tick={{ fill: MUTED, fontSize: 11 }} stroke="#262626" />
+              <YAxis allowDecimals={false} tick={{ fill: MUTED, fontSize: 11 }} stroke="#262626" />
+              <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#ffffff08" }} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              {envNames.map((env, i) => <Bar key={env} dataKey={env} stackId="a" fill={PALETTE[i % PALETTE.length]} radius={i === envNames.length - 1 ? [4, 4, 0, 0] : undefined} />)}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className={panel}>

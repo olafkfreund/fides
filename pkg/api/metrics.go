@@ -56,3 +56,40 @@ func (s *Server) handleDoraMetrics(w http.ResponseWriter, r *http.Request) {
 		"change_failure_rate":          1 - complianceRate,
 	})
 }
+
+// handleDeploymentFrequency returns per-environment weekly deployment counts
+// (snapshots) for the last N weeks, for the Kosli-style frequency chart.
+func (s *Server) handleDeploymentFrequency(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	weeks := 12
+	if v := r.URL.Query().Get("weeks"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 53 {
+			weeks = n
+		}
+	}
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT e.name, to_char(date_trunc('week', es.created_at), 'IYYY-"W"IW') AS week, count(*)
+		 FROM environment_snapshots es JOIN environments e ON e.id = es.environment_id
+		 WHERE e.org_id = $1 AND es.created_at > now() - make_interval(weeks => $2)
+		 GROUP BY e.name, week ORDER BY week`, orgID, weeks)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var env, week string
+		var count int
+		if err := rows.Scan(&env, &week, &count); err != nil {
+			internalError(w, err)
+			return
+		}
+		out = append(out, map[string]any{"environment": env, "week": week, "deployments": count})
+	}
+	writeJSON(w, out)
+}

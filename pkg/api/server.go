@@ -84,6 +84,7 @@ func (s *Server) Routes() http.Handler {
 
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
+	mux.HandleFunc("GET /api/v1/metrics/deployment-frequency", s.handleDeploymentFrequency)
 
 	// Governance controls + coverage
 	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
