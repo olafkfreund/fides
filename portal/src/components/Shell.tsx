@@ -9,6 +9,7 @@ import {
   ListChecks, MessageSquare, Gauge, Settings as SettingsIcon, BookOpen, LogOut, UserCircle2,
 } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
+import GlobalSearch from "@/components/GlobalSearch";
 
 type Icon = React.ComponentType<{ className?: string }>;
 type NavItem = { href: string; label: string; icon: Icon };
@@ -99,7 +100,12 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </aside>
-      <main className="flex-1 p-8">{children}</main>
+      <main className="flex flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex items-center justify-end border-b border-border bg-background/80 px-8 py-3 backdrop-blur">
+          <GlobalSearch />
+        </header>
+        <div className="flex-1 p-8">{children}</div>
+      </main>
     </div>
   );
 }
