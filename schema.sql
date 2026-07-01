@@ -359,6 +359,21 @@ CREATE TABLE IF NOT EXISTS controls (
 );
 CREATE INDEX IF NOT EXISTS idx_controls_org ON controls(org_id);
 
+-- 21b. Trail approvals (segregation-of-duties evidence: who signed off a change).
+-- approver_kind is 'session' for a human SSO user or 'service' for machine
+-- automation; four-eyes requires >= 2 distinct human approvers.
+CREATE TABLE IF NOT EXISTS trail_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    trail_id UUID NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+    approved_by VARCHAR(255) NOT NULL,      -- approver email / service-account name
+    approver_kind VARCHAR(20) NOT NULL,     -- 'session' (human) | 'service'
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(trail_id, approved_by)
+);
+CREATE INDEX IF NOT EXISTS idx_trail_approvals_trail ON trail_approvals(trail_id);
+
 -- 22a. Logical environments (aggregate one or more physical environments)
 CREATE TABLE IF NOT EXISTS logical_environments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

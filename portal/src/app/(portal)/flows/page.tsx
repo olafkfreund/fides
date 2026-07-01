@@ -9,7 +9,8 @@ type Trail = { id: string; name: string; git_commit?: string; git_branch?: strin
 type FlowArtifact = { sha256: string; name: string; type?: string; git_commit?: string; created_at?: string; compliant: boolean };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
 type GateEntry = { control: string; name: string; reasons: string[] };
-type Gate = { approved: boolean; recommendation: string; risk_score: number; risk_level: string; passed: string[]; failed: GateEntry[]; missing_evidence: GateEntry[]; summary: string };
+type Approvals = { count: number; human_approvers: number; four_eyes: boolean; approvers: string[] };
+type Gate = { approved: boolean; recommendation: string; risk_score: number; risk_level: string; passed: string[]; failed: GateEntry[]; missing_evidence: GateEntry[]; approvals?: Approvals; summary: string };
 
 function tagList(tags: Flow["tags"]): string[] {
   if (!tags) return [];
@@ -69,6 +70,13 @@ export default function Flows() {
     try {
       const g = await apiGet<Gate>(`/api/v1/trails/${trailId}/change-gate`);
       setGate((c) => ({ ...c, [trailId]: g }));
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+
+  const approveTrail = async (trailId: string) => {
+    try {
+      await apiPost(`/api/v1/trails/${trailId}/approvals`, { reason: "Approved in the Fides portal" });
+      evalGate(trailId);
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
@@ -159,6 +167,7 @@ export default function Flows() {
                                   </div>
                                   <div className="flex shrink-0 gap-2">
                                     <button onClick={() => evalGate(t.id)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">Change Gate</button>
+                                    <button onClick={() => approveTrail(t.id)} className="rounded-md border border-border px-3 py-1.5 text-xs">Approve</button>
                                     <button onClick={() => verifyTrail(t.id)} className="rounded-md border border-border px-3 py-1.5 text-xs">Verify chain</button>
                                     <a href={`/api/v1/trails/${t.id}/audit-package`} className="rounded-md border border-border px-3 py-1.5 text-xs">Download audit</a>
                                   </div>
@@ -173,6 +182,11 @@ export default function Flows() {
                                     <div className="flex flex-wrap items-center gap-2">
                                       <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].approved ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{gate[t.id].approved ? "RECOMMEND APPROVE" : "HOLD"}</span>
                                       <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].risk_level === "high" ? "text-red-400" : gate[t.id].risk_level === "medium" ? "text-amber-400" : "text-green-400"}`}>risk {gate[t.id].risk_score} · {gate[t.id].risk_level}</span>
+                                      {gate[t.id].approvals && (
+                                        <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].approvals!.human_approvers > 0 ? "text-green-400" : "text-amber-400"}`}>
+                                          {gate[t.id].approvals!.human_approvers} approval{gate[t.id].approvals!.human_approvers === 1 ? "" : "s"}{gate[t.id].approvals!.four_eyes ? " · four-eyes ✓" : ""}
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="mt-1 text-muted-foreground">{gate[t.id].summary}</div>
                                     {gate[t.id].failed.length > 0 && <div className="mt-1 text-red-400">failed: {gate[t.id].failed.map((f) => f.control).join(", ")}</div>}

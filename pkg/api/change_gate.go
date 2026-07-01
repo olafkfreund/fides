@@ -75,7 +75,27 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		}
 	}
 
+	// Segregation of duties: count distinct human (session) approvers.
+	approverList := []string{}
+	humanApprovers := 0
+	if arows, aerr := s.q(ctx).QueryContext(ctx,
+		`SELECT approved_by, approver_kind FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
+		for arows.Next() {
+			var by, kind string
+			if arows.Scan(&by, &kind) == nil {
+				approverList = append(approverList, by)
+				if kind == "session" {
+					humanApprovers++
+				}
+			}
+		}
+		arows.Close()
+	}
+
 	risk := len(failed)*25 + len(missing)*15 + nonCompliant*10
+	if humanApprovers == 0 {
+		risk += 20 // no human sign-off (segregation of duties)
+	}
 	if risk > 100 {
 		risk = 100
 	}
@@ -85,17 +105,19 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	} else if risk >= 20 {
 		level = "medium"
 	}
-	approved := len(failed) == 0 && len(missing) == 0
+	approved := len(failed) == 0 && len(missing) == 0 && humanApprovers >= 1
 	recommendation := "hold"
 	summary := ""
 	switch {
 	case approved:
 		recommendation = "approve"
-		summary = "All controls satisfied by compliant evidence; safe to approve."
+		summary = "All controls satisfied by compliant evidence and a human sign-off is present; safe to approve."
 	case len(failed) > 0:
 		summary = "Failing controls present — do not approve until remediated."
-	default:
+	case len(missing) > 0:
 		summary = "Evidence is missing for some controls — approval requires the missing attestations."
+	default:
+		summary = "Controls satisfied, but awaiting a human approval (segregation of duties)."
 	}
 
 	return map[string]any{
@@ -108,7 +130,13 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		"failed":           failed,
 		"missing_evidence": missing,
 		"attestations":     map[string]int{"total": totalAtt, "non_compliant": nonCompliant},
-		"summary":          summary,
+		"approvals": map[string]any{
+			"count":           len(approverList),
+			"human_approvers": humanApprovers,
+			"four_eyes":       humanApprovers >= 2,
+			"approvers":       approverList,
+		},
+		"summary": summary,
 	}, nil
 }
 
