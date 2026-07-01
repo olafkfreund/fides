@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -27,10 +28,26 @@ func (s *Server) handleCreatePolicyGlobal(w http.ResponseWriter, r *http.Request
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
+	// rules is a JSONB column. Accept a raw jq expression (or newline-separated
+	// rules) and normalize to valid JSON so the insert never fails: if it already
+	// parses as JSON keep it, otherwise wrap the jq lines in {"jq": [...]}.
+	rulesJSON := req.Rules
+	if rulesJSON == "" {
+		rulesJSON = "{}"
+	} else if !json.Valid([]byte(rulesJSON)) {
+		lines := []string{}
+		for _, l := range strings.Split(req.Rules, "\n") {
+			if t := strings.TrimSpace(l); t != "" {
+				lines = append(lines, t)
+			}
+		}
+		wrapped, _ := json.Marshal(map[string]any{"jq": lines})
+		rulesJSON = string(wrapped)
+	}
 	id := uuid.New()
 	if _, err := s.q(r.Context()).ExecContext(r.Context(),
 		`INSERT INTO policies (id, org_id, name, description, rules) VALUES ($1, $2, $3, $4, $5)`,
-		id, p.OrgID, req.Name, req.Description, req.Rules); err != nil {
+		id, p.OrgID, req.Name, req.Description, rulesJSON); err != nil {
 		internalError(w, err)
 		return
 	}

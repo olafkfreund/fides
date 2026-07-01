@@ -1041,6 +1041,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
+		llmOrgID, _ := principalOrg(r)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -1050,13 +1051,18 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Save LLM assessment findings
+			// Save LLM assessment findings. This runs on a detached background
+			// context, so scope the write to the tenant (app.current_org) via a
+			// transaction, otherwise RLS rejects the insert.
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
 			             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-			_, err = s.q(ctx).ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
-			if err != nil {
-				log.Printf("Failed to write LLM assessment to DB: %v", err)
+			werr := db.WithOrgScope(ctx, s.DB, llmOrgID.String(), func(tx *sql.Tx) error {
+				_, e := tx.ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
+				return e
+			})
+			if werr != nil {
+				log.Printf("Failed to write LLM assessment to DB: %v", werr)
 			}
 		}()
 	}
