@@ -6,7 +6,7 @@ import (
 )
 
 // changeFields are the change_request columns Fides reads for gating.
-var changeFields = []string{"number", "state", "approval", "risk", "on_hold", "short_description", "start_date", "end_date", "cmdb_ci"}
+var changeFields = []string{"sys_id", "number", "state", "approval", "risk", "on_hold", "short_description", "start_date", "end_date", "cmdb_ci"}
 
 // QueryChangeRequest returns the first change_request matching the encoded query
 // (e.g. `number=CHG0030192` or `cmdb_ci.name=payments^active=true`).
