@@ -430,6 +430,51 @@ func handleSearch(config CLIConfig, args []string) {
 	fmt.Println(body)
 }
 
+// stringSlice collects a repeatable flag (e.g. --rule ... --rule ...).
+type stringSlice []string
+
+func (s *stringSlice) String() string     { return strings.Join(*s, ",") }
+func (s *stringSlice) Set(v string) error { *s = append(*s, v); return nil }
+
+// fides env verify --env <id> --server <name> --tool <t> --rule '...' [--rules-file <f>]
+func handleEnvVerify(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("env verify", flag.ExitOnError)
+	env := cmd.String("env", "", "environment UUID")
+	server := cmd.String("server", "", "MCP server/connection name")
+	tool := cmd.String("tool", "get_pods", "MCP tool name")
+	rulesFile := cmd.String("rules-file", "", "file with one jq rule per line")
+	var rules stringSlice
+	cmd.Var(&rules, "rule", "a jq compliance rule (repeatable)")
+	cmd.Parse(args)
+	if *env == "" || *server == "" || *tool == "" {
+		fmt.Println("Usage: fides env verify --env <id> --server <name> --tool <t> --rule '.pods[].status == \"Ready\"' [--rules-file <f>]")
+		os.Exit(1)
+	}
+	rl := []string(rules)
+	if *rulesFile != "" {
+		data, err := os.ReadFile(*rulesFile) // #nosec G304 G703 -- CLI reads a user-specified rules file by design
+		fail(err, "read rules file")
+		for _, line := range strings.Split(string(data), "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				rl = append(rl, s)
+			}
+		}
+	}
+	if len(rl) == 0 {
+		fmt.Println("Error: provide at least one --rule or a --rules-file")
+		os.Exit(1)
+	}
+	body, err := postRequest(config, "/api/v1/environments/mcp/verify", map[string]any{
+		"environment_id": *env, "server_name": *server, "tool_name": *tool,
+		"arguments": map[string]any{}, "rules": rl,
+	})
+	fail(err, "verify environment compliance")
+	fmt.Println(body)
+	if strings.Contains(body, "\"compliant\":false") {
+		os.Exit(2) // non-zero so CI can gate on runtime compliance
+	}
+}
+
 // fides env diff --env <id> [--from <snap> --to <snap>]
 func handleEnvDiff(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("env diff", flag.ExitOnError)

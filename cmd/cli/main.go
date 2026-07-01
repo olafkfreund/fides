@@ -87,10 +87,17 @@ func main() {
 	case "slack":
 		handleSlack(config, os.Args[2:])
 	case "env":
-		if len(os.Args) > 2 && os.Args[2] == "diff" {
+		sub := ""
+		if len(os.Args) > 2 {
+			sub = os.Args[2]
+		}
+		switch sub {
+		case "diff":
 			handleEnvDiff(config, os.Args[3:])
-		} else {
-			fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>]")
+		case "verify":
+			handleEnvVerify(config, os.Args[3:])
+		default:
+			fmt.Println("Usage: fides env <diff|verify> --env <id> ...")
 			os.Exit(1)
 		}
 	case "help", "--help", "-h":
@@ -126,6 +133,7 @@ func printUsage() {
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")
+	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
