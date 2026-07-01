@@ -24,7 +24,17 @@ export default function Controls() {
   const [showArchived, setShowArchived] = useState(false);
   const [key, setKey] = useState(""); const [name, setName] = useState("");
   const [framework, setFramework] = useState("SOC2"); const [require, setRequire] = useState("");
+  const [adopt, setAdopt] = useState("SOC2");
   const [msg, setMsg] = useState<{ t: string; ok: boolean }>({ t: "", ok: true });
+
+  const importFramework = async () => {
+    setMsg({ t: "", ok: true });
+    try {
+      const r = await apiPost<{ imported: number }>("/api/v1/controls/import-framework", { framework: adopt });
+      setMsg({ t: `Imported ${r.imported} ${adopt} controls.`, ok: true });
+      load();
+    } catch (e) { setMsg({ t: String((e as Error).message), ok: false }); }
+  };
 
   const load = () => {
     apiGet<Control[]>(`/api/v1/controls${showArchived ? "?include_archived=true" : ""}`).then(setControls).catch((e) => setMsg({ t: String(e.message), ok: false }));
@@ -56,6 +66,17 @@ export default function Controls() {
       </div>
 
       <div className="mt-6 flex flex-col gap-5">
+        <div className={panel}>
+          <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Adopt a framework</h2>
+          <p className="mb-3 text-xs text-muted-foreground">Seed a full control catalog mapped to evidence types in one click.</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <select className={`${input} w-56`} value={adopt} onChange={(e) => setAdopt(e.target.value)}>
+              <option value="SOC2">SOC 2</option><option value="ISO27001">ISO 27001</option><option value="NIST-800-53">NIST 800-53</option><option value="PCI-DSS">PCI-DSS</option><option value="DORA">DORA</option><option value="PSD2">PSD2</option><option value="SOX">SOX</option>
+            </select>
+            <button onClick={importFramework} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Import controls</button>
+          </div>
+        </div>
+
         <div className={panel}>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add control</h2>
           <div className="mb-3 flex flex-wrap gap-2">

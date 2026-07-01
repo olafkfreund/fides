@@ -93,6 +93,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/controls/coverage", s.handleControlsCoverage)
 	mux.HandleFunc("POST /api/v1/controls/{id}/archive", s.handleArchiveControl)
 	mux.HandleFunc("POST /api/v1/controls/{id}/unarchive", s.handleUnarchiveControl)
+	mux.HandleFunc("GET /api/v1/frameworks", s.handleListFrameworks)
+	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)
