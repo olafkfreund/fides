@@ -91,6 +91,17 @@ func (c *Client) CreateRecord(ctx context.Context, table string, fields map[stri
 	return out.Result, nil
 }
 
+// UpdateRecord PATCHes a record by sys_id (e.g. to add a work note to a change).
+func (c *Client) UpdateRecord(ctx context.Context, table, sysID string, fields map[string]any) (map[string]any, error) {
+	var out struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := c.doJSON(ctx, "PATCH", "/api/now/table/"+url.PathEscape(table)+"/"+url.PathEscape(sysID), fields, &out); err != nil {
+		return nil, err
+	}
+	return out.Result, nil
+}
+
 func joinComma(xs []string) string {
 	s := ""
 	for i, x := range xs {

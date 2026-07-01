@@ -168,6 +168,7 @@ func (s *Server) Routes() http.Handler {
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
+	mux.HandleFunc("POST /api/v1/servicenow/change-gate", s.handleServiceNowChangeGate)
 
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
