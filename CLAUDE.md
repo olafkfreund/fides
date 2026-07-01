@@ -19,13 +19,21 @@ source again** — it does not exist here.
 - The compiled SPA is served by the Go `http.FileServer` from `./web`. The
   Settings page tabs ("Infrastructure Settings", "User Directory & Group
   Mappings") live inside the minified `web/_next/static/chunks/7c90213a0cbc24b6.js`.
-- **You CANNOT add a new React tab** to that Settings page without the SPA source.
 - **Do NOT hand-edit the minified `_next` chunks** — doing so previously corrupted
   the portal (a broken chunk caused `SyntaxError` → blank page). CI guards this
   via a `node --check` step on every chunk.
 - **The supported way to add UI is a Go-served page** embedded in the server
   binary via `go:embed` and routed in `pkg/api/server.go`, authenticated by the
-  session cookie. Example: the ServiceNow admin UI.
+  session cookie. Examples: `/servicenow` and the unified admin console `/admin`
+  (`pkg/api/admin_ui.go` + `pkg/api/assets/admin.html`).
+- **You CAN add a tab to the existing React Settings page** (proven working) via
+  a Go-served **enhancement script**: `web/admin-tab.js` (loaded from
+  `web/index.html`, which we control) injects an "Integrations" tab into the
+  Settings tab strip and renders `/admin` in a same-origin iframe. It clones the
+  existing tab classes, anchors on the "Settings Management" heading + the
+  "Infrastructure Settings" button, and re-injects on a 700ms poll. This required
+  relaxing the global `X-Frame-Options` to `SAMEORIGIN` and CSP `frame-ancestors`
+  to `'self'` in `securityHeaders` so the app can frame its own pages.
 
 ### ServiceNow admin UI (the worked example of the pattern)
 - Page: `GET /servicenow` → `pkg/api/servicenow_ui.go` (`handleServiceNowAdminPage`),
