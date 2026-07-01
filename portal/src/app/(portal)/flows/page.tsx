@@ -6,8 +6,8 @@ import { apiGet } from "@/lib/api";
 type Flow = { id: string; name: string; description?: string; created_at?: string };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
 
-const input = "w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-200";
-const panel = "rounded-xl border border-neutral-800 bg-neutral-900 p-5";
+const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
+const panel = "rounded-xl border border-border bg-card p-5";
 
 export default function Flows() {
   const [flows, setFlows] = useState<Flow[]>([]);
@@ -29,35 +29,35 @@ export default function Flows() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-xl font-semibold">Flows &amp; Trails</h1>
-      <p className="mt-1 text-sm text-neutral-500">Delivery pipelines and their build trails.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Delivery pipelines and their build trails.</p>
 
       <div className="mt-6 flex flex-col gap-5">
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Flows</h2>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Flows</h2>
           {flows.length > 0 ? (
             <table className="w-full text-left text-sm">
-              <thead className="text-neutral-500"><tr><th className="py-1">Name</th><th>Description</th><th>Created</th></tr></thead>
+              <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Description</th><th>Created</th></tr></thead>
               <tbody>{flows.map((f) => (
-                <tr key={f.id} className="border-t border-neutral-800">
+                <tr key={f.id} className="border-t border-border">
                   <td className="py-2 font-mono">{f.name}</td>
-                  <td className="text-neutral-400">{f.description}</td>
-                  <td className="text-neutral-500">{(f.created_at || "").replace("T", " ").slice(0, 19)}</td>
+                  <td className="text-muted-foreground">{f.description}</td>
+                  <td className="text-muted-foreground">{(f.created_at || "").replace("T", " ").slice(0, 19)}</td>
                 </tr>
               ))}</tbody>
             </table>
-          ) : <p className="text-sm text-neutral-500">No flows.</p>}
+          ) : <p className="text-sm text-muted-foreground">No flows.</p>}
         </div>
 
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-500">Trail actions</h2>
-          <label className="text-sm"><span className="text-neutral-500">Trail ID</span>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Trail actions</h2>
+          <label className="text-sm"><span className="text-muted-foreground">Trail ID</span>
             <input className={input} value={trail} onChange={(e) => setTrail(e.target.value)} placeholder="trail UUID" />
           </label>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <button onClick={verifyChain} disabled={!trail} className="rounded-md bg-purple-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Verify tamper-evidence chain</button>
+            <button onClick={verifyChain} disabled={!trail} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Verify tamper-evidence chain</button>
             <a
               href={trail ? `/api/v1/trails/${trail}/audit-package` : undefined}
-              className={`rounded-md border border-neutral-700 px-4 py-2 text-sm ${trail ? "" : "pointer-events-none opacity-50"}`}
+              className={`rounded-md border border-border px-4 py-2 text-sm ${trail ? "" : "pointer-events-none opacity-50"}`}
             >
               Download audit package
             </a>

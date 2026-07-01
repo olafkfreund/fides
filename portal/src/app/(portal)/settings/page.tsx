@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, api } from "@/lib/api";
 
-const input = "w-full rounded-md border border-neutral-800 bg-neutral-950 px-3 py-2 text-sm font-mono text-neutral-200";
-const panel = "rounded-xl border border-neutral-800 bg-neutral-900 p-5";
-const btn = "rounded-md bg-purple-600 px-4 py-2 text-sm font-semibold text-white";
-const ghost = "rounded-md border border-neutral-700 px-4 py-2 text-sm";
+const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
+const panel = "rounded-xl border border-border bg-card p-5";
+const btn = "rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground";
+const ghost = "rounded-md border border-border px-4 py-2 text-sm";
 
 function Msg({ m }: { m: { t: string; ok: boolean } }) {
   return m.t ? <span className={`ml-3 text-sm ${m.ok ? "text-green-400" : "text-red-400"}`}>{m.t}</span> : null;
@@ -25,10 +25,10 @@ function ServiceNowTab() {
   return (
     <div className={panel}>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <label className="text-sm"><span className="text-neutral-500">Instance URL</span><input className={input} value={(c.instance_url as string) ?? ""} onChange={(e) => setC({ ...c, instance_url: e.target.value })} placeholder="https://acme.service-now.com" /></label>
-        <label className="text-sm"><span className="text-neutral-500">Auth type</span><select className={input} value={(c.auth_type as string) ?? "basic"} onChange={(e) => setC({ ...c, auth_type: e.target.value })}><option value="basic">basic</option><option value="oauth2">oauth2</option></select></label>
-        <label className="text-sm"><span className="text-neutral-500">Client ID / Username</span><input className={input} value={(c.client_id as string) ?? ""} onChange={(e) => setC({ ...c, client_id: e.target.value })} /></label>
-        <label className="text-sm"><span className="text-neutral-500">Secret reference</span><input className={input} value={(c.secret_path as string) ?? ""} onChange={(e) => setC({ ...c, secret_path: e.target.value })} placeholder="fides/servicenow" /></label>
+        <label className="text-sm"><span className="text-muted-foreground">Instance URL</span><input className={input} value={(c.instance_url as string) ?? ""} onChange={(e) => setC({ ...c, instance_url: e.target.value })} placeholder="https://acme.service-now.com" /></label>
+        <label className="text-sm"><span className="text-muted-foreground">Auth type</span><select className={input} value={(c.auth_type as string) ?? "basic"} onChange={(e) => setC({ ...c, auth_type: e.target.value })}><option value="basic">basic</option><option value="oauth2">oauth2</option></select></label>
+        <label className="text-sm"><span className="text-muted-foreground">Client ID / Username</span><input className={input} value={(c.client_id as string) ?? ""} onChange={(e) => setC({ ...c, client_id: e.target.value })} /></label>
+        <label className="text-sm"><span className="text-muted-foreground">Secret reference</span><input className={input} value={(c.secret_path as string) ?? ""} onChange={(e) => setC({ ...c, secret_path: e.target.value })} placeholder="fides/servicenow" /></label>
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!c.enabled} onChange={(e) => setC({ ...c, enabled: e.target.checked })} /> Enabled</label>
       <div className="mt-4"><button onClick={load} className={ghost}>Reload</button> <button onClick={save} className={btn}>Save</button><Msg m={m} /></div>
@@ -46,7 +46,7 @@ function SlackTab() {
   const save = async () => { try { await apiPost("/api/v1/tenant/slack", { webhook_secret_path: secret, enabled }); setM({ t: "Saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <div className={panel}>
-      <label className="text-sm"><span className="text-neutral-500">Incoming-webhook secret reference</span><input className={input} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="fides/slack-webhook" /></label>
+      <label className="text-sm"><span className="text-muted-foreground">Incoming-webhook secret reference</span><input className={input} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="fides/slack-webhook" /></label>
       <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
       <div className="mt-4"><button onClick={save} className={btn}>Save</button><Msg m={m} /></div>
     </div>
@@ -70,11 +70,11 @@ function ServiceAccountsTab() {
         <button onClick={create} className={btn}>Create</button>
       </div>
       <Msg m={m} />
-      {key && <pre className="mt-3 rounded-md border border-neutral-800 bg-neutral-950 p-3 text-xs text-green-400">Save this key now (shown once):{"\n"}{key}</pre>}
+      {key && <pre className="mt-3 rounded-md border border-border bg-background p-3 text-xs text-green-400">Save this key now (shown once):{"\n"}{key}</pre>}
       {list.length > 0 && (
         <table className="mt-4 w-full text-left text-sm font-mono">
-          <thead className="text-neutral-500"><tr><th className="py-1">Name</th><th>Role</th><th>Keys</th><th></th></tr></thead>
-          <tbody>{list.map((a) => <tr key={a.id} className="border-t border-neutral-800"><td className="py-2">{a.name}</td><td>{a.role}</td><td>{a.active_keys}</td><td><button onClick={() => issue(a.id)} className={ghost}>Issue key</button></td></tr>)}</tbody>
+          <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Role</th><th>Keys</th><th></th></tr></thead>
+          <tbody>{list.map((a) => <tr key={a.id} className="border-t border-border"><td className="py-2">{a.name}</td><td>{a.role}</td><td>{a.active_keys}</td><td><button onClick={() => issue(a.id)} className={ghost}>Issue key</button></td></tr>)}</tbody>
         </table>
       )}
     </div>
@@ -91,15 +91,15 @@ function UsersTab() {
     <div className={panel}>
       {users.length ? (
         <table className="w-full text-left text-sm">
-          <thead className="text-neutral-500"><tr><th className="py-1">Name</th><th>Email</th><th>Role</th><th>Set password</th></tr></thead>
+          <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Email</th><th>Role</th><th>Set password</th></tr></thead>
           <tbody>{users.map((u) => (
-            <tr key={u.id} className="border-t border-neutral-800">
-              <td className="py-2">{u.name}</td><td className="font-mono text-neutral-400">{u.email}</td><td>{u.role}</td>
+            <tr key={u.id} className="border-t border-border">
+              <td className="py-2">{u.name}</td><td className="font-mono text-muted-foreground">{u.email}</td><td>{u.role}</td>
               <td className="flex gap-2 py-2"><input className={input} type="password" placeholder="new password" onChange={(e) => setPw({ ...pw, [u.id]: e.target.value })} /><button onClick={() => setPass(u.id)} className={ghost}>Set</button></td>
             </tr>
           ))}</tbody>
         </table>
-      ) : <p className="text-sm text-neutral-500">No users.</p>}
+      ) : <p className="text-sm text-muted-foreground">No users.</p>}
       <Msg m={m} />
     </div>
   );
@@ -115,7 +115,7 @@ function GitWebhooksTab() {
   return (
     <div className="flex flex-col gap-5">
       <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">Git provider</h3>
+        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Git provider</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <select className={input} value={gp.provider} onChange={(e) => setGp({ ...gp, provider: e.target.value })}><option>github</option><option>gitlab</option></select>
           <input className={input} placeholder="host (github.com)" onChange={(e) => setGp({ ...gp, host: e.target.value })} />
@@ -126,7 +126,7 @@ function GitWebhooksTab() {
         <div className="mt-3"><button onClick={saveGit} className={btn}>Save provider</button></div>
       </div>
       <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-neutral-500">Outbound webhook</h3>
+        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Outbound webhook</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input className={input} placeholder="name" onChange={(e) => setWh({ ...wh, name: e.target.value })} />
           <input className={input} placeholder="https url" onChange={(e) => setWh({ ...wh, url: e.target.value })} />
@@ -151,10 +151,10 @@ export default function Settings() {
   return (
     <div className="max-w-4xl">
       <h1 className="text-xl font-semibold">Settings</h1>
-      <p className="mt-1 text-sm text-neutral-500">Integrations, credentials, and user management.</p>
-      <div className="mt-4 flex gap-1 border-b border-neutral-800">
+      <p className="mt-1 text-sm text-muted-foreground">Integrations, credentials, and user management.</p>
+      <div className="mt-4 flex gap-1 border-b border-border">
         {TABS.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm ${tab === t.id ? "border-b-2 border-purple-500 text-neutral-100" : "text-neutral-400"}`}>{t.label}</button>
+          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm ${tab === t.id ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}>{t.label}</button>
         ))}
       </div>
       <div className="mt-5">{TABS.find((t) => t.id === tab)?.el}</div>
