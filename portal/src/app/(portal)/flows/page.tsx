@@ -8,6 +8,8 @@ type Flow = { id: string; name: string; description?: string; created_at?: strin
 type Trail = { id: string; name: string; git_commit?: string; git_branch?: string; created_at?: string; attestations: number; compliant: boolean };
 type FlowArtifact = { sha256: string; name: string; type?: string; git_commit?: string; created_at?: string; compliant: boolean };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
+type GateEntry = { control: string; name: string; reasons: string[] };
+type Gate = { approved: boolean; recommendation: string; risk_score: number; risk_level: string; passed: string[]; failed: GateEntry[]; missing_evidence: GateEntry[]; summary: string };
 
 function tagList(tags: Flow["tags"]): string[] {
   if (!tags) return [];
@@ -27,6 +29,7 @@ export default function Flows() {
   const [artifactsByFlow, setArtifactsByFlow] = useState<Record<string, FlowArtifact[]>>({});
   const [subtab, setSubtab] = useState<Record<string, "trails" | "artifacts">>({});
   const [chain, setChain] = useState<Record<string, ChainVerdict>>({});
+  const [gate, setGate] = useState<Record<string, Gate>>({});
   const [err, setErr] = useState("");
 
   const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
@@ -59,6 +62,13 @@ export default function Flows() {
     try {
       const v = await apiGet<ChainVerdict>(`/api/v1/trails/${trailId}/verify-chain`);
       setChain((c) => ({ ...c, [trailId]: v }));
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+
+  const evalGate = async (trailId: string) => {
+    try {
+      const g = await apiGet<Gate>(`/api/v1/trails/${trailId}/change-gate`);
+      setGate((c) => ({ ...c, [trailId]: g }));
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
@@ -148,13 +158,26 @@ export default function Flows() {
                                     </div>
                                   </div>
                                   <div className="flex shrink-0 gap-2">
-                                    <button onClick={() => verifyTrail(t.id)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">Verify chain</button>
+                                    <button onClick={() => evalGate(t.id)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground">Change Gate</button>
+                                    <button onClick={() => verifyTrail(t.id)} className="rounded-md border border-border px-3 py-1.5 text-xs">Verify chain</button>
                                     <a href={`/api/v1/trails/${t.id}/audit-package`} className="rounded-md border border-border px-3 py-1.5 text-xs">Download audit</a>
                                   </div>
                                 </div>
                                 {v && (
                                   <div className={`mt-2 text-xs font-medium ${v.valid ? "text-green-400" : "text-red-400"}`}>
                                     {v.valid ? `✅ Tamper-evidence chain valid (${v.count} attestations)` : `❌ Chain broken at #${v.broken_at} — ${v.reason || ""}`}
+                                  </div>
+                                )}
+                                {gate[t.id] && (
+                                  <div className="mt-2 rounded-md border border-border bg-background p-2 text-xs">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].approved ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{gate[t.id].approved ? "RECOMMEND APPROVE" : "HOLD"}</span>
+                                      <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].risk_level === "high" ? "text-red-400" : gate[t.id].risk_level === "medium" ? "text-amber-400" : "text-green-400"}`}>risk {gate[t.id].risk_score} · {gate[t.id].risk_level}</span>
+                                    </div>
+                                    <div className="mt-1 text-muted-foreground">{gate[t.id].summary}</div>
+                                    {gate[t.id].failed.length > 0 && <div className="mt-1 text-red-400">failed: {gate[t.id].failed.map((f) => f.control).join(", ")}</div>}
+                                    {gate[t.id].missing_evidence.length > 0 && <div className="mt-1 text-amber-400">missing: {gate[t.id].missing_evidence.map((f) => f.control).join(", ")}</div>}
+                                    {gate[t.id].passed.length > 0 && <div className="mt-1 text-green-400">passed: {gate[t.id].passed.join(", ")}</div>}
                                   </div>
                                 )}
                               </div>
