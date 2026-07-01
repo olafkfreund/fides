@@ -15,7 +15,7 @@ func TestAdminConsolePageServes(t *testing.T) {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Fides Admin Console", "ServiceNow", "Service Accounts", "/api/v1/tenant/slack", "/api/v1/metrics/dora"} {
+	for _, want := range []string{"Fides Admin Console", "Slack", "Service Accounts", "/api/v1/tenant/slack", "/api/v1/metrics/dora"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("admin page missing %q", want)
 		}
