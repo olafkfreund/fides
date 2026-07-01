@@ -41,35 +41,15 @@
   <p>Configure integrations and policies. Sign in to the portal first — this page uses your session.</p>
 </header>
 <nav id="tabs">
-  <button data-tab="servicenow" class="active">ServiceNow</button>
-  <button data-tab="slack">Slack</button>
+  <button data-tab="slack" class="active">Slack</button>
   <button data-tab="accounts">Service Accounts</button>
   <button data-tab="git">Git &amp; Webhooks</button>
   <button data-tab="envs">Environments</button>
   <button data-tab="metrics">Metrics</button>
 </nav>
 <main>
-  <!-- ServiceNow -->
-  <section class="tab active" id="tab-servicenow">
-    <div class="panel">
-      <h2>ServiceNow Connection</h2>
-      <div class="row">
-        <div><label>Instance URL</label><input id="sn_url" placeholder="https://acme.service-now.com"/></div>
-        <div><label>Auth type</label><select id="sn_auth"><option value="basic">basic</option><option value="oauth2">oauth2</option></select></div>
-      </div>
-      <div class="row">
-        <div><label>Client ID / Username</label><input id="sn_client"/></div>
-        <div><label>Secret reference</label><input id="sn_secret" placeholder="fides/servicenow"/></div>
-      </div>
-      <div class="check"><input type="checkbox" id="sn_enabled" checked/><label style="margin:0">Enabled</label></div>
-      <div class="btnrow"><button class="ghost" onclick="loadSN()">Reload</button><button class="act" onclick="saveSN()">Save</button>
-        <a href="/servicenow" target="_blank">Open full ServiceNow console →</a></div>
-      <div id="sn_msg" class="msg"></div>
-    </div>
-  </section>
-
   <!-- Slack -->
-  <section class="tab" id="tab-slack">
+  <section class="tab active" id="tab-slack">
     <div class="panel">
       <h2>Slack Notifications</h2>
       <label>Incoming-webhook secret reference</label><input id="sl_secret" placeholder="fides/slack-webhook"/>
@@ -189,15 +169,9 @@ document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   b.classList.add('active'); $('tab-'+b.dataset.tab).classList.add('active');
-  ({servicenow:loadSN,slack:loadSlack,accounts:loadSA,git:()=>{loadGit();loadHooks();},envs:loadEnvs,metrics:()=>{}}[b.dataset.tab]||(()=>{}))();
+  ({slack:loadSlack,accounts:loadSA,git:()=>{loadGit();loadHooks();},envs:loadEnvs,metrics:()=>{}}[b.dataset.tab]||(()=>{}))();
 });
 
-// ServiceNow
-async function loadSN(){ try{ const c=await api('GET','/api/v1/tenant/servicenow');
-  $('sn_url').value=c.instance_url||''; $('sn_auth').value=c.auth_type||'basic'; $('sn_client').value=c.client_id||'';
-  $('sn_secret').value=c.secret_path||''; $('sn_enabled').checked=!!c.instance_url&&c.enabled!==false;
-  msg('sn_msg',c.instance_url?'Loaded.':'Not configured yet.',true);}catch(e){msg('sn_msg',e.message,false);} }
-async function saveSN(){ try{ await api('POST','/api/v1/tenant/servicenow',{instance_url:$('sn_url').value.trim(),auth_type:$('sn_auth').value,client_id:$('sn_client').value.trim(),secret_path:$('sn_secret').value.trim(),enabled:$('sn_enabled').checked}); msg('sn_msg','Saved.',true);}catch(e){msg('sn_msg',e.message,false);} }
 
 // Slack
 async function loadSlack(){ try{ const c=await api('GET','/api/v1/tenant/slack'); $('sl_secret').value=c.webhook_secret_path||''; $('sl_enabled').checked=c.enabled!==false&&!!c.webhook_secret_path; msg('sl_msg',c.webhook_secret_path?'Loaded.':'Not configured yet.',true);}catch(e){msg('sl_msg',e.message,false);} }
@@ -242,7 +216,7 @@ async function addAllow(){ const id=curEnv(); try{ await api('POST','/api/v1/env
 // Metrics
 async function loadMetrics(){ try{ const m=await api('GET','/api/v1/metrics/dora?days='+(parseInt($('m_days').value||'30',10))); const p=$('m_out'); p.style.display='block'; p.textContent=JSON.stringify(m,null,2);}catch(e){const p=$('m_out');p.style.display='block';p.textContent=e.message;} }
 
-loadSN();
+loadSlack();
 </script>
 </body>
 </html>
