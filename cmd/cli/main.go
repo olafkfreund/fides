@@ -92,6 +92,8 @@ func main() {
 		handleChangeGate(config, os.Args[2:])
 	case "report":
 		handleReport(config, os.Args[2:])
+	case "approve":
+		handleApprove(config, os.Args[2:])
 	case "slack":
 		handleSlack(config, os.Args[2:])
 	case "env":

@@ -256,6 +256,19 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
+// fides approve --trail <id> [--reason r] — record a segregation-of-duties approval.
+func handleApprove(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("approve", flag.ExitOnError)
+	trail := cmd.String("trail", "", "trail UUID")
+	reason := cmd.String("reason", "", "approval reason")
+	cmd.Parse(args)
+	if *trail == "" {
+		fmt.Println("Usage: fides approve --trail <id> [--reason <r>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/trails/"+*trail+"/approvals", map[string]any{"reason": *reason}, "Approval recorded")
+}
+
 // fides report --framework <name> — auditor-ready framework report.
 func handleReport(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("report", flag.ExitOnError)
