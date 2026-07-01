@@ -88,6 +88,8 @@ func main() {
 		handleControl(config, os.Args[2:])
 	case "flow":
 		handleFlow(config, os.Args[2:])
+	case "change-gate":
+		handleChangeGate(config, os.Args[2:])
 	case "slack":
 		handleSlack(config, os.Args[2:])
 	case "env":
@@ -136,6 +138,7 @@ func printUsage() {
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
 	fmt.Println("  control          Governance controls + coverage (add|list|coverage|archive|unarchive)")
 	fmt.Println("  flow             Flows (list | trails --flow <id> | artifacts --flow <id>)")
+	fmt.Println("  change-gate      Evidence-backed approval verdict + risk score (--trail <id>; exits 2 on hold)")
 	fmt.Println("  policy           Policies (create|delete|generate | add|list|check --env <id>)")
 	fmt.Println("  metrics          DORA metrics (--days N) or deployment-frequency (--weeks N)")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")

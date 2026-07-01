@@ -256,6 +256,23 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
+// fides change-gate --trail <id> — evidence-backed approval verdict + risk score.
+func handleChangeGate(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("change-gate", flag.ExitOnError)
+	trail := cmd.String("trail", "", "trail UUID")
+	cmd.Parse(args)
+	if *trail == "" {
+		fmt.Println("Usage: fides change-gate --trail <id>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/trails/"+*trail+"/change-gate")
+	fail(err, "evaluate change gate")
+	fmt.Println(body)
+	if strings.Contains(body, "\"approved\":false") {
+		os.Exit(2) // non-zero so CI / a change pipeline can gate on the verdict
+	}
+}
+
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
