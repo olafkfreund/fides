@@ -3245,6 +3245,22 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Emit a compliance.evaluated event so a failing runtime check flows to the
+	// webhook/Slack/ServiceNow sinks (opt-in via FIDES_EVENTS_ENABLED).
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		if orgID, ok := principalOrg(r); ok {
+			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+				"environment_id": req.EnvironmentID,
+				"server_name":    req.ServerName,
+				"tool_name":      req.ToolName,
+				"compliant":      compliant,
+				"failed_rules":   failedRules,
+			}); err != nil {
+				log.Printf("failed to enqueue compliance.evaluated (mcp verify): %v", err)
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"compliant":    compliant,
