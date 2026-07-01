@@ -48,7 +48,15 @@ source again** — it does not exist here.
 - `cmd/server` — API server (`pkg/api`). Applies embedded migrations on boot
   (`pkg/db/migrate.go` + `pkg/db/migrations/*.sql`; `0001_init.sql` is kept
   byte-identical to root `schema.sql`, enforced by a unit test).
-- `cmd/cli` (`fides`) — pipeline + config CLI. `cmd/mcp` / `cmd/mcp-sensor` — MCP.
+- `cmd/cli` (`fides`) — pipeline + config CLI. Incl. `flow list|trails|artifacts`,
+  `policy create|delete|generate` (LLM-drafted rules) + env `policy add|list|check`,
+  `metrics [--days N] | deployment-frequency [--weeks N]`, `control`, `env verify`, etc.
+- `cmd/mcp` (`fides-mcp`) — MCP server for AI tools (Claude Code, Cursor, Claude Desktop):
+  15 tools (list_flows/environments/policies, check_compliance, search_artifacts,
+  search_attestations, get_controls_coverage, get_deployment_frequency, ServiceNow +
+  provenance recording) **and the docs as MCP resources** (`fides://docs/*`). Shipped in
+  the image at `/usr/local/bin/fides-mcp`; guide `docs/mcp-server.md`. `cmd/mcp-sensor` —
+  the in-cluster stdio sensor used by environment runtime compliance checks.
 - Event/outbox dispatcher (`pkg/events`, gated by `FIDES_EVENTS_ENABLED`) drives
   sinks: webhooks, GitHub/GitLab commit-status, ServiceNow ITOM+CMDB, Slack.
 - Integrations: `pkg/servicenow`, `pkg/slack`, `pkg/gitstatus`, `pkg/webhooks`,

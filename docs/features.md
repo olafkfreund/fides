@@ -126,6 +126,9 @@ fides logical-env state --id $LOGICAL       # unified running services across me
 ```bash
 fides metrics --days 30
 # {"deployments":42,"deployment_frequency_per_day":1.4,"compliance_rate":0.97,"change_failure_rate":0.03,...}
+
+fides metrics deployment-frequency --weeks 12
+# [{"environment":"prod","week":"2026-W27","deployments":7}, ...]  (weekly, per environment)
 ```
 
 ## 11. ServiceNow integration
@@ -157,3 +160,44 @@ fides git-provider config --provider github --host github.com \
 fides webhook config --name audit-sink --url https://example.com/hook --secret-path fides/hook-secret
 fides user set-password --user $USER_ID --password 'S0me-Strong-Pass'
 ```
+
+## 14. Flows, trails & artifacts from the CLI
+
+```bash
+fides flow list                    # all flows
+fides flow trails --flow $FLOW     # the flow's build trails (name, commit, compliance)
+fides flow artifacts --flow $FLOW  # artifacts across the flow's trails (with fingerprints)
+```
+
+## 15. Policies: create, delete & AI-drafted rules
+
+```bash
+# draft rules from plain English via the configured LLM
+fides policy generate --framework SOC2 \
+  --description "block critical CVEs and require passing unit tests plus an SBOM"
+
+# create / delete a named policy
+fides policy create --name production-release-rules --rules-file rules.json
+fides policy delete --id $POLICY_ID
+```
+
+The same wizard (with AI drafting) is available in the portal at **Policies → New Policy**.
+
+## 16. AI tools — the Fides MCP server (`fides-mcp`)
+
+Fides ships a Model Context Protocol server so **Claude Code**, Cursor, and Claude
+Desktop can query your compliance data **and read the docs** in-conversation.
+
+```jsonc
+// .mcp.json
+{ "mcpServers": { "fides": {
+  "command": "/path/to/fides-mcp",
+  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<service-account key>" }
+} } }
+```
+
+Tools include `list_flows`/`list_environments`/`list_policies`, `check_compliance`,
+`search_artifacts`, `search_attestations`, `get_controls_coverage`,
+`get_deployment_frequency`, the ServiceNow tools, and provenance recording. It also
+exposes the documentation as MCP **resources** (`fides://docs/*`). Full guide:
+[mcp-server.md](mcp-server.md).

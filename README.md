@@ -52,7 +52,7 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 
 ## Model Context Protocol (MCP) Server
 
-Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, and build attestations as LLM-executable tools. It can be integrated into modern AI clients (like Claude Desktop, Cursor, or Antigravity) to enable conversational interactions with your builds, audits, and pipelines.
+Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, artifacts, attestations, controls coverage, and deployment metrics as LLM-executable **tools** — and the Fides documentation as MCP **resources** (`fides://docs/*`) that an assistant can read on demand. It integrates with **Claude Code**, Claude Desktop, Cursor, and other AI clients for conversational interaction with your builds, audits, and pipelines. The binary is also shipped in the server image at `/usr/local/bin/fides-mcp`. See the full guide: [mcp-server.md](mcp-server.md).
 
 ### Configuration for Claude Desktop
 Add the following configuration to your `claude_desktop_config.json` (located at `~/.config/Claude/claude_desktop_config.json` on Linux/macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
