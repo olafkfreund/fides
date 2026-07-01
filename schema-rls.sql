@@ -44,7 +44,13 @@ DECLARE
     'sso_group_mappings',
     'tenant_webhooks',
     'tenant_git_providers',
-    'tenant_servicenow_settings'
+    'tenant_servicenow_settings',
+    'tenant_slack_settings',
+    'controls',
+    'trail_approvals',
+    'integration_events',
+    'logical_environments',
+    'service_accounts'
   ];
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
@@ -75,7 +81,11 @@ DECLARE
     {"tbl": "evidence_attachments",    "fk": "attestation_id", "parent": "attestations"},
     {"tbl": "environment_snapshots",   "fk": "environment_id", "parent": "environments"},
     {"tbl": "snapshot_artifacts",      "fk": "snapshot_id",    "parent": "environment_snapshots"},
-    {"tbl": "environment_mcp_servers", "fk": "environment_id", "parent": "environments"}
+    {"tbl": "environment_mcp_servers", "fk": "environment_id", "parent": "environments"},
+    {"tbl": "environment_allowlist",   "fk": "environment_id", "parent": "environments"},
+    {"tbl": "environment_policies",    "fk": "environment_id", "parent": "environments"},
+    {"tbl": "logical_environment_members", "fk": "logical_id", "parent": "logical_environments"},
+    {"tbl": "service_account_keys",    "fk": "service_account_id", "parent": "service_accounts"}
   ]'::jsonb;
 BEGIN
   FOR rec IN SELECT * FROM jsonb_to_recordset(child_tables) AS x(tbl text, fk text, parent text) LOOP
@@ -89,3 +99,11 @@ BEGIN
     $f$, rec.tbl, rec.fk, rec.parent, rec.fk, rec.parent);
   END LOOP;
 END $$;
+
+-- The organizations root table: a session may only see its own org row.
+ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE organizations FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON organizations;
+CREATE POLICY tenant_isolation ON organizations
+  USING (id = fides_current_org())
+  WITH CHECK (id = fides_current_org());
