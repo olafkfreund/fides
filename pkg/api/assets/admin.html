@@ -46,6 +46,7 @@
   <button data-tab="git">Git &amp; Webhooks</button>
   <button data-tab="envs">Environments</button>
   <button data-tab="metrics">Metrics</button>
+  <button data-tab="verify">MCP Verify</button>
 </nav>
 <main>
   <!-- Slack -->
@@ -150,6 +151,27 @@
       <pre id="m_out" style="display:none;margin-top:12px"></pre>
     </div>
   </section>
+
+  <!-- MCP Verify -->
+  <section class="tab" id="tab-verify">
+    <div class="panel">
+      <h2>Runtime MCP compliance check</h2>
+      <div class="row">
+        <div><label>Environment</label><select id="v_env" onchange="loadVerifyConns()"></select></div>
+        <div><label>MCP connection</label><select id="v_server"></select></div>
+      </div>
+      <div class="row">
+        <div><label>Tool name</label><input id="v_tool" value="get_pods"/></div>
+        <div></div>
+      </div>
+      <label>Compliance jq rules (one per line)</label>
+      <textarea id="v_rules" rows="4" style="width:100%;background:#1a1a1a;border:1px solid #262626;color:#e5e5e5;border-radius:7px;padding:9px 11px;font:13px ui-monospace,monospace">.pods[].status == "Ready"
+.pods[].replicas == .pods[].readyReplicas</textarea>
+      <div class="btnrow"><button class="act" onclick="runVerify()">Verify Compliance</button></div>
+      <div id="v_verdict" class="msg" style="font-size:14px;font-weight:600"></div>
+      <pre id="v_out" style="display:none"></pre>
+    </div>
+  </section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -169,7 +191,7 @@ document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#tabs button').forEach(x=>x.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
   b.classList.add('active'); $('tab-'+b.dataset.tab).classList.add('active');
-  ({slack:loadSlack,accounts:loadSA,git:()=>{loadGit();loadHooks();},envs:loadEnvs,metrics:()=>{}}[b.dataset.tab]||(()=>{}))();
+  ({slack:loadSlack,accounts:loadSA,git:()=>{loadGit();loadHooks();},envs:loadEnvs,metrics:()=>{},verify:loadVerifyEnvs}[b.dataset.tab]||(()=>{}))();
 });
 
 
@@ -215,6 +237,22 @@ async function addAllow(){ const id=curEnv(); try{ await api('POST','/api/v1/env
 
 // Metrics
 async function loadMetrics(){ try{ const m=await api('GET','/api/v1/metrics/dora?days='+(parseInt($('m_days').value||'30',10))); const p=$('m_out'); p.style.display='block'; p.textContent=JSON.stringify(m,null,2);}catch(e){const p=$('m_out');p.style.display='block';p.textContent=e.message;} }
+
+// MCP Verify
+async function loadVerifyEnvs(){ try{ const envs=await api('GET','/api/v1/environments'); var sel=$('v_env'); sel.innerHTML=envs.map(function(e){return '<option value="'+e.id+'">'+esc(e.name)+'</option>';}).join(''); if(envs.length) loadVerifyConns(); }catch(e){ setMsg('v_verdict', e.message, false); } }
+async function loadVerifyConns(){ var id=$('v_env').value; if(!id) return; try{ const conns=await api('GET','/api/v1/environments/mcp?environment_id='+id); $('v_server').innerHTML=(conns||[]).map(function(c){return '<option value="'+esc(c.name)+'">'+esc(c.name)+' ('+esc(c.transport)+')</option>';}).join(''); if(!conns||!conns.length){ setMsg('v_verdict','No MCP connections for this environment.',false); } }catch(e){ setMsg('v_verdict', e.message, false); } }
+async function runVerify(){
+  var rules=$('v_rules').value.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  if(!$('v_server').value){ setMsg('v_verdict','Select an MCP connection.',false); return; }
+  try{
+    var r=await api('POST','/api/v1/environments/mcp/verify',{environment_id:$('v_env').value,server_name:$('v_server').value,tool_name:$('v_tool').value.trim(),arguments:{},rules:rules});
+    var v=$('v_verdict');
+    if(r.compliant){ v.textContent='✅ COMPLIANT'; v.className='msg ok'; }
+    else { v.textContent='❌ NON-COMPLIANT — failed: '+((r.failed_rules||[]).join('  |  ')); v.className='msg err'; }
+    var p=$('v_out'); p.style.display='block'; p.textContent='Raw response:\n'+(r.raw_response||'');
+  }catch(e){ setMsg('v_verdict', e.message, false); }
+}
+function setMsg(id,t,ok){ var e=$(id); if(e){ e.textContent=t; e.className='msg '+(ok?'ok':'err'); } }
 
 loadSlack();
 </script>
