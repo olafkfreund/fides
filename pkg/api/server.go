@@ -1004,7 +1004,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 				"trail_id":    attestation.TrailID.String(),
 				"attestation": attestation.Name,
 				"compliant":   attestation.IsCompliant,
@@ -1189,7 +1189,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 				"shadows":        shadows,
 				"drifts":         drifts,
 			}
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.noncompliant", payload); err != nil {
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
 				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
 			}
 		}
@@ -1198,7 +1198,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
 		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.reported", map[string]any{
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
 				"environment": envID.String(),
 				"services":    services,
 			}); err != nil {
@@ -2932,7 +2932,7 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	}
 
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		_ = events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+		_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 			"trail_id": trailID.String(), "attestation": "servicenow-change", "compliant": compliant,
 		})
 	}
@@ -3275,7 +3275,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	// webhook/Slack/ServiceNow sinks (opt-in via FIDES_EVENTS_ENABLED).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 				"environment_id": req.EnvironmentID,
 				"server_name":    req.ServerName,
 				"tool_name":      req.ToolName,
