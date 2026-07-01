@@ -22,6 +22,9 @@ export default function Environments() {
   const [allow, setAllow] = useState<Approval[]>([]);
   const [sha, setSha] = useState("");
   const [reason, setReason] = useState("");
+  const [queryOut, setQueryOut] = useState("");
+  const [mName, setMName] = useState(""); const [mTransport, setMTransport] = useState("stdio");
+  const [mCommand, setMCommand] = useState(""); const [mUrl, setMUrl] = useState("");
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -52,6 +55,29 @@ export default function Environments() {
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
+  const runQuery = async () => {
+    setErr(""); setQueryOut("");
+    try {
+      const r = await apiPost<{ raw_response?: string }>("/api/v1/environments/mcp/query", {
+        environment_id: sel, server_name: server, tool_name: tool, arguments: {},
+      });
+      setQueryOut(typeof r === "string" ? r : (r.raw_response ?? JSON.stringify(r, null, 2)));
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+
+  const loadConns = () => apiGet<MCPConn[]>(`/api/v1/environments/mcp?environment_id=${sel}`).then((c) => setConns(c || [])).catch(() => {});
+
+  const addMcp = async () => {
+    setErr("");
+    try {
+      await apiPost("/api/v1/environments/mcp", {
+        environment_id: sel, name: mName, transport: mTransport,
+        command: mCommand, args: [], env_vars: {}, url: mUrl, auth_header: "",
+      });
+      setMName(""); setMCommand(""); setMUrl(""); loadConns();
+    } catch (e) { setErr(String((e as Error).message || e)); }
+  };
+
   const addAllow = async () => {
     setErr("");
     try {
@@ -68,12 +94,26 @@ export default function Environments() {
 
       <div className="mt-6 flex flex-col gap-5">
         <div className={panel}>
-          <label className="text-sm">
-            <span className="text-muted-foreground">Environment</span>
-            <select className={input} value={sel} onChange={(e) => setSel(e.target.value)}>
-              {envs.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
-            </select>
-          </label>
+          <div className="flex items-end justify-between gap-4">
+            <label className="flex-1 text-sm">
+              <span className="text-muted-foreground">Environment</span>
+              <select className={input} value={sel} onChange={(e) => setSel(e.target.value)}>
+                {envs.map((e) => <option key={e.id} value={e.id}>{e.name} ({e.type})</option>)}
+              </select>
+            </label>
+            <a href="/api/v1/environments/export" className="whitespace-nowrap rounded-md border border-border px-4 py-2 text-sm">Download Audit Report</a>
+          </div>
+        </div>
+
+        <div className={panel}>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Add MCP connection</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input className={input} value={mName} onChange={(e) => setMName(e.target.value)} placeholder="name (aws-sensor)" />
+            <select className={input} value={mTransport} onChange={(e) => setMTransport(e.target.value)}><option value="stdio">stdio</option><option value="http">http</option></select>
+            <input className={input} value={mCommand} onChange={(e) => setMCommand(e.target.value)} placeholder="command (fides-mcp-sensor) — stdio" />
+            <input className={input} value={mUrl} onChange={(e) => setMUrl(e.target.value)} placeholder="url — http" />
+          </div>
+          <div className="mt-3"><button onClick={addMcp} disabled={!mName} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Add MCP Server</button></div>
         </div>
 
         <div className={panel}>
@@ -91,9 +131,11 @@ export default function Environments() {
           <label className="mt-3 block text-sm"><span className="text-muted-foreground">Compliance jq rules (one per line)</span>
             <textarea className={`${input} h-24`} value={rules} onChange={(e) => setRules(e.target.value)} />
           </label>
-          <div className="mt-3">
+          <div className="mt-3 flex gap-3">
             <button onClick={runVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify Compliance</button>
+            <button onClick={runQuery} className="rounded-md border border-border px-4 py-2 text-sm">Query State</button>
           </div>
+          {queryOut && <pre className="mt-3 overflow-auto rounded-md border border-border bg-background p-3 text-xs text-foreground">{queryOut}</pre>}
           {verdict && (
             <div className="mt-4">
               <div className={`text-sm font-semibold ${verdict.compliant ? "text-green-400" : "text-red-400"}`}>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 
 type Flow = { id: string; name: string; description?: string; created_at?: string };
 type ChainVerdict = { valid: boolean; count: number; broken_at: number; reason?: string };
@@ -13,11 +13,17 @@ export default function Flows() {
   const [flows, setFlows] = useState<Flow[]>([]);
   const [trail, setTrail] = useState("");
   const [chain, setChain] = useState<ChainVerdict | null>(null);
+  const [nName, setNName] = useState(""); const [nDesc, setNDesc] = useState("");
   const [err, setErr] = useState("");
 
-  useEffect(() => {
-    apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
-  }, []);
+  const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
+  useEffect(() => { loadFlows(); }, []);
+
+  const createFlow = async () => {
+    setErr("");
+    try { await apiPost("/api/v1/flows", { name: nName, description: nDesc }); setNName(""); setNDesc(""); loadFlows(); }
+    catch (e) { setErr(String((e as Error).message || e)); }
+  };
 
   const verifyChain = async () => {
     setErr(""); setChain(null);
@@ -32,6 +38,14 @@ export default function Flows() {
       <p className="mt-1 text-sm text-muted-foreground">Delivery pipelines and their build trails.</p>
 
       <div className="mt-6 flex flex-col gap-5">
+        <div className={panel}>
+          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">New Flow</h2>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <input className={input} value={nName} onChange={(e) => setNName(e.target.value)} placeholder="flow name" />
+            <input className={input} value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="description" />
+            <button onClick={createFlow} disabled={!nName} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Create flow</button>
+          </div>
+        </div>
         <div className={panel}>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Flows</h2>
           {flows.length > 0 ? (
