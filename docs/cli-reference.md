@@ -26,6 +26,8 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | Command | Purpose |
 |---|---|
 | `fides allowlist add\|list\|check\|remove --env <id> [--sha <hex> --reason <r>]` | Per-environment artifact approvals (`check` exits 2 if not approved) |
+| `fides flow list \| trails --flow <id> \| artifacts --flow <id>` | List flows and their trails / artifacts |
+| `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
@@ -36,6 +38,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides search artifacts [--sha --commit --name]` | Search artifacts |
 | `fides search attestations [--type --trail --compliant]` | Search attestations |
 | `fides metrics [--days N]` | DORA delivery metrics |
+| `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |
 
 ## Integration & admin config
 | Command | Purpose |
@@ -46,5 +49,8 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides webhook config --name --url --secret-path [--events] [--disable]` | Outbound signed webhook |
 | `fides service-account create\|list\|issue-key\|revoke-key [...]` | Service accounts + API keys |
 | `fides user set-password --user <id> --password <pw>` | Set a user's local password |
+
+## AI tools (MCP)
+Fides ships **`fides-mcp`**, a Model Context Protocol server so Claude Code, Cursor, and Claude Desktop can query your compliance data (flows, environments, artifacts, attestations, controls coverage, deployment frequency) **and read the Fides docs** in-conversation. See **[mcp-server.md](mcp-server.md)**.
 
 See [features.md](features.md) for worked examples of each.

@@ -17,7 +17,7 @@ Fides tracks and validates software deliverables from source code commits to run
 * **Fides Core API Server**: Orchestrates data models, manages vaults and storage systems, and evaluates policy rules.
 * **LLM Verification Gateway (`Fides-AI`)**: Leverages natural language models (Ollama, llama.cpp, Google Gemini) to check licenses, scan for credentials, and assess compliance risks.
 * **Management Web Portal**: React dashboard for configuring environments, policies, and viewing compliance states.
-* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance monitoring tools directly to AI clients.
+* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance data as tools **and the Fides docs as resources** to AI clients like **Claude Code**, Cursor, and Claude Desktop. See the [MCP server guide](/mcp-server.html).
 
 ---
 
