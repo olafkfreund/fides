@@ -43,6 +43,7 @@ RUN (cp /keep/*.md web/ 2>/dev/null || true) && (cp /keep/llms*.txt web/ 2>/dev/
 # used by environment compliance checks).
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-server cmd/server/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp-sensor ./cmd/mcp-sensor
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp ./cmd/mcp
 
 # Stage 2: Minimal runtime image
 FROM alpine:3.18
@@ -54,6 +55,7 @@ WORKDIR /app
 # Copy binary and static web assets from builder
 COPY --from=builder /app/fides-server /app/fides-server
 COPY --from=builder /app/fides-mcp-sensor /usr/local/bin/fides-mcp-sensor
+COPY --from=builder /app/fides-mcp /usr/local/bin/fides-mcp
 COPY --from=builder /app/web /app/web
 
 

@@ -12,6 +12,7 @@ const DOCS = [
   { title: "ServiceNow Integration", path: "/servicenow-integration.md" },
   { title: "AWS Secrets Manager", path: "/aws-secrets-manager.md" },
   { title: "Architecture", path: "/architecture_proposal.md" },
+  { title: "MCP Server (Claude Code)", path: "/mcp-server.md" },
 ];
 
 export default function Help() {
