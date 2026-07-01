@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fides.fullname" . }}
+  labels:
+    {{- include "fides.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "fides.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        {{- include "fides.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.serviceAccount.create }}
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- end }}
+      containers:
+        - name: fides-server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.port }}
+          env:
+            - name: DB_DRIVER
+              value: postgres
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fides.secretName" . }}
+                  key: db-dsn
+            - name: ENCRYPTION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fides.secretName" . }}
+                  key: encryption-key
+            - name: FIDES_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fides.secretName" . }}
+                  key: api-token
+            - name: PORTAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fides.secretName" . }}
+                  key: portal-password
+            - name: PORTAL_USERNAME
+              value: {{ .Values.portal.username | quote }}
+            - name: FIDES_API_ORG_ID
+              value: {{ .Values.org.id | quote }}
+            - name: FIDES_RLS_ENABLED
+              value: {{ .Values.rls.enabled | quote }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
