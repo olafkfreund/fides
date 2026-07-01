@@ -1,6 +1,6 @@
 module github.com/olafkfreund/terraform-provider-fides
 
-go 1.26.4
+go 1.26.0
 
 require github.com/hashicorp/terraform-plugin-framework v1.19.0
 
