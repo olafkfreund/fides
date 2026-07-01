@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 
-type Env = { id: string; name: string; type: string };
+type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
+type Env = {
+  id: string; name: string; type: string; description?: string;
+  lastSnapshot?: string; running?: RuntimeArtifact[]; drifts?: string[]; shadowChanges?: string[];
+};
 type MCPConn = { id: string; name: string; transport: string; command?: string };
 type Verdict = { compliant: boolean; failed_rules?: string[]; raw_response?: string };
 type Approval = { artifact_sha256: string; approved_by?: string; reason?: string };
@@ -25,6 +29,7 @@ export default function Environments() {
   const [queryOut, setQueryOut] = useState("");
   const [mName, setMName] = useState(""); const [mTransport, setMTransport] = useState("stdio");
   const [mCommand, setMCommand] = useState(""); const [mUrl, setMUrl] = useState("");
+  const [filter, setFilter] = useState("");
   const [err, setErr] = useState("");
 
   useEffect(() => {
@@ -93,6 +98,38 @@ export default function Environments() {
       <p className="mt-1 text-sm text-muted-foreground">Runtime compliance verification and artifact approvals.</p>
 
       <div className="mt-6 flex flex-col gap-5">
+        <div className={panel}>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runtime Environments</h2>
+            <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />
+          </div>
+          <div className="flex flex-col gap-2">
+            {envs.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())).map((e) => {
+              const drifts = e.drifts?.length ?? 0, shadows = e.shadowChanges?.length ?? 0, running = e.running?.length ?? 0;
+              const secure = drifts === 0 && shadows === 0;
+              return (
+                <div key={e.id} className="rounded-md border border-border p-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <span className="font-semibold">{e.name}</span>
+                      <span className="ml-2 rounded bg-muted px-2 py-0.5 text-xs uppercase text-muted-foreground">{e.type}</span>
+                      {e.description && <div className="mt-0.5 text-xs text-muted-foreground">{e.description}</div>}
+                    </div>
+                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${secure ? "bg-green-500/15 text-green-400" : "bg-amber-500/15 text-amber-400"}`}>{secure ? "SECURE" : "DRIFT"}</span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <span><span className="text-foreground">{running}</span> running</span>
+                    <span><span className={drifts ? "text-amber-400" : "text-foreground"}>{drifts}</span> drifts</span>
+                    <span><span className={shadows ? "text-amber-400" : "text-foreground"}>{shadows}</span> shadows</span>
+                    <span>last snapshot: {e.lastSnapshot || "—"}</span>
+                  </div>
+                </div>
+              );
+            })}
+            {envs.length === 0 && <p className="text-sm text-muted-foreground">No environments.</p>}
+          </div>
+        </div>
+
         <div className={panel}>
           <div className="flex items-end justify-between gap-4">
             <label className="flex-1 text-sm">
