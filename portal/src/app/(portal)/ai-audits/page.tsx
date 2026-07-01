@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
+import Md from "@/components/Md";
 
 type Assessment = {
   id?: string;
@@ -47,7 +48,7 @@ export default function AIAudits() {
                 <div className={`text-lg font-semibold ${(sel.complianceScore ?? 0) >= 80 ? "text-green-400" : "text-amber-400"}`}>{sel.complianceScore ?? "—"}/100</div>
               </div>
               <div className="text-xs text-muted-foreground">Model: {sel.modelName}</div>
-              <pre className="mt-3 whitespace-pre-wrap break-words rounded-md border border-border bg-background p-4 text-xs text-foreground">{sel.assessmentRaw}</pre>
+              <div className="mt-3 rounded-md border border-border bg-background p-5 text-sm"><Md>{sel.assessmentRaw || ""}</Md></div>
             </>
           ) : <p className="text-sm text-muted-foreground">Select a report.</p>}
         </div>

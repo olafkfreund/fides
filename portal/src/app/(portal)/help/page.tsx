@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Markdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Md from "@/components/Md";
 
 // Docs are the Go-served web/*.md files (root-relative, public).
 const DOCS = [
@@ -14,23 +13,6 @@ const DOCS = [
   { title: "AWS Secrets Manager", path: "/aws-secrets-manager.md" },
   { title: "Architecture", path: "/architecture_proposal.md" },
 ];
-
-type C<T extends keyof React.JSX.IntrinsicElements> = React.ComponentPropsWithoutRef<T>;
-const mdComponents = {
-  h1: (p: C<"h1">) => <h1 className="mt-6 mb-3 text-2xl font-bold text-foreground" {...p} />,
-  h2: (p: C<"h2">) => <h2 className="mt-6 mb-2 text-xl font-semibold text-foreground" {...p} />,
-  h3: (p: C<"h3">) => <h3 className="mt-4 mb-2 text-lg font-semibold text-foreground" {...p} />,
-  p: (p: C<"p">) => <p className="my-3 leading-relaxed text-muted-foreground" {...p} />,
-  ul: (p: C<"ul">) => <ul className="my-3 list-disc pl-6 text-muted-foreground" {...p} />,
-  ol: (p: C<"ol">) => <ol className="my-3 list-decimal pl-6 text-muted-foreground" {...p} />,
-  li: (p: C<"li">) => <li className="my-1" {...p} />,
-  a: (p: C<"a">) => <a className="text-primary underline" {...p} />,
-  code: (p: C<"code">) => <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground" {...p} />,
-  pre: (p: C<"pre">) => <pre className="my-3 overflow-auto rounded-md border border-border bg-background p-4 text-xs" {...p} />,
-  table: (p: C<"table">) => <table className="my-3 w-full text-left text-sm" {...p} />,
-  th: (p: C<"th">) => <th className="border-b border-border py-1 pr-4 text-muted-foreground" {...p} />,
-  td: (p: C<"td">) => <td className="border-b border-border py-1 pr-4" {...p} />,
-};
 
 export default function Help() {
   const [sel, setSel] = useState(DOCS[0]);
@@ -66,7 +48,7 @@ export default function Help() {
         <div className="rounded-xl border border-border bg-card p-6">
           {errMsg && <p className="text-sm text-red-400">Could not load {sel.path}: {errMsg}</p>}
           {!errMsg && !content && <p className="text-sm text-muted-foreground">Loading…</p>}
-          {content && <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</Markdown>}
+          {content && <Md>{content}</Md>}
         </div>
       </div>
     </div>
