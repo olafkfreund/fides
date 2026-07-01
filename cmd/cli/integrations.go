@@ -312,12 +312,49 @@ func handleControl(config CLIConfig, args []string) {
 
 // fides metrics [--days N]
 func handleMetrics(config CLIConfig, args []string) {
+	if len(args) > 0 && args[0] == "deployment-frequency" {
+		cmd := flag.NewFlagSet("metrics deployment-frequency", flag.ExitOnError)
+		weeks := cmd.Int("weeks", 12, "number of weeks")
+		cmd.Parse(args[1:])
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/deployment-frequency?weeks=%d", *weeks))
+		fail(err, "fetch deployment frequency")
+		fmt.Println(body)
+		return
+	}
 	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)
 	days := cmd.Int("days", 30, "window in days")
 	cmd.Parse(args)
 	body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/dora?days=%d", *days))
 	fail(err, "fetch metrics")
 	fmt.Println(body)
+}
+
+// fides flow list | trails --flow <id> | artifacts --flow <id>
+func handleFlow(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides flow <list|trails|artifacts> [--flow <id>]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "list":
+		body, err := getRequest(config, "/api/v1/flows")
+		fail(err, "list flows")
+		fmt.Println(body)
+	case "trails", "artifacts":
+		cmd := flag.NewFlagSet("flow "+args[0], flag.ExitOnError)
+		flow := cmd.String("flow", "", "flow UUID")
+		cmd.Parse(args[1:])
+		if *flow == "" {
+			fmt.Println("Error: --flow is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/flows/"+*flow+"/"+args[0])
+		fail(err, "list flow "+args[0])
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides flow <list|trails|artifacts> [--flow <id>]")
+		os.Exit(1)
+	}
 }
 
 // fides logical-env create|list|add-member|state
@@ -366,8 +403,54 @@ func handleLogicalEnv(config CLIConfig, args []string) {
 // fides policy add|list|check --env <id> ...
 func handlePolicy(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides policy <add|list|check> --env <id> [--name --require t1,t2 --if-tag --if-value | --trail]")
+		fmt.Println("Usage: fides policy <create|delete|generate|add|list|check> [flags]")
 		os.Exit(1)
+	}
+	// Global (org-level) policies: create / delete / AI-generate.
+	switch args[0] {
+	case "create":
+		c := flag.NewFlagSet("policy create", flag.ExitOnError)
+		name := c.String("name", "", "policy name")
+		desc := c.String("description", "", "description")
+		rulesFile := c.String("rules-file", "", "file with the policy rules (jq/JSON)")
+		c.Parse(args[1:])
+		if *name == "" {
+			fmt.Println("Error: --name is required")
+			os.Exit(1)
+		}
+		rules := ""
+		if *rulesFile != "" {
+			data, err := os.ReadFile(*rulesFile) // #nosec G304 G703 -- CLI reads a user-specified rules file by design
+			fail(err, "read rules file")
+			rules = string(data)
+		}
+		post(config, "/api/v1/policies/create", map[string]any{"name": *name, "description": *desc, "rules": rules}, "Policy created")
+		return
+	case "delete":
+		c := flag.NewFlagSet("policy delete", flag.ExitOnError)
+		id := c.String("id", "", "policy UUID")
+		c.Parse(args[1:])
+		if *id == "" {
+			fmt.Println("Error: --id is required")
+			os.Exit(1)
+		}
+		body, err := deleteRequest(config, "/api/v1/policies/"+*id)
+		fail(err, "delete policy")
+		fmt.Println(body)
+		return
+	case "generate":
+		c := flag.NewFlagSet("policy generate", flag.ExitOnError)
+		framework := c.String("framework", "SOC2", "compliance framework")
+		desc := c.String("description", "", "what the policy should enforce")
+		c.Parse(args[1:])
+		if *desc == "" {
+			fmt.Println("Error: --description is required")
+			os.Exit(1)
+		}
+		body, err := postRequest(config, "/api/v1/ai/generate-policy", map[string]any{"framework": *framework, "description": *desc})
+		fail(err, "generate policy")
+		fmt.Println(body)
+		return
 	}
 	cmd := flag.NewFlagSet("policy "+args[0], flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
