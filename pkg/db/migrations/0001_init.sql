@@ -342,6 +342,23 @@ CREATE TABLE IF NOT EXISTS tenant_git_providers (
 
 CREATE INDEX IF NOT EXISTS idx_tenant_git_providers_org_id ON tenant_git_providers(org_id);
 
+-- 21a. Governance controls (named compliance requirements) — archived, never
+-- deleted, so control history is preserved. Coverage = which environments
+-- enforce a control via a policy requiring its attestation types.
+CREATE TABLE IF NOT EXISTS controls (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    key VARCHAR(100) NOT NULL,          -- e.g. 'SOC2-CC6.1'
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    framework VARCHAR(50),              -- 'SOC2' | 'ISO27001' | 'FDA-21CFR11' | ...
+    required_types TEXT[] NOT NULL DEFAULT '{}', -- attestation types that satisfy it
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(org_id, key)
+);
+CREATE INDEX IF NOT EXISTS idx_controls_org ON controls(org_id);
+
 -- 22a. Logical environments (aggregate one or more physical environments)
 CREATE TABLE IF NOT EXISTS logical_environments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
