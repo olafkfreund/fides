@@ -1,0 +1,57 @@
+{{- if .Values.seed.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fides.fullname" . }}-sql
+  labels:
+    {{- include "fides.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+data:
+  schema.sql: |
+{{ .Files.Get "files/schema.sql" | indent 4 }}
+  schema-rls.sql: |
+{{ .Files.Get "files/schema-rls.sql" | indent 4 }}
+  seed.sh: |
+    #!/bin/sh
+    set -e
+    echo "Waiting for Postgres at $PGHOST:$PGPORT ..."
+    until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do sleep 2; done
+    echo "1/4 schema"
+    psql -v ON_ERROR_STOP=1 -q -f /sql/schema.sql
+    echo "2/4 fides_app role"
+    psql -v ON_ERROR_STOP=1 -q --set=apppw="$APP_PASSWORD" --set=owner="$PGUSER" <<'SQL'
+    DO $$ BEGIN
+      IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='fides_app') THEN
+        EXECUTE format('ALTER ROLE fides_app WITH LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS', :'apppw');
+      ELSE
+        EXECUTE format('CREATE ROLE fides_app LOGIN PASSWORD %L NOSUPERUSER NOBYPASSRLS', :'apppw');
+      END IF;
+    END $$;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO fides_app;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO fides_app;
+    GRANT CREATE, USAGE ON SCHEMA public TO fides_app;
+    GRANT :"owner" TO fides_app;
+    ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO fides_app;
+    ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO fides_app;
+    SQL
+    {{- if .Values.rls.enabled }}
+    echo "3/4 RLS policies"
+    psql -v ON_ERROR_STOP=1 -q -f /sql/schema-rls.sql
+    {{- else }}
+    echo "3/4 RLS disabled (skipping policies)"
+    {{- end }}
+    echo "4/4 seed organization"
+    if [ -n "$ORG_ID" ]; then
+      psql -v ON_ERROR_STOP=1 -q --set=orgid="$ORG_ID" --set=orgname="$ORG_NAME" \
+        -c "INSERT INTO organizations (id, name) VALUES (:'orgid', :'orgname') ON CONFLICT (id) DO NOTHING;"
+      echo "FIDES_API_ORG_ID=$ORG_ID"
+    else
+      psql -v ON_ERROR_STOP=1 -q --set=orgname="$ORG_NAME" \
+        -c "INSERT INTO organizations (name) SELECT :'orgname' WHERE NOT EXISTS (SELECT 1 FROM organizations WHERE name = :'orgname');"
+      echo "FIDES_API_ORG_ID=$(psql -tA --set=orgname="$ORG_NAME" -c "SELECT id FROM organizations WHERE name=:'orgname' ORDER BY created_at LIMIT 1;")"
+      echo "NOTE: org.id was not set — copy the FIDES_API_ORG_ID above into values and upgrade."
+    fi
+    echo "Seed complete."
+{{- end }}

@@ -1,8 +1,8 @@
-# Binaries
-fides-server
-fides
-fides-cli
-fides-mcp
+# Binaries (root-anchored so they don't match the charts/fides directory)
+/fides-server
+/fides
+/fides-cli
+/fides-mcp
 fides.exe
 fides-cli.exe
 fides-mcp.exe

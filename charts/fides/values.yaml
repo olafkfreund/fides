@@ -1,0 +1,76 @@
+# Fides Helm chart values.
+
+image:
+  repository: ghcr.io/olafkfreund/fides-server
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: fides-server
+  # IRSA role ARN for AWS Secrets Manager access (SECRETS_PROVIDER=aws). Optional.
+  annotations: {}
+    # eks.amazonaws.com/role-arn: arn:aws:iam::<acct>:role/fides-secrets-reader
+
+# Application tenant + admin login.
+org:
+  # Name of the first organization the seed job creates.
+  name: "Default Organization"
+  # If you already know the tenant UUID, set it; otherwise the seed job creates
+  # one and you read it from the job logs / the fides-org-id ConfigMap.
+  id: ""
+portal:
+  username: "admin"
+  # Set portal.password or provide it via an existing secret (see secrets.existingSecret).
+  password: ""
+
+# Row-Level Security tenant isolation (recommended). The app connects as the
+# least-privilege fides_app role; the seed job creates it + applies policies.
+rls:
+  enabled: true
+
+database:
+  host: fides-db
+  port: 5432
+  name: fides
+  sslmode: disable
+  # Owner/superuser role used ONLY by the seed job (schema + role + RLS + org).
+  ownerUser: fides_user
+  ownerPassword: ""
+  # Least-privilege application role the server connects as (created by the seed job).
+  appUser: fides_app
+  appPassword: ""
+
+# Core secrets. If create=true a Secret is rendered from the values above; set
+# existingSecret to use an out-of-band Secret instead (recommended for prod).
+secrets:
+  create: true
+  existingSecret: ""
+  encryptionKey: ""   # 32 random bytes, base64
+  apiToken: ""        # random token
+
+env:
+  SECRETS_PROVIDER: "env"      # or "aws"
+  FIDES_EVENTS_ENABLED: "true"
+  AWS_REGION: "eu-west-2"
+
+# Run the one-shot seeding Job (schema + fides_app role + RLS + first org) as a
+# pre-install/pre-upgrade Helm hook. Uses a postgres client image.
+seed:
+  enabled: true
+  image: postgres:15-alpine
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: fides.example.com
+  tls: false
+
+resources: {}
