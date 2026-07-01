@@ -46,10 +46,21 @@ export default function Artifacts() {
             <button onClick={searchArts} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Search</button>
           </div>
           {arts.length > 0 ? (
-            <table className="mt-4 w-full text-left text-xs font-mono">
-              <thead className="text-muted-foreground"><tr><th className="py-1">SHA256</th><th>Name</th><th>Type</th><th>Commit</th></tr></thead>
-              <tbody>{arts.map((a) => <tr key={a.sha256} className="border-t border-border"><td className="py-1">{a.sha256.slice(0, 20)}…</td><td>{a.name}</td><td>{a.type}</td><td>{a.git_commit?.slice(0, 10)}</td></tr>)}</tbody>
-            </table>
+            <div className="mt-4 flex flex-col gap-2">
+              {arts.map((a) => (
+                <div key={a.sha256} className="rounded-md border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <span className="font-medium">{a.name} <span className="text-xs text-muted-foreground">· {a.type}</span></span>
+                    <span className="font-mono text-xs text-muted-foreground">{a.git_commit ? `commit ${a.git_commit.slice(0, 12)}` : ""}</span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <span className="text-[10px] uppercase tracking-wide text-muted-foreground">sha256</span>
+                    <code className="select-all break-all font-mono text-xs text-foreground">{a.sha256}</code>
+                    <button onClick={() => navigator.clipboard?.writeText(a.sha256)} className="shrink-0 rounded border border-border px-2 py-0.5 text-[10px] text-muted-foreground hover:text-foreground">Copy</button>
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : <p className="mt-3 text-sm text-muted-foreground">No results.</p>}
         </div>
 

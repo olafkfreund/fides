@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   Moon, Sun, ShieldCheck, LineChart, GitBranch, Archive, Server, Scale,
-  ListChecks, MessageSquare, Gauge, Settings as SettingsIcon, BookOpen, LogOut, UserCircle2,
+  ListChecks, MessageSquare, Gauge, Settings as SettingsIcon, BookOpen, LogOut, UserCircle2, FileCheck2,
 } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
 import GlobalSearch from "@/components/GlobalSearch";
@@ -18,6 +18,7 @@ const NAV: NavItem[] = [
   { href: "/", label: "Overview", icon: LineChart },
   { href: "/flows", label: "Flows & Trails", icon: GitBranch },
   { href: "/artifacts", label: "Artifacts & SBOM", icon: Archive },
+  { href: "/attestations", label: "Attestations", icon: FileCheck2 },
   { href: "/environments", label: "Environments", icon: Server },
   { href: "/policies", label: "Policies", icon: Scale },
   { href: "/controls", label: "Controls", icon: ListChecks },
