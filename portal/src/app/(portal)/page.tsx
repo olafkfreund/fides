@@ -103,15 +103,24 @@ export default function Overview() {
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Controls Coverage</h2>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Controls Coverage</h2>
+            {cov && cov.controls.length ? (
+              <span className="text-xs text-muted-foreground">{cov.controls.filter((c) => c.coverage > 0).length}/{cov.controls.length} covered · <a href="/controls" className="text-primary hover:underline">view all</a></span>
+            ) : null}
+          </div>
           {cov && cov.controls.length ? (
             <div className="flex flex-col gap-2.5">
-              {cov.controls.slice(0, 6).map((c) => (
+              {/* Show the least-covered controls first — the gaps that need attention. */}
+              {[...cov.controls].sort((a, b) => a.coverage - b.coverage).slice(0, 8).map((c) => (
                 <div key={c.control}>
                   <div className="flex justify-between text-xs"><span className="font-mono">{c.control}</span><span className={c.coverage === 0 ? "text-red-400" : c.coverage < 1 ? "text-amber-400" : "text-green-400"}>{Math.round(c.coverage * 100)}%</span></div>
                   <div className="mt-1 h-1.5 w-full rounded-full bg-muted"><div className={`h-1.5 rounded-full ${c.coverage === 0 ? "bg-red-500" : c.coverage < 1 ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${Math.round(c.coverage * 100)}%` }} /></div>
                 </div>
               ))}
+              {cov.controls.length > 8 ? (
+                <a href="/controls" className="mt-1 text-xs text-primary hover:underline">+ {cov.controls.length - 8} more controls →</a>
+              ) : null}
             </div>
           ) : <p className="text-sm text-muted-foreground">No controls defined yet.</p>}
         </div>
