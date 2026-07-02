@@ -1091,6 +1091,12 @@ type snapshotReportResponse struct {
 }
 
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req reportSnapshotReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -1109,6 +1115,18 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Establish the tenant RLS session context on this transaction, mirroring
+	// handleImportFramework. handleReportSnapshot begins its transaction on the
+	// raw unscoped pool (s.DB), which has no app.current_org GUC set. Without
+	// this, the environment_snapshots RLS WITH CHECK (whose subquery reads
+	// environments under RLS) sees no visible environments and every insert is
+	// rejected with 42501. This is a harmless no-op when FIDES_RLS_ENABLED is
+	// false, since RLS enforcement itself is not configured on the tables then.
+	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	snapshotID := uuid.New()
 	querySnap := `INSERT INTO environment_snapshots (id, environment_id, created_at) VALUES ($1, $2, $3)`
@@ -1190,29 +1208,25 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
 	// failure here must not fail the request.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
-		if orgID, ok := principalOrg(r); ok {
-			payload := map[string]any{
-				"environment_id": envID.String(),
-				"snapshot_id":    snapshotID.String(),
-				"compliant":      isCompliant,
-				"shadows":        shadows,
-				"drifts":         drifts,
-			}
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
-				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
-			}
+		payload := map[string]any{
+			"environment_id": envID.String(),
+			"snapshot_id":    snapshotID.String(),
+			"compliant":      isCompliant,
+			"shadows":        shadows,
+			"drifts":         drifts,
+		}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
+			log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
 		}
 	}
 
 	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
-		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
-				"environment": envID.String(),
-				"services":    services,
-			}); err != nil {
-				log.Printf("failed to enqueue snapshot.reported event: %v", err)
-			}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
+			"environment": envID.String(),
+			"services":    services,
+		}); err != nil {
+			log.Printf("failed to enqueue snapshot.reported event: %v", err)
 		}
 	}
 
