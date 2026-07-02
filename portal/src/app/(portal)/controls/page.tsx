@@ -100,7 +100,7 @@ export default function Controls() {
   const archived = controls.filter((c) => c.archived);
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <h1 className="text-xl font-semibold">Controls &amp; Coverage</h1>
       <p className="mt-1 text-sm text-muted-foreground">Governance controls and how well your environments enforce them.</p>
 

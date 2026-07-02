@@ -33,7 +33,7 @@ export default function Artifacts() {
   useEffect(() => { searchArts(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className="max-w-5xl">
+    <div>
       <h1 className="text-xl font-semibold">Artifacts &amp; SBOM</h1>
       <p className="mt-1 text-sm text-muted-foreground">Search build artifacts and their attestations.</p>
 

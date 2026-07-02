@@ -105,7 +105,7 @@ export default function Environments() {
   const allCompliant = overall.length > 0 && overall.every((v) => v!.compliant);
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <h1 className="text-xl font-semibold">Environments</h1>
       <p className="mt-1 text-sm text-muted-foreground">Runtime compliance, verified automatically against your MCP-connected clusters.</p>
 
