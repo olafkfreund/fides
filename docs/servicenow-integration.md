@@ -91,6 +91,19 @@ same alert instead of creating new ones.
 - `create_compliance_incident` — `POST /api/v1/servicenow/incident`
 - `search_cmdb_ci` — `GET /api/v1/servicenow/cmdb`
 
+## 7. DevGovOps spoke (packaging artifacts)
+
+ServiceNow-side packaging artifacts — a signature-verifying Scripted REST API, an
+IntegrationHub spoke / Flow Designer action spec, and a Now Assist grounding
+guide — live under [`servicenow/`](servicenow/) (epic #216):
+
+- [`servicenow/hmac-webhook-verification.md`](servicenow/hmac-webhook-verification.md)
+  — verify the Fides `X-Fides-Signature` HMAC on inbound webhooks (#229).
+- [`servicenow/flow-designer-actions.md`](servicenow/flow-designer-actions.md)
+  — "Attach Fides evidence", "Require Fides gate", "Anchor deployment in CMDB" (#232).
+- [`servicenow/now-assist-grounding.md`](servicenow/now-assist-grounding.md)
+  — ground Now Assist change-risk predictions on signed Fides evidence (#233).
+
 ## Testing
 
 - Per-component behaviour (REST client, ITOM/CMDB sinks, change normalization)
