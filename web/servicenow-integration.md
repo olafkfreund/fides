@@ -8,6 +8,7 @@ event/outbox core and opt-in via `FIDES_EVENTS_ENABLED=true`:
 | **CMDB** | Upserts running services/images/containers as CIs | IRE (`/api/now/identifyreconcile`), `snapshot.reported` → `CMDBSink` |
 | **ITOM** | Alerts on shadow deployments & runtime drift | Event Management (`/api/global/em/jsonv2`), `snapshot.noncompliant` → `ITOMSink` |
 | **ITSM** | Gates deploys on an approved change request | Table API (`change_request`), `POST /api/v1/servicenow/change-check` |
+| **CMDB anchoring** | Attaches a signed deployment attestation to the CI on change close / deploy | Attachment API (`/api/now/attachment/file`), `deployment.attested` → `CMDBSink` |
 | **MCP** | Dev-agent tools for change status / incidents / CMDB | `fides-mcp` tools → Fides endpoints → Table API |
 
 ## 1. ServiceNow service account & roles
@@ -83,7 +84,38 @@ same alert instead of creating new ones.
    attestation on the trail, and emits `compliance.evaluated` — so `fides
    assert` and the GitHub/GitLab commit-status gate both reflect it.
 
-## 6. MCP tools (developer agents)
+## 6. CMDB deployment anchoring (change close / deploy)
+
+Proves the artifact that was actually deployed matches change intent by
+attaching the signed deployment attestation — image digest, commit, build log
+ref, and runtime snapshot ref — to the relevant CMDB CI:
+
+```bash
+curl -X POST https://<fides>/api/v1/servicenow/deployment-anchor \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"trail_id":"'$TRAIL_UUID'","change_number":"CHG0030192","build_log_ref":"https://ci.example.com/builds/42"}'
+```
+
+or via the CLI:
+
+```bash
+fides servicenow anchor-deployment --trail $TRAIL_UUID --change CHG0030192 \
+  --build-log https://ci.example.com/builds/42
+```
+
+The CI is resolved from the change request's `cmdb_ci` reference (preferred —
+it's what the change actually authorized), or by name via `--ci`/`ci`. Fides:
+
+1. Records a `deployment_anchors` row — Fides-side evidence of the anchor,
+   independent of ServiceNow reachability, including the trail's attestation
+   `content_hash` (tying it into the trail's tamper-evidence chain).
+2. When `FIDES_EVENTS_ENABLED=true`, enqueues `deployment.attested`, delivered
+   by the same `CMDBSink` that reconciles snapshots: it uploads the attestation
+   as a CI attachment via the Attachment API and posts a short summary onto the
+   CI record.
+
+## 7. MCP tools (developer agents)
 
 `fides-mcp` exposes:
 

@@ -74,6 +74,7 @@ func TestMigrateIntegration(t *testing.T) {
 		"users.password_hash":                 "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='password_hash'",
 		"tenant_git_providers.inbound_secret": "SELECT 1 FROM information_schema.columns WHERE table_name='tenant_git_providers' AND column_name='inbound_secret_path'",
 		"tenant_servicenow_settings":          "SELECT 1 FROM information_schema.tables WHERE table_name='tenant_servicenow_settings'",
+		"deployment_anchors":                  "SELECT 1 FROM information_schema.tables WHERE table_name='deployment_anchors'",
 	}
 	for name, q := range checks {
 		var ok int

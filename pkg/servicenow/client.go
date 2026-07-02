@@ -69,8 +69,8 @@ func New(cfg Config) (*Client, error) {
 	}, nil
 }
 
-// doJSON performs a request with auth, retries, and bounded response reading.
-// If out is non-nil the JSON body is decoded into it.
+// doJSON marshals body as JSON (when non-nil) and performs the request via do.
+// If out is non-nil the JSON response is decoded into it.
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	var payload []byte
 	if body != nil {
@@ -79,6 +79,23 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 			return fmt.Errorf("servicenow: marshal body: %w", err)
 		}
 	}
+	contentType := ""
+	if payload != nil {
+		contentType = "application/json"
+	}
+	return c.do(ctx, method, path, contentType, payload, out)
+}
+
+// doRaw performs a request with an already-encoded body and explicit content
+// type (e.g. the Attachment API, which takes raw file bytes rather than a JSON
+// object). If out is non-nil the JSON response is decoded into it.
+func (c *Client) doRaw(ctx context.Context, method, path, contentType string, payload []byte, out any) error {
+	return c.do(ctx, method, path, contentType, payload, out)
+}
+
+// do performs a request with auth, retries, and bounded response reading.
+// If out is non-nil the JSON body is decoded into it.
+func (c *Client) do(ctx context.Context, method, path, contentType string, payload []byte, out any) error {
 	endpoint := c.cfg.InstanceURL + path
 	if err := c.validate(endpoint); err != nil {
 		return err
@@ -99,8 +116,8 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 			return err
 		}
 		req.Header.Set("Accept", "application/json")
-		if payload != nil {
-			req.Header.Set("Content-Type", "application/json")
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
 		}
 		if err := c.authorize(ctx, req); err != nil {
 			return err
