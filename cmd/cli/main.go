@@ -138,7 +138,7 @@ func printUsage() {
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
-	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
+	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check|anchor-deployment)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
 	fmt.Println("  user             Manage users (set-password)")

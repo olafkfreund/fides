@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"fides/pkg/events"
 )
@@ -119,11 +120,21 @@ type reportedPayload struct {
 	Services    []RunningService `json:"services"`
 }
 
-// Deliver builds and posts an IRE payload for the snapshot's running services.
+// Deliver builds and posts an IRE payload for the snapshot's running services,
+// or anchors a signed deployment attestation onto a CI, depending on the event
+// type.
 func (s *CMDBSink) Deliver(ctx context.Context, ev events.Event) error {
-	if ev.Type != CMDBEventType {
+	switch ev.Type {
+	case CMDBEventType:
+		return s.deliverSnapshot(ctx, ev)
+	case AnchorEventType:
+		return s.deliverAnchor(ctx, ev)
+	default:
 		return nil
 	}
+}
+
+func (s *CMDBSink) deliverSnapshot(ctx context.Context, ev events.Event) error {
 	cfg, enabled, err := s.loader.ServiceNowConfig(ctx, ev.OrgID)
 	if err != nil {
 		return err
@@ -150,4 +161,141 @@ func (s *CMDBSink) Deliver(ctx context.Context, ev events.Event) error {
 		return err
 	}
 	return client.IdentifyReconcile(ctx, BuildIREPayload(p.Services), nil)
+}
+
+// ---- Deployment attestation anchoring ----
+
+// AnchorEventType is emitted on change close / deploy to anchor a signed
+// deployment attestation onto the relevant CMDB CI, proving that what was
+// deployed (image digest, commit) matches the evidence produced by the
+// pipeline (build log, runtime snapshot) and, when present, the change that
+// authorized it.
+const AnchorEventType = "deployment.attested"
+
+// DeploymentAttestation is the decoupled input for CMDB anchoring: it captures
+// what was deployed and where the supporting evidence lives, so it can be
+// attached to the CI independent of how Fides resolved it.
+type DeploymentAttestation struct {
+	CI            string    `json:"ci,omitempty"`            // CMDB CI name; used to resolve CISysID when it is empty
+	CISysID       string    `json:"ci_sys_id,omitempty"`     // resolved CI sys_id (preferred; e.g. from change_request.cmdb_ci)
+	ChangeNumber  string    `json:"change_number,omitempty"` // ServiceNow change request number, if any
+	TrailID       string    `json:"trail_id"`
+	FlowName      string    `json:"flow_name,omitempty"`
+	Environment   string    `json:"environment,omitempty"`
+	ImageDigest   string    `json:"image_digest,omitempty"`         // sha256 hex artifact fingerprint
+	Commit        string    `json:"commit,omitempty"`               // git commit SHA that produced the artifact
+	BuildLogRef   string    `json:"build_log_ref,omitempty"`        // pointer to the build log (CI run URL, etc.)
+	SnapshotRef   string    `json:"runtime_snapshot_ref,omitempty"` // Fides environment_snapshots.id proving it's actually running
+	AttestationID string    `json:"attestation_id,omitempty"`
+	ContentHash   string    `json:"content_hash,omitempty"` // tamper-evidence chain hash (see pkg/ledger)
+	Compliant     bool      `json:"compliant"`
+	AnchoredAt    time.Time `json:"anchored_at"`
+}
+
+// fileName is the deterministic attachment name for an attestation, so
+// repeated anchors of the same attestation are recognisable as re-deliveries
+// rather than piling up as unrelated files.
+func (d DeploymentAttestation) fileName() string {
+	id := d.AttestationID
+	if id == "" {
+		id = d.TrailID
+	}
+	if id == "" {
+		id = "unknown"
+	}
+	return "fides-deployment-attestation-" + id + ".json"
+}
+
+// AnchorDeploymentAttestation uploads a signed deployment attestation as a CI
+// attachment via the ServiceNow Attachment API — evidence visible in the CI's
+// timeline regardless of custom fields on its table — and best-effort posts a
+// short human-readable summary onto the CI record itself.
+func AnchorDeploymentAttestation(ctx context.Context, client *Client, att DeploymentAttestation) (map[string]any, error) {
+	if att.CISysID == "" {
+		return nil, fmt.Errorf("servicenow: ci_sys_id is required to anchor a deployment attestation")
+	}
+	if att.AnchoredAt.IsZero() {
+		att.AnchoredAt = time.Now().UTC()
+	}
+	body, err := json.MarshalIndent(att, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("servicenow: marshal deployment attestation: %w", err)
+	}
+	result, err := client.AttachFile(ctx, "cmdb_ci", att.CISysID, att.fileName(), "application/json", body)
+	if err != nil {
+		return nil, err
+	}
+	// Best-effort: not every cmdb_ci-derived table has a free-text field, so a
+	// failure here must not fail the anchor — the attachment above is the
+	// evidence of record.
+	_, _ = client.UpdateRecord(ctx, "cmdb_ci", att.CISysID, map[string]any{
+		"comments": deploymentSummary(att),
+	})
+	return result, nil
+}
+
+func deploymentSummary(att DeploymentAttestation) string {
+	status := "COMPLIANT"
+	if !att.Compliant {
+		status = "NON-COMPLIANT"
+	}
+	s := fmt.Sprintf("Fides deployment attestation anchored [%s] — digest=%s commit=%s",
+		status, shortRef(att.ImageDigest), shortRef(att.Commit))
+	if att.ChangeNumber != "" {
+		s += " change=" + att.ChangeNumber
+	}
+	if att.BuildLogRef != "" {
+		s += " build_log=" + att.BuildLogRef
+	}
+	if att.SnapshotRef != "" {
+		s += " runtime_snapshot=" + att.SnapshotRef
+	}
+	return s
+}
+
+func shortRef(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+// deliverAnchor resolves the target CI (if only a name was given) and anchors
+// the deployment attestation onto it.
+func (s *CMDBSink) deliverAnchor(ctx context.Context, ev events.Event) error {
+	cfg, enabled, err := s.loader.ServiceNowConfig(ctx, ev.OrgID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
+
+	var att DeploymentAttestation
+	if err := json.Unmarshal(ev.Payload, &att); err != nil {
+		return err
+	}
+
+	client, err := s.newClient(cfg)
+	if err != nil {
+		return err
+	}
+
+	if att.CISysID == "" && att.CI != "" {
+		res, err := client.QueryTable(ctx, "cmdb_ci", "nameLIKE"+att.CI+"^active=true", "sys_id", "name")
+		if err != nil {
+			return err
+		}
+		if len(res.Result) > 0 {
+			if sysID, _ := res.Result[0]["sys_id"].(string); sysID != "" {
+				att.CISysID = sysID
+			}
+		}
+	}
+	if att.CISysID == "" {
+		return fmt.Errorf("servicenow: cannot resolve CMDB CI for deployment attestation (ci=%q)", att.CI)
+	}
+
+	_, err = AnchorDeploymentAttestation(ctx, client, att)
+	return err
 }

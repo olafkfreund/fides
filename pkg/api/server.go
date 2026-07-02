@@ -80,6 +80,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/trails/{id}/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/v1/trails/{id}/approvals", s.handleRecordApproval)
 	mux.HandleFunc("GET /api/v1/trails/{id}/audit-package", s.handleTrailAuditPackage)
+	mux.HandleFunc("GET /api/v1/trails/{id}/deployment-anchors", s.handleListDeploymentAnchors)
 
 	// Search / query + snapshot diff
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
@@ -215,6 +216,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
 	mux.HandleFunc("POST /api/v1/servicenow/incident", s.handleServiceNowCreateIncident)
 	mux.HandleFunc("GET /api/v1/servicenow/cmdb", s.handleServiceNowSearchCMDB)
+
+	// Deployment provenance anchoring: on change close / deploy, attach the
+	// signed deployment attestation (image digest, commit, build log ref,
+	// runtime snapshot ref) to the relevant CMDB CI.
+	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
 
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).

@@ -92,7 +92,7 @@ func getRequest(config CLIConfig, path string) (string, error) {
 // fides servicenow config|get|change-check|link-control
 func handleServiceNow(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -143,8 +143,22 @@ func handleServiceNow(config CLIConfig, args []string) {
 		post(config, "/api/v1/servicenow/link-control", map[string]any{
 			"trail_id": *trail, "change_number": *change, "control": *control, "attestation_id": *attestation,
 		}, "")
+	case "anchor-deployment":
+		cmd := flag.NewFlagSet("servicenow anchor-deployment", flag.ExitOnError)
+		trail := cmd.String("trail", "", "trail UUID")
+		change := cmd.String("change", "", "change number, e.g. CHG0030192 (resolves the CI via change_request.cmdb_ci)")
+		ci := cmd.String("ci", "", "cmdb_ci name (alternative/fallback to --change)")
+		buildLog := cmd.String("build-log", "", "pointer to the build log (CI run URL, etc.)")
+		cmd.Parse(args[1:])
+		if *trail == "" || (*change == "" && *ci == "") {
+			fmt.Println("Error: --trail and one of --change/--ci are required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/deployment-anchor", map[string]any{
+			"trail_id": *trail, "change_number": *change, "ci": *ci, "build_log_ref": *buildLog,
+		}, "")
 	default:
-		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment> [flags]")
 		os.Exit(1)
 	}
 }
