@@ -96,6 +96,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/controls/coverage", s.handleControlsCoverage)
 	mux.HandleFunc("POST /api/v1/controls/{id}/archive", s.handleArchiveControl)
 	mux.HandleFunc("POST /api/v1/controls/{id}/unarchive", s.handleUnarchiveControl)
+	mux.HandleFunc("POST /api/v1/controls/{key}/enforce", s.handleEnforceControl)
 	mux.HandleFunc("GET /api/v1/frameworks", s.handleListFrameworks)
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
