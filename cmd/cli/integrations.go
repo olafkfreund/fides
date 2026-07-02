@@ -256,17 +256,24 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
-// fides approve --trail <id> [--reason r] — record a segregation-of-duties approval.
+// fides approve --trail <id> [--reason r] [--role approver|deployer] — record a
+// segregation-of-duties approval. Each approve call refreshes the trail's
+// segregation-of-duties attestation (committer != approver != deployer).
 func handleApprove(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("approve", flag.ExitOnError)
 	trail := cmd.String("trail", "", "trail UUID")
 	reason := cmd.String("reason", "", "approval reason")
+	role := cmd.String("role", "approver", "segregation-of-duties role this approval represents: approver | deployer")
 	cmd.Parse(args)
 	if *trail == "" {
-		fmt.Println("Usage: fides approve --trail <id> [--reason <r>]")
+		fmt.Println("Usage: fides approve --trail <id> [--reason <r>] [--role approver|deployer]")
 		os.Exit(1)
 	}
-	post(config, "/api/v1/trails/"+*trail+"/approvals", map[string]any{"reason": *reason}, "Approval recorded")
+	if *role != "approver" && *role != "deployer" {
+		fmt.Println("Error: --role must be 'approver' or 'deployer'")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/trails/"+*trail+"/approvals", map[string]any{"reason": *reason, "role": *role}, "Approval recorded")
 }
 
 // fides report --framework <name> — auditor-ready framework report.
