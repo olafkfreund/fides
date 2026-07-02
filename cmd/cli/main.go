@@ -162,7 +162,7 @@ func printUsage() {
 // 1. Trail Management
 func handleTrail(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "start" {
-		fmt.Println("Usage: fides trail start --flow <flow_id> --trail <trail_name> [--repository <url>] [--commit <sha>]")
+		fmt.Println("Usage: fides trail start --flow <flow_id> --trail <trail_name> [--repository <url>] [--commit <sha>] [--committer <email>]")
 		os.Exit(1)
 	}
 
@@ -173,6 +173,7 @@ func handleTrail(config CLIConfig, args []string) {
 	commit := cmd.String("commit", "", "Git commit SHA")
 	branch := cmd.String("branch", "", "Git branch name")
 	msg := cmd.String("message", "", "Git commit message")
+	committer := cmd.String("committer", "", "Committer identity (email/username) from commit metadata — recorded as a trail tag and used by the segregation-of-duties attestation")
 
 	cmd.Parse(args[1:])
 
@@ -189,6 +190,9 @@ func handleTrail(config CLIConfig, args []string) {
 		"git_commit":     *commit,
 		"git_branch":     *branch,
 		"git_message":    *msg,
+	}
+	if *committer != "" {
+		payload["tags"] = map[string]string{"committer": *committer}
 	}
 
 	respBody, err := postRequest(config, "/api/v1/trails", payload)

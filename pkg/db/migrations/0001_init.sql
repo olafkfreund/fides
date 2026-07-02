@@ -361,7 +361,10 @@ CREATE INDEX IF NOT EXISTS idx_controls_org ON controls(org_id);
 
 -- 21b. Trail approvals (segregation-of-duties evidence: who signed off a change).
 -- approver_kind is 'session' for a human SSO user or 'service' for machine
--- automation; four-eyes requires >= 2 distinct human approvers.
+-- automation; four-eyes requires >= 2 distinct human approvers. role separates
+-- reviewer sign-offs ('approver') from the identity that performs the
+-- deployment ('deployer'), feeding the segregation-of-duties attestation
+-- (committer != approver != deployer) recorded by the change gate.
 CREATE TABLE IF NOT EXISTS trail_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -369,6 +372,7 @@ CREATE TABLE IF NOT EXISTS trail_approvals (
     approved_by VARCHAR(255) NOT NULL,      -- approver email / service-account name
     approver_kind VARCHAR(20) NOT NULL,     -- 'session' (human) | 'service'
     reason TEXT,
+    role VARCHAR(20) NOT NULL DEFAULT 'approver', -- 'approver' | 'deployer'
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(trail_id, approved_by)
 );

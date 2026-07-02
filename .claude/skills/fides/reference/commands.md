@@ -154,8 +154,13 @@ fides control unarchive --id <control_id>
 ```
 fides report --framework <name>          # auditor-ready, control-by-control (evidence + coverage)
 fides change-gate --trail <id>           # approve/hold verdict + 0-100 risk (exit 2 on HOLD)
-fides approve --trail <id> [--reason <r>] # record a segregation-of-duties approval (human vs machine)
+fides approve --trail <id> [--reason <r>] [--role approver|deployer] # record a segregation-of-duties approval (human vs machine)
 ```
+- Each `change-gate`/`approve` call (re-)records a `segregation-of-duties`
+  attestation on the trail, proving committer != approver != deployer (identity
+  sources: the trail's `--committer` tag from `fides trail start`, and the
+  `--role approver|deployer` approvals above). `compliant: true` only when all
+  three identities are pairwise-distinct — required by PCI-DSS 4.0 / SOX ITGC.
 
 ---
 

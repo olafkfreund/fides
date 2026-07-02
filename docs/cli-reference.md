@@ -6,7 +6,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 ## Pipeline (build/CI)
 | Command | Purpose |
 |---|---|
-| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message]` | Begin a build trail |
+| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>]` | Begin a build trail (`--committer` records commit-metadata identity used by the segregation-of-duties attestation) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
@@ -43,7 +43,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
 | `fides report --framework <name> [--format oscal]` | Auditor-ready per-framework report (control-by-control evidence + coverage); `--format oscal` emits a NIST OSCAL 1.x assessment-results JSON document instead (e.g. for FedRAMP 20x submission) |
 | `fides change-gate --trail <id>` | Evidence-backed approve/hold verdict + 0–100 risk score (exits 2 on HOLD) |
-| `fides approve --trail <id> [--reason <r>]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans) |
+| `fides approve --trail <id> [--reason <r>] [--role approver\|deployer]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans); refreshes the trail's `segregation-of-duties` attestation proving committer != approver != deployer |
 
 ## Search & metrics
 | Command | Purpose |
