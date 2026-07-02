@@ -360,6 +360,28 @@ curl -X POST http://localhost:8191/api/v1/policies \
   }'
 ```
 
+In the **portal** (Policies page) rules are edited in a Monaco code editor with a
+**Format** button and an AI **Check & fix** button (`POST /api/v1/ai/lint-policy`)
+that reviews the JSON/jq for errors and best practices and rewrites it.
+
+### Controls coverage & one-click enforcement
+
+Adopt a framework's control catalog, then **enforce** its controls so each
+environment gates on the right evidence. Enforcing a control creates an enabled
+environment policy that requires the control's evidence types — which is what the
+**Controls** page coverage bars measure.
+
+```bash
+fides control import  --framework SOC2                 # adopt the catalog
+fides control enforce --all-controls --all-environments # gate every env on every control
+fides control coverage                                  # per-control environment coverage
+```
+
+The portal's **Controls** page has a per-control **Enforce** button (choose one
+environment or *All environments*); coverage updates immediately. Under the hood
+this calls `POST /api/v1/controls/{key}/enforce` (`{"environment_id": "…"}` or
+`{"all": true}`).
+
 ---
 
 ## 5. Storage Drivers & Cloud Secret Vaults
