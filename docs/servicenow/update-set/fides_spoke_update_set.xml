@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Fides ServiceNow spoke — update-set SKELETON
+  ============================================
+  This is a hand-authored, human-readable skeleton (not a machine export) of the
+  records that make up the Fides spoke. It documents the exact tables/fields an
+  admin needs; import it via "Retrieved Update Sets → Import Update Set from XML",
+  then preview + commit. Fill the <script> bodies from the sibling files:
+
+    - x_fides Script Include  <- docs/servicenow/scripted-rest/FidesWebhookVerifier.js
+    - Scripted REST resource  <- docs/servicenow/scripted-rest/fides_inbound_resource.js
+
+  On a real ServiceNow export these <script> fields are XML-escaped inside a
+  <payload> CDATA; here they are shown inline for readability. Covers:
+    #229  inbound HMAC verification (Script Include + Scripted REST API)
+    #232  the spoke connection alias the Flow Designer actions bind to
+  The three Flow Designer actions (#232) are authored in Action Designer per
+  docs/servicenow/flow-designer-actions.md; their sys_hub_action_type_definition
+  records are environment-specific and are not templated here.
+-->
+<unload unload_date="2026-07-02 00:00:00">
+
+  <!-- ===== Update set container ===== -->
+  <sys_remote_update_set action="INSERT_OR_UPDATE">
+    <application display_value="Fides Spoke">x_fides</application>
+    <description>Fides DevGovOps spoke: HMAC inbound verification + API connection alias.</description>
+    <name>Fides Spoke (skeleton)</name>
+    <release_date/>
+    <state>loaded</state>
+    <sys_id>00000000000000000000000000000001</sys_id>
+    <update_source/>
+    <version>1.0.0</version>
+  </sys_remote_update_set>
+
+  <!-- ===== Script Include: FidesWebhookVerifier (#229) ===== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <name>sys_script_include_fides_webhook_verifier</name>
+    <remote_update_set display_value="Fides Spoke (skeleton)">00000000000000000000000000000001</remote_update_set>
+    <type>Script Include</type>
+    <target_name>FidesWebhookVerifier</target_name>
+    <payload>
+      <record_update table="sys_script_include">
+        <sys_script_include action="INSERT_OR_UPDATE">
+          <access>package_private</access>
+          <api_name>x_fides.FidesWebhookVerifier</api_name>
+          <client_callable>false</client_callable>
+          <description>Verifies the Fides X-Fides-Signature HMAC-SHA256 over timestamp + "." + rawBody.</description>
+          <name>FidesWebhookVerifier</name>
+          <sys_id>00000000000000000000000000000002</sys_id>
+          <!-- PASTE the full body of scripted-rest/FidesWebhookVerifier.js here -->
+          <script><![CDATA[/* see docs/servicenow/scripted-rest/FidesWebhookVerifier.js */]]></script>
+        </sys_script_include>
+      </record_update>
+    </payload>
+  </sys_update_xml>
+
+  <!-- ===== Scripted REST API definition (#229) ===== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <name>sys_ws_definition_fides_inbound</name>
+    <remote_update_set display_value="Fides Spoke (skeleton)">00000000000000000000000000000001</remote_update_set>
+    <type>Scripted REST Service</type>
+    <target_name>Fides Inbound</target_name>
+    <payload>
+      <record_update table="sys_ws_definition">
+        <sys_ws_definition action="INSERT_OR_UPDATE">
+          <active>true</active>
+          <name>Fides Inbound</name>
+          <service_id>fides_inbound</service_id>
+          <sys_id>00000000000000000000000000000003</sys_id>
+        </sys_ws_definition>
+      </record_update>
+    </payload>
+  </sys_update_xml>
+
+  <!-- ===== Scripted REST resource: POST /events (#229) ===== -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <name>sys_ws_operation_fides_inbound_events</name>
+    <remote_update_set display_value="Fides Spoke (skeleton)">00000000000000000000000000000001</remote_update_set>
+    <type>Scripted REST Resource</type>
+    <target_name>Fides Inbound - events</target_name>
+    <payload>
+      <record_update table="sys_ws_operation">
+        <sys_ws_operation action="INSERT_OR_UPDATE">
+          <active>true</active>
+          <http_method>POST</http_method>
+          <name>events</name>
+          <relative_path>/events</relative_path>
+          <requires_authentication>true</requires_authentication>
+          <requires_acl_authorization>true</requires_acl_authorization>
+          <sys_id>00000000000000000000000000000004</sys_id>
+          <web_service_definition display_value="Fides Inbound">00000000000000000000000000000003</web_service_definition>
+          <!-- PASTE the full body of scripted-rest/fides_inbound_resource.js here -->
+          <operation_script><![CDATA[/* see docs/servicenow/scripted-rest/fides_inbound_resource.js */]]></operation_script>
+        </sys_ws_operation>
+      </record_update>
+    </payload>
+  </sys_update_xml>
+
+  <!-- ===== Encrypted system property holding the shared webhook secret (#229) =====
+       Prefer a Connection & Credential alias in production; this is the simple path. -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <name>sys_properties_fides_webhook_shared_secret</name>
+    <remote_update_set display_value="Fides Spoke (skeleton)">00000000000000000000000000000001</remote_update_set>
+    <type>System Property</type>
+    <target_name>x_fides.webhook.shared_secret</target_name>
+    <payload>
+      <record_update table="sys_properties">
+        <sys_properties action="INSERT_OR_UPDATE">
+          <description>Shared secret for verifying Fides webhook HMAC signatures. Set the value post-import; must match the Fides tenant webhook secret.</description>
+          <name>x_fides.webhook.shared_secret</name>
+          <sys_id>00000000000000000000000000000005</sys_id>
+          <type>password2</type>
+          <value/>
+        </sys_properties>
+      </record_update>
+    </payload>
+  </sys_update_xml>
+
+  <!-- ===== Connection & Credential alias for the Flow Designer actions (#232) =====
+       Bind the three actions' REST steps to this alias; set Base URL + Bearer token
+       in the connection record post-import. -->
+  <sys_update_xml action="INSERT_OR_UPDATE">
+    <name>sys_alias_x_fides_api</name>
+    <remote_update_set display_value="Fides Spoke (skeleton)">00000000000000000000000000000001</remote_update_set>
+    <type>Connection Alias</type>
+    <target_name>Fides API</target_name>
+    <payload>
+      <record_update table="sys_alias">
+        <sys_alias action="INSERT_OR_UPDATE">
+          <name>Fides API</name>
+          <type>connection</type>
+          <sys_id>00000000000000000000000000000006</sys_id>
+          <!-- Base URL (e.g. https://fides.example) + Bearer token set on the
+               sys_connection / sys_auth_profile records post-import. -->
+        </sys_alias>
+      </record_update>
+    </payload>
+  </sys_update_xml>
+
+</unload>

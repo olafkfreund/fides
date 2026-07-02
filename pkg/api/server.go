@@ -88,9 +88,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
+	// Post-approval drift re-evaluation: diff an environment's snapshots and,
+	// if drift is detected, write an elevated risk note back onto the
+	// ServiceNow change request that approved the prior state (ServiceNow has
+	// no native post-approval re-scoring).
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
+
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
 	mux.HandleFunc("GET /api/v1/metrics/deployment-frequency", s.handleDeploymentFrequency)
+	mux.HandleFunc("GET /api/v1/metrics/compliance-correlation", s.handleComplianceCorrelation)
 
 	// Governance controls + coverage
 	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
@@ -127,6 +134,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
 	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
 
+	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
+	// gated by an approval record before an action can be applied (issue #235).
+	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
+	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
+
 	// Artifact API
 	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
@@ -158,6 +174,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
 	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
 
+	// Ingest platform-native attestations (GitHub Artifact Attestations,
+	// GitLab Attestations) for a built artifact, using the tenant's configured
+	// git-provider token, and record them onto the matching trail/artifact.
+	mux.HandleFunc("POST /api/v1/attest/fetch", s.handleAttestFetch)
+
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
 	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
@@ -170,6 +191,11 @@ func (s *Server) Routes() http.Handler {
 	// Unified Go-served admin console (tabs: ServiceNow, Slack, service accounts,
 	// git/webhooks, environments policies/allow-lists, metrics).
 	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
+
+	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
+	// approvals, change-gate verdict, tamper-evidence chain status), built on
+	// existing read APIs. Same public-shell/session-cookie pattern as above.
+	mux.HandleFunc("GET /evidence", s.handleEvidenceVaultPage)
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
@@ -1173,6 +1199,12 @@ type snapshotReportResponse struct {
 }
 
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req reportSnapshotReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -1191,6 +1223,18 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Establish the tenant RLS session context on this transaction, mirroring
+	// handleImportFramework. handleReportSnapshot begins its transaction on the
+	// raw unscoped pool (s.DB), which has no app.current_org GUC set. Without
+	// this, the environment_snapshots RLS WITH CHECK (whose subquery reads
+	// environments under RLS) sees no visible environments and every insert is
+	// rejected with 42501. This is a harmless no-op when FIDES_RLS_ENABLED is
+	// false, since RLS enforcement itself is not configured on the tables then.
+	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	snapshotID := uuid.New()
 	querySnap := `INSERT INTO environment_snapshots (id, environment_id, created_at) VALUES ($1, $2, $3)`
@@ -1272,29 +1316,25 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
 	// failure here must not fail the request.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
-		if orgID, ok := principalOrg(r); ok {
-			payload := map[string]any{
-				"environment_id": envID.String(),
-				"snapshot_id":    snapshotID.String(),
-				"compliant":      isCompliant,
-				"shadows":        shadows,
-				"drifts":         drifts,
-			}
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
-				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
-			}
+		payload := map[string]any{
+			"environment_id": envID.String(),
+			"snapshot_id":    snapshotID.String(),
+			"compliant":      isCompliant,
+			"shadows":        shadows,
+			"drifts":         drifts,
+		}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
+			log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
 		}
 	}
 
 	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
-		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
-				"environment": envID.String(),
-				"services":    services,
-			}); err != nil {
-				log.Printf("failed to enqueue snapshot.reported event: %v", err)
-			}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
+			"environment": envID.String(),
+			"services":    services,
+		}); err != nil {
+			log.Printf("failed to enqueue snapshot.reported event: %v", err)
 		}
 	}
 

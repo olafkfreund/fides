@@ -6,11 +6,12 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 ## Pipeline (build/CI)
 | Command | Purpose |
 |---|---|
-| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message]` | Begin a build trail |
+| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>]` | Begin a build trail (`--committer` records commit-metadata identity used by the segregation-of-duties attestation) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
+| `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab attestations for an artifact |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
@@ -31,6 +32,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
+| `fides env diff --env <id> --reevaluate-change CHGxxxx [--from --to]` | Post-approval drift re-evaluation: diffs snapshots and, if drift is detected, escalates the ServiceNow change's risk + posts a work note (exits 2 on drift) |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
 
 ## Controls, frameworks & change gate
@@ -41,9 +43,25 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides control coverage` | Show each control's evidence + environment coverage |
 | `fides control enforce --key <key> --env <id>` / `--all-controls --all-environments` | Enforce control(s) — create enabled environment policies requiring their evidence types, raising coverage (idempotent) |
 | `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
-| `fides report --framework <name>` | Auditor-ready per-framework report (control-by-control evidence + coverage) |
+| `fides report --framework <name> [--format oscal]` | Auditor-ready per-framework report (control-by-control evidence + coverage); `--format oscal` emits a NIST OSCAL 1.x assessment-results JSON document instead (e.g. for FedRAMP 20x submission) |
 | `fides change-gate --trail <id>` | Evidence-backed approve/hold verdict + 0–100 risk score (exits 2 on HOLD) |
-| `fides approve --trail <id> [--reason <r>]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans) |
+| `fides approve --trail <id> [--reason <r>] [--role approver\|deployer]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans); refreshes the trail's `segregation-of-duties` attestation proving committer != approver != deployer |
+
+## EU AI Act model provenance
+Reuses trails/attestations — no parallel engine. A model version is a `Trail`
+(register it under a `Flow` representing the model); training/eval/audit
+evidence and inference/decision events are `Attestation`s of type
+`model-provenance` on that trail, so they inherit the existing tamper-evident
+hash chain, `fides verify-chain`, `fides audit`, and evidence-attachment
+retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
+
+| Command | Purpose |
+|---|---|
+| `fides model register --flow <id> --version <v> [--repository --commit --branch --framework --risk-category unacceptable\|high\|limited\|minimal --purpose --tags k=v,...]` | Register a model version (Art. 6/13 metadata) |
+| `fides model attest --trail <id> --kind training-data\|evaluation\|bias-audit\|... [--summary --findings --metadata --compliant --name --artifact-sha --attachments --encrypt]` | Record training/eval/audit evidence (Art. 10/15) |
+| `fides model inference-log --trail <id> --input-hash <sha256>\|--input-file <path> --decision <d> [--output-hash\|--output-file --confidence 0-1 --actor --metadata --name]` | Record an inference/decision event (Art. 12 automatic logging; inputs/outputs are hashed, never uploaded raw) |
+| `fides model versions --flow <id>` | List a model's registered versions |
+| `fides model timeline --trail <id>` | List a model version's evidence + inference/decision events |
 
 ## Search & metrics
 | Command | Purpose |
