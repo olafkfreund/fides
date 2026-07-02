@@ -147,7 +147,7 @@ func printUsage() {
 	fmt.Println("  metrics          DORA metrics (--days N) or deployment-frequency (--weeks N)")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
-	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")
+	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")

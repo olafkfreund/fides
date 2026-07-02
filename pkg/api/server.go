@@ -87,6 +87,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
+	// Post-approval drift re-evaluation: diff an environment's snapshots and,
+	// if drift is detected, write an elevated risk note back onto the
+	// ServiceNow change request that approved the prior state (ServiceNow has
+	// no native post-approval re-scoring).
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
+
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
 	mux.HandleFunc("GET /api/v1/metrics/deployment-frequency", s.handleDeploymentFrequency)
