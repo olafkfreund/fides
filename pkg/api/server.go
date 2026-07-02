@@ -84,6 +84,7 @@ func (s *Server) Routes() http.Handler {
 	// Search / query + snapshot diff
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
+	mux.HandleFunc("GET /api/v1/search/components", s.handleSearchComponents)
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
@@ -967,15 +968,18 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.Payload = string(decrypted)
 	}
 
-	trailID, err := uuid.Parse(req.TrailID)
-	if err != nil {
-		http.Error(w, "invalid trail_id", http.StatusBadRequest)
-		return
-	}
-
 	var artifactSHA *string
 	if req.ArtifactSHA256 != "" {
 		artifactSHA = &req.ArtifactSHA256
+	}
+
+	// trail_id is normally required, but `fides attest sbom` may omit --trail
+	// and rely on the artifact's own trail (every artifact is reported against
+	// exactly one trail via `fides artifact report`).
+	trailID, err := s.resolveAttestationTrailID(r.Context(), req.TrailID, artifactSHA)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Fetch rules for verification
@@ -1031,8 +1035,9 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
 	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
+	orgID, hasOrg := principalOrg(r)
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		if orgID, ok := principalOrg(r); ok {
+		if hasOrg {
 			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 				"trail_id":    attestation.TrailID.String(),
 				"attestation": attestation.Name,
@@ -1040,6 +1045,21 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			}); err != nil {
 				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
 			}
+		}
+	}
+
+	// `fides attest sbom` normalizes the SBOM client-side (see pkg/evidence.
+	// ParseSBOM) and uploads it as a "sbom-cyclonedx" attestation (the evidence
+	// type the built-in control frameworks require); persist its component list
+	// so `fides search components` can answer "which artifacts contain
+	// component X". Best-effort: a parse/insert failure here does not fail the
+	// attestation itself, since it is already durably recorded. Attestations
+	// recorded via the generic `fides attest --type sbom-cyclonedx` path (a raw,
+	// non-normalized CycloneDX payload) are also matched here but simply fail
+	// this best-effort parse (no "components" field in the expected shape).
+	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil && hasOrg {
+		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
+			log.Printf("failed to persist sbom components: %v", err)
 		}
 	}
 
@@ -1099,6 +1119,68 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(attestation)
+}
+
+// resolveAttestationTrailID parses trailIDStr, or — when it is empty — resolves
+// the trail from the reported artifact, so `fides attest sbom` can omit
+// --trail (every artifact already belongs to exactly one trail).
+func (s *Server) resolveAttestationTrailID(ctx context.Context, trailIDStr string, artifactSHA *string) (uuid.UUID, error) {
+	if trailIDStr != "" {
+		id, err := uuid.Parse(trailIDStr)
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("invalid trail_id")
+		}
+		return id, nil
+	}
+	if artifactSHA == nil {
+		return uuid.UUID{}, fmt.Errorf("trail_id or artifact_sha256 is required")
+	}
+	var trailID uuid.NullUUID
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT trail_id FROM artifacts WHERE sha256 = $1`, *artifactSHA).Scan(&trailID)
+	if err == sql.ErrNoRows {
+		return uuid.UUID{}, fmt.Errorf("artifact %s not found", *artifactSHA)
+	}
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	if !trailID.Valid {
+		return uuid.UUID{}, fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)
+	}
+	return trailID.UUID, nil
+}
+
+// persistSBOMComponents parses the "components" array out of a normalized SBOM
+// attestation payload (see pkg/evidence.ParseSBOM) and stores each component
+// linked to the artifact, powering `fides search components`.
+func (s *Server) persistSBOMComponents(ctx context.Context, orgID uuid.UUID, artifactSHA string, attestationID uuid.UUID, payload string) error {
+	var parsed struct {
+		Components []struct {
+			Name     string   `json:"name"`
+			Version  string   `json:"version"`
+			PURL     string   `json:"purl"`
+			Licenses []string `json:"licenses"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		return fmt.Errorf("parse sbom payload: %w", err)
+	}
+	for _, c := range parsed.Components {
+		if c.Name == "" {
+			continue
+		}
+		licenses := c.Licenses
+		if licenses == nil {
+			licenses = []string{} // avoid pq.Array(nil) -> SQL NULL against the NOT NULL column
+		}
+		_, err := s.q(ctx).ExecContext(ctx,
+			`INSERT INTO sbom_components (id, org_id, artifact_sha256, attestation_id, name, version, purl, licenses, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			uuid.New(), orgID, artifactSHA, attestationID, c.Name, c.Version, c.PURL, pq.Array(licenses), time.Now())
+		if err != nil {
+			return fmt.Errorf("insert sbom component %q: %w", c.Name, err)
+		}
+	}
+	return nil
 }
 
 type reportSnapshotReq struct {

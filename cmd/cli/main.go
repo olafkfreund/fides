@@ -133,7 +133,7 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  trail start      Initialize a new build trail")
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
-	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa report, or ingest GitHub/GitLab")
+	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa/sbom report, or ingest GitHub/GitLab")
 	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
@@ -157,7 +157,7 @@ func printUsage() {
 	fmt.Println("  metrics          DORA metrics (--days N), deployment-frequency (--weeks N), or")
 	fmt.Println("                   compliance-correlation (--days N): DORA vs risk score & control coverage")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
-	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
+	fmt.Println("  search           Search artifacts/attestations/components (search artifacts|attestations|components ...)")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println()
@@ -267,6 +267,12 @@ func handleArtifact(config CLIConfig, args []string) {
 
 // 3. Attestation Reporting
 func handleAttest(config CLIConfig, args []string) {
+	// SBOM ingestion: `fides attest sbom --file <bom.json> --artifact-sha <sha> [--trail <id>]`.
+	if len(args) > 0 && args[0] == "sbom" {
+		handleAttestSBOM(config, args[1:])
+		return
+	}
+
 	// Format-specific evidence: `fides attest junit|snyk|trivy --file <report> --trail <id>`.
 	if len(args) > 0 && isEvidenceFormat(args[0]) {
 		handleAttestEvidence(config, args[0], args[1:])

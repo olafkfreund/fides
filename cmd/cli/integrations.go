@@ -675,19 +675,21 @@ func handleAudit(config CLIConfig, args []string) {
 	fmt.Printf("Wrote audit package to %s\n", dest)
 }
 
-// fides search artifacts|attestations
+// fides search artifacts|attestations|components
 func handleSearch(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides search <artifacts|attestations> [--sha --commit --name | --type --trail --compliant]")
+		fmt.Println("Usage: fides search <artifacts|attestations|components> [--sha --commit --name | --type --trail --compliant | --purl --artifact --name]")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("search "+args[0], flag.ExitOnError)
 	sha := cmd.String("sha", "", "artifact SHA256 prefix")
 	commit := cmd.String("commit", "", "git commit")
-	name := cmd.String("name", "", "artifact name (substring)")
+	name := cmd.String("name", "", "artifact name (substring), or component name (substring)")
 	typ := cmd.String("type", "", "attestation type name")
 	trail := cmd.String("trail", "", "trail UUID")
 	compliant := cmd.String("compliant", "", "true|false")
+	purl := cmd.String("purl", "", "component package URL (purl), exact match")
+	artifact := cmd.String("artifact", "", "artifact SHA256, exact match (which deployed artifacts contain this component)")
 	cmd.Parse(args[1:])
 
 	q := neturl.Values{}
@@ -703,8 +705,13 @@ func handleSearch(config CLIConfig, args []string) {
 		setIf(q, "type", *typ)
 		setIf(q, "trail", *trail)
 		setIf(q, "compliant", *compliant)
+	case "components":
+		path = "/api/v1/search/components"
+		setIf(q, "purl", *purl)
+		setIf(q, "artifact", *artifact)
+		setIf(q, "name", *name)
 	default:
-		fmt.Println("Usage: fides search <artifacts|attestations>")
+		fmt.Println("Usage: fides search <artifacts|attestations|components>")
 		os.Exit(1)
 	}
 	body, err := getRequest(config, path+"?"+q.Encode())

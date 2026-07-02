@@ -10,6 +10,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
+| `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab attestations for an artifact |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure) |
@@ -68,6 +69,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 |---|---|
 | `fides search artifacts [--sha --commit --name]` | Search artifacts |
 | `fides search attestations [--type --trail --compliant]` | Search attestations |
+| `fides search components [--purl --artifact --name]` | Search SBOM components — "which artifacts contain component X" |
 | `fides metrics [--days N]` | DORA delivery metrics |
 | `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |
 

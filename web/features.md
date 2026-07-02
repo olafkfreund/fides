@@ -12,7 +12,7 @@ reads `FIDES_SERVER_URL` and `FIDES_API_TOKEN` from the environment.
 
 ---
 
-## 1. Built-in evidence parsers (JUnit / Snyk / Trivy)
+## 1. Built-in evidence parsers (JUnit / Snyk / Trivy / SBOM)
 
 Instead of hand-building JSON, point Fides at a raw report and it normalizes it
 into a compliant/non-compliant attestation (attaching the original file).
@@ -28,6 +28,18 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
+
+`fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
+persists a row per component (name, version, purl, licenses), linked to the
+artifact — so you can search across every SBOM ever attested:
+
+```bash
+fides attest sbom --file ./sbom.json --artifact-sha $DIGEST   # --trail is optional
+
+# Which artifacts contain a given component (e.g. auditing a CVE)?
+fides search components --purl pkg:npm/lodash@4.17.20
+fides search components --name log4j
+```
 
 ## 2. Tamper-evident attestation chain
 

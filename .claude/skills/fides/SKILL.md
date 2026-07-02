@@ -75,9 +75,13 @@ fides trail start     --flow $FLOW_ID --trail "$TRAIL" --repository "$REPO" --co
 fides artifact report --org  $ORG_ID  --trail "$TRAIL" --sha256 "$DIGEST" --name app --type docker
 fides attest junit    --trail "$TRAIL" --file reports/junit.xml --artifact-sha "$DIGEST"
 fides attest trivy    --trail "$TRAIL" --file reports/trivy.json --artifact-sha "$DIGEST"
+fides attest sbom     --artifact-sha "$DIGEST" --file sbom.json                          # --trail optional
 ```
-> `fides attest junit|snyk|trivy` auto-normalizes the report; use generic
+> `fides attest junit|snyk|trivy|sbom` auto-normalize the report; use generic
 > `fides attest --name --type --payload <json|file> [--encrypt]` for anything else.
+> `fides attest sbom` auto-detects CycloneDX/SPDX, persists per-component rows
+> (purl/name/version/licenses), and powers `fides search components --purl <p>`
+> ("which artifacts contain component X").
 
 **Gate a deploy (pick the strictest that applies):**
 ```bash
