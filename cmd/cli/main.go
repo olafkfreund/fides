@@ -127,7 +127,7 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  trail start      Initialize a new build trail")
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
-	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy report (fides attest junit --file ...)")
+	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy/slsa report (fides attest junit --file ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
