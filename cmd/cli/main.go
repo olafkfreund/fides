@@ -140,7 +140,7 @@ func printUsage() {
 	fmt.Println("  policy           Manage/check environment policies (add|list|check --env <id>)")
 	fmt.Println("  logical-env      Aggregate physical environments (create|list|add-member|state)")
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
-	fmt.Println("  control          Governance controls + coverage (add|list|coverage|archive|unarchive)")
+	fmt.Println("  control          Governance controls + coverage (add|list|coverage|import|enforce|archive|unarchive)")
 	fmt.Println("  flow             Flows (list | trails --flow <id> | artifacts --flow <id>)")
 	fmt.Println("  change-gate      Evidence-backed approval verdict + risk score (--trail <id>; exits 2 on hold)")
 	fmt.Println("  policy           Policies (create|delete|generate | add|list|check --env <id>)")

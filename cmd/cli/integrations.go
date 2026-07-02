@@ -303,7 +303,7 @@ func handleChangeGate(config CLIConfig, args []string) {
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|archive|unarchive> [flags]")
+		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|enforce|archive|unarchive> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -352,6 +352,50 @@ func handleControl(config CLIConfig, args []string) {
 			os.Exit(1)
 		}
 		post(config, "/api/v1/controls/import-framework", map[string]any{"framework": *framework}, "Framework controls imported")
+	case "enforce":
+		cmd := flag.NewFlagSet("control enforce", flag.ExitOnError)
+		key := cmd.String("key", "", "control key to enforce (omit when using --all-controls)")
+		env := cmd.String("env", "", "environment UUID (omit when using --all-environments)")
+		allEnvs := cmd.Bool("all-environments", false, "enforce across every environment")
+		allControls := cmd.Bool("all-controls", false, "enforce every active control")
+		cmd.Parse(args[1:])
+		if *key == "" && !*allControls {
+			fmt.Println("Error: --key or --all-controls is required")
+			os.Exit(1)
+		}
+		if *env == "" && !*allEnvs {
+			fmt.Println("Error: --env or --all-environments is required")
+			os.Exit(1)
+		}
+		body := map[string]any{}
+		if *allEnvs {
+			body["all"] = true
+		} else {
+			body["environment_id"] = *env
+		}
+		keys := []string{}
+		if *allControls {
+			raw, err := getRequest(config, "/api/v1/controls")
+			fail(err, "list controls")
+			var ctrls []struct {
+				Key string `json:"key"`
+			}
+			if err := json.Unmarshal([]byte(raw), &ctrls); err != nil {
+				fail(err, "parse controls")
+			}
+			for _, c := range ctrls {
+				keys = append(keys, c.Key)
+			}
+			if len(keys) == 0 {
+				fmt.Println("No active controls to enforce — import a framework first (fides control import).")
+				return
+			}
+		} else {
+			keys = append(keys, *key)
+		}
+		for _, k := range keys {
+			post(config, "/api/v1/controls/"+neturl.PathEscape(k)+"/enforce", body, "Enforced "+k)
+		}
 	case "archive", "unarchive":
 		cmd := flag.NewFlagSet("control "+args[0], flag.ExitOnError)
 		id := cmd.String("id", "", "control UUID")
@@ -362,7 +406,7 @@ func handleControl(config CLIConfig, args []string) {
 		}
 		post(config, "/api/v1/controls/"+*id+"/"+args[0], map[string]any{}, "Done")
 	default:
-		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|archive|unarchive>")
+		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|enforce|archive|unarchive>")
 		os.Exit(1)
 	}
 }
