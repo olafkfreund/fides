@@ -422,6 +422,15 @@ func handleMetrics(config CLIConfig, args []string) {
 		fmt.Println(body)
 		return
 	}
+	if len(args) > 0 && args[0] == "compliance-correlation" {
+		cmd := flag.NewFlagSet("metrics compliance-correlation", flag.ExitOnError)
+		days := cmd.Int("days", 30, "window in days")
+		cmd.Parse(args[1:])
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/compliance-correlation?days=%d", *days))
+		fail(err, "fetch compliance correlation")
+		fmt.Println(body)
+		return
+	}
 	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)
 	days := cmd.Int("days", 30, "window in days")
 	cmd.Parse(args)
