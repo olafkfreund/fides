@@ -56,6 +56,28 @@ The statically compiled `fides` CLI drives the full evidence lifecycle from any 
 
 ---
 
+## Installation
+
+Three ways to get the `fides-server`, `fides`, `fides-mcp`, and `fides-mcp-sensor`
+binaries — see the full **[Installation guide](installation.md)** for details:
+
+* **Release downloads** — pre-built archives for Linux and macOS (amd64 + arm64),
+  with SHA-256 checksums, on the
+  **[Releases page](https://github.com/olafkfreund/fides/releases)**.
+* **Nix / NixOS** — the repo is a flake:
+  ```bash
+  nix run github:olafkfreund/fides#server      # run the API server
+  nix profile install github:olafkfreund/fides#fides   # install the CLI
+  ```
+  NixOS hosts can enable the service with the bundled module
+  (`fides.nixosModules.default` → `services.fides`).
+* **From source** — `go build ./cmd/cli` (Go 1.26+); see the Quick Start below.
+
+For the full self-hosted stack (Postgres + object store), use the Helm chart
+(`charts/fides`) or the [Getting Started guide](getting_started.md).
+
+---
+
 ## Quick Start
 
 1. Start the backend database, MinIO object store, and Ollama engine:

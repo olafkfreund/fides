@@ -3,7 +3,10 @@
 Fides is a self-hosted, multi-cloud compatible compliance tracking system. It records and evaluates every state change in the software delivery lifecycle (SDLC) in real-time, acting as an audit-ready single source of truth to satisfy strict compliance frameworks such as SOC 2, ISO 27001, and FDA 21 CFR Part 11.
 
 > [!TIP]
-> Check out the comprehensive **[Fides Integration & Setup Guide](/guide.html)** for detailed walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits.
+> Ready to install? See the **[Installation guide](/installation.html)** — release
+> binaries, the Nix flake, and the `services.fides` NixOS module. For deep-dive
+> walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits,
+> read the **[Fides Integration & Setup Guide](/guide.html)**.
 
 ---
 
@@ -368,6 +371,7 @@ per-environment allow-lists, environment policies with tags, search & snapshot
 diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics,
 and Slack notifications — see:
 
+* **[Installation guide](/installation.html)** — release binaries, Nix flake, NixOS module
 * **[Feature guide with real examples](/docs/features.md)**
 * **[Full CLI reference](/docs/cli-reference.md)**
 * **[ServiceNow integration](/docs/servicenow-integration.md)** (admin page at `/servicenow`)
