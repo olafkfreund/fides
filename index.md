@@ -251,6 +251,27 @@ Fides includes a built-in **Model Context Protocol (MCP)** server (`fides-mcp`) 
 * **In-browser WebMCP** — the portal registers the same Fides tools via the native `document.modelContext` API (with the `@mcp-b/global` polyfill fallback), so browser agents and local LLMs can act inside the auditor's authenticated session.
 
 
+### Downloadable Agent Skill (Claude Code & other agents)
+
+Fides ships a portable **Agent Skill** that teaches Claude Code (and other AI agents)
+how to drive Fides — **every CLI command, all configuration, management, and CI/CD
+pipeline actions**. It's plain Markdown (a `SKILL.md` plus reference files), no
+dependencies.
+
+**Download:** [`.zip`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.zip) ·
+[`.tar.gz`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.tar.gz) ·
+[all releases](https://github.com/olafkfreund/fides/releases)
+
+```sh
+# one-liner: download, extract, install for your user (all projects)
+curl -sSL https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.tar.gz \
+  | tar -xz && ./fides-skill-v1.0.0/install.sh
+#   ./install.sh --project   installs into ./.claude/skills/fides instead
+```
+
+Then ask Claude Code about `fides`, a `compliance gate`, an `attestation`, or
+`provenance` — or invoke it with `/fides`.
+
 ## 7. Regulated Compliance & Governance
 
 Fides maps evidence to the controls of the frameworks regulated enterprises answer to, and turns that mapping into an actionable change decision.
