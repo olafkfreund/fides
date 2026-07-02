@@ -36,6 +36,19 @@ function stripMd(s: string): string {
     .trim();
 }
 
+// Prepare text for speech: strip markdown, then replace long opaque identifiers
+// (SHA hashes, UUIDs, build IDs) with a short placeholder so the voice doesn't
+// spell out 40 characters. Display text is unaffected.
+function forSpeech(s: string): string {
+  return stripMd(s)
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "an ID") // UUID
+    .replace(/\b(?:sha256:|sha1:)?[0-9a-f]{12,}\b/gi, "an ID")                                // hex hashes
+    .replace(/\b(?=[a-z0-9]*[0-9])(?=[a-z0-9]*[a-z])[a-z0-9]{16,}\b/gi, "an ID")              // long mixed tokens
+    .replace(/\ban ID\b(?:[\s,·:/-]+\ban ID\b)+/gi, "an ID")                                  // collapse repeats
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export default function AIAssistant() {
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([
@@ -67,7 +80,7 @@ export default function AIAssistant() {
     const last = msgs[msgs.length - 1];
     if (last?.role === "assistant") {
       window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(stripMd(last.content)));
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(forSpeech(last.content)));
     }
   }, [msgs, voiceOut]);
 
@@ -146,7 +159,7 @@ export default function AIAssistant() {
           <div className="flex-1 space-y-3 overflow-auto p-3 text-sm">
             {msgs.map((m, i) => (
               <div key={i} className={m.role === "user" ? "text-right" : ""}>
-                <span className={`inline-block max-w-[90%] rounded-lg px-3 py-2 text-left ${m.role === "user" ? "whitespace-pre-wrap bg-primary/15 text-foreground" : "bg-muted text-foreground [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"}`}>
+                <span className={`inline-block max-w-[90%] break-words [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-left [&_code]:whitespace-pre-wrap [&_code]:break-all [&_pre]:overflow-x-auto [&_pre]:whitespace-pre-wrap ${m.role === "user" ? "whitespace-pre-wrap bg-primary/15 text-foreground" : "bg-muted text-foreground [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0"}`}>
                   {m.role === "assistant" ? <Md>{m.content}</Md> : m.content}
                 </span>
               </div>
