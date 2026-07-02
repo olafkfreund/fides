@@ -202,6 +202,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
 	mux.HandleFunc("POST /api/v1/servicenow/change-gate", s.handleServiceNowChangeGate)
 
+	// Change<->Control linkage (#227): record that a ServiceNow change implemented
+	// a Fides control via a specific attestation, and reference it back on the
+	// change_request.
+	mux.HandleFunc("POST /api/v1/servicenow/link-control", s.handleServiceNowLinkControl)
+
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
 	mux.HandleFunc("POST /api/v1/webhooks/{provider}", s.handleInboundWebhook)

@@ -83,7 +83,43 @@ same alert instead of creating new ones.
    attestation on the trail, and emits `compliance.evaluated` — so `fides
    assert` and the GitHub/GitLab commit-status gate both reflect it.
 
-## 6. MCP tools (developer agents)
+## 6. Change↔Control linkage
+
+Gating a deploy on an approved change (§5) proves the change happened; it
+doesn't record *which control* the change satisfied, or *what evidence*
+proved it. `link-control` closes that gap: it records, on the Fides side,
+that change `CHGxxxx` implemented control `<key>` via a specific attestation
+(evidence) at a point in time — then writes that same reference back onto the
+ServiceNow `change_request` (a work note, plus best-effort `u_fides_control` /
+`u_fides_attestation_id` / `u_fides_attested_at` fields if your instance has
+added them), so an auditor reading the change in ServiceNow can trace
+straight to the Fides evidence.
+
+```bash
+fides servicenow link-control \
+  --trail "$TRAIL_UUID" \
+  --change CHG0030192 \
+  --control SOC2-CC7.1
+  # --attestation <id> optional — defaults to the trail's most recent attestation
+```
+
+or via the API:
+
+```bash
+curl -X POST https://<fides>/api/v1/servicenow/link-control \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"trail_id":"'$TRAIL_UUID'","change_number":"CHG0030192","control":"SOC2-CC7.1"}'
+```
+
+The Fides-side linkage (`change_control_links`) is always persisted, even if
+ServiceNow is unreachable or unconfigured — the response's
+`servicenow_written` field (plus `servicenow_message` when `false`) reports
+whether the change_request write-back succeeded, so pipelines can gate on the
+Fides record regardless of ServiceNow availability. Re-linking the same
+trail/control/change upserts in place (idempotent).
+
+## 7. MCP tools (developer agents)
 
 `fides-mcp` exposes:
 

@@ -89,10 +89,10 @@ func getRequest(config CLIConfig, path string) (string, error) {
 	return string(b), nil
 }
 
-// fides servicenow config|get|change-check
+// fides servicenow config|get|change-check|link-control
 func handleServiceNow(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides servicenow <config|get|change-check> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -129,8 +129,22 @@ func handleServiceNow(config CLIConfig, args []string) {
 		post(config, "/api/v1/servicenow/change-check", map[string]any{
 			"trail_id": *trail, "change_number": *change, "ci": *ci,
 		}, "")
+	case "link-control":
+		cmd := flag.NewFlagSet("servicenow link-control", flag.ExitOnError)
+		trail := cmd.String("trail", "", "trail UUID")
+		change := cmd.String("change", "", "change number, e.g. CHG0030192")
+		control := cmd.String("control", "", "control key, e.g. SOC2-CC7.1")
+		attestation := cmd.String("attestation", "", "attestation UUID (optional; defaults to the trail's most recent attestation)")
+		cmd.Parse(args[1:])
+		if *trail == "" || *change == "" || *control == "" {
+			fmt.Println("Error: --trail, --change, and --control are required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/link-control", map[string]any{
+			"trail_id": *trail, "change_number": *change, "control": *control, "attestation_id": *attestation,
+		}, "")
 	default:
-		fmt.Println("Usage: fides servicenow <config|get|change-check> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control> [flags]")
 		os.Exit(1)
 	}
 }
