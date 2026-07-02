@@ -182,6 +182,14 @@ fides policy delete --id $POLICY_ID
 ```
 
 The same wizard (with AI drafting) is available in the portal at **Policies → New Policy**.
+The portal edits rules in a **Monaco code editor** (JSON syntax highlighting,
+bracket matching, line numbers) with two actions:
+
+- **Format** — pretty-prints the rules JSON in place.
+- **Check & fix** — sends the rules to `POST /api/v1/ai/lint-policy`, which reviews
+  them for JSON errors and jq best practices and rewrites them (via the configured
+  LLM; falls back to a deterministic validate-and-format when no LLM is set),
+  showing review notes below the editor.
 
 ## 16. AI tools — the Fides MCP server (`fides-mcp`)
 
@@ -213,6 +221,11 @@ fides control import --framework SOC2
 fides control frameworks          # list catalogs
 fides control coverage            # evidence + environment coverage per control
 
+# enforce control(s) — creates an enabled environment policy requiring the
+# control's evidence types, so coverage reflects it. Idempotent.
+fides control enforce --key SOC2-CC7.1 --env <env-id>
+fides control enforce --all-controls --all-environments   # raise coverage everywhere
+
 # auditor-ready, control-by-control report for a framework
 fides report --framework SOC2
 
@@ -228,6 +241,11 @@ fides approve --trail <trail-id> --reason "reviewed by platform lead"
   field). Fides advises; ServiceNow decides.
 - **Segregation of duties**: the gate will not recommend approval without at least
   one human approval; a missing sign-off raises the risk score.
+- **Portal**: the **Controls** page shows per-control coverage bars and a one-click
+  **Enforce** button (pick an environment, or *All environments*) that creates the
+  backing environment policy — the coverage bar moves immediately. The **Dashboard**
+  top stat cards are clickable and deep-link to their source (e.g. *Active Alerts* →
+  non-compliant attestations, *Tracked Artifacts* → the artifacts list).
 
 ## 18. Tenant isolation, WORM retention & git providers
 
