@@ -173,6 +173,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
 	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
 
+	// Ingest platform-native attestations (GitHub Artifact Attestations,
+	// GitLab Attestations) for a built artifact, using the tenant's configured
+	// git-provider token, and record them onto the matching trail/artifact.
+	mux.HandleFunc("POST /api/v1/attest/fetch", s.handleAttestFetch)
+
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
 	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)

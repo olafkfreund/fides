@@ -48,6 +48,26 @@ func handleAttestEvidence(config CLIConfig, format string, args []string) {
 	fmt.Printf("Recorded %s attestation (compliant=%v): %s\n", format, result.Compliant, respBody)
 }
 
+// handleAttestFetch fetches platform-native SLSA provenance/attestations
+// (GitHub Artifact Attestations, GitLab Attestations) for a built artifact
+// using the configured git-provider token, and records them onto the trail.
+func handleAttestFetch(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("attest fetch", flag.ExitOnError)
+	trailID := cmd.String("trail", "", "Trail UUID")
+	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (hex, required)")
+	provider := cmd.String("provider", "", "github | gitlab (optional; inferred from the trail's git host if omitted)")
+	repo := cmd.String("repo", "", "owner/repo (github) or group/project (gitlab); defaults to the trail's recorded git repository")
+	cmd.Parse(args)
+
+	if *trailID == "" || *artSHA == "" {
+		fmt.Println("Error: --trail and --artifact-sha are required\nUsage: fides attest fetch --trail <id> --artifact-sha <hex> [--provider github|gitlab] [--repo <owner/repo>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/attest/fetch", map[string]any{
+		"trail_id": *trailID, "artifact_sha256": *artSHA, "provider": *provider, "repo": *repo,
+	}, "")
+}
+
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
 	req, err := http.NewRequest("GET", config.ServerURL+path, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)

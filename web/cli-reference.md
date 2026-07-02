@@ -10,6 +10,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
+| `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab attestations for an artifact |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
