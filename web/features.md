@@ -12,7 +12,7 @@ reads `FIDES_SERVER_URL` and `FIDES_API_TOKEN` from the environment.
 
 ---
 
-## 1. Built-in evidence parsers (JUnit / Snyk / Trivy)
+## 1. Built-in evidence parsers (JUnit / Snyk / Trivy / SBOM)
 
 Instead of hand-building JSON, point Fides at a raw report and it normalizes it
 into a compliant/non-compliant attestation (attaching the original file).
@@ -28,6 +28,18 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
+
+`fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
+persists a row per component (name, version, purl, licenses), linked to the
+artifact — so you can search across every SBOM ever attested:
+
+```bash
+fides attest sbom --file ./sbom.json --artifact-sha $DIGEST   # --trail is optional
+
+# Which artifacts contain a given component (e.g. auditing a CVE)?
+fides search components --purl pkg:npm/lodash@4.17.20
+fides search components --name log4j
+```
 
 ## 2. Tamper-evident attestation chain
 
@@ -248,7 +260,19 @@ fides change-gate --trail <trail-id>
 
 # record a segregation-of-duties approval (human vs machine; four-eyes = 2 humans)
 fides approve --trail <trail-id> --reason "reviewed by platform lead"
+
+# record the deploying identity's approval too, so the change gate can prove
+# committer != approver != deployer
+fides approve --trail <trail-id> --role deployer --reason "prod deploy"
 ```
+
+- **Segregation-of-duties attestation**: every `fides change-gate` and `fides
+  approve` call (re-)records a `segregation-of-duties` attestation on the trail,
+  proving the committer (from the trail's `--committer` commit-metadata tag),
+  the approver(s), and the deployer are distinct identities — `compliant: true`
+  only when all three roles are pairwise-distinct. Required by PCI-DSS 4.0 and
+  SOX ITGC change-management controls; the payload is shaped for ServiceNow to
+  read directly.
 
 - **Change gate → ServiceNow**: `POST /api/v1/servicenow/change-gate {trail_id, change_number}`
   writes the verdict + risk onto the matching Change Request (work note + `risk`

@@ -50,6 +50,7 @@ DECLARE
     'trail_approvals',
     'logical_environments',
     'service_accounts',
+    'remediation_actions',
     'change_control_links'
   ];
   -- NOTE: integration_events is deliberately NOT in this list. It is a system

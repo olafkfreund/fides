@@ -58,6 +58,8 @@ func main() {
 		handleAttest(config, os.Args[2:])
 	case "assert":
 		handleAssert(config, os.Args[2:])
+	case "verify-image":
+		handleVerifyImage(config, os.Args[2:])
 	case "snapshot":
 		handleSnapshot(config, os.Args[2:])
 	case "servicenow":
@@ -74,6 +76,8 @@ func main() {
 		handleServiceAccount(config, os.Args[2:])
 	case "allowlist":
 		handleAllowlist(config, os.Args[2:])
+	case "remediation":
+		handleRemediation(config, os.Args[2:])
 	case "search":
 		handleSearch(config, os.Args[2:])
 	case "audit":
@@ -88,6 +92,8 @@ func main() {
 		handleControl(config, os.Args[2:])
 	case "flow":
 		handleFlow(config, os.Args[2:])
+	case "model":
+		handleModel(config, os.Args[2:])
 	case "change-gate":
 		handleChangeGate(config, os.Args[2:])
 	case "report":
@@ -127,8 +133,10 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  trail start      Initialize a new build trail")
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
-	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy report (fides attest junit --file ...)")
+	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa/sbom report, or ingest GitHub/GitLab")
+	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
+	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
@@ -137,17 +145,20 @@ func printUsage() {
 	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
+	fmt.Println("  remediation      Policy-driven auto-remediation (propose|list|get|approve|reject|apply)")
 	fmt.Println("  policy           Manage/check environment policies (add|list|check --env <id>)")
 	fmt.Println("  logical-env      Aggregate physical environments (create|list|add-member|state)")
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
 	fmt.Println("  control          Governance controls + coverage (add|list|coverage|import|enforce|archive|unarchive)")
 	fmt.Println("  flow             Flows (list | trails --flow <id> | artifacts --flow <id>)")
+	fmt.Println("  model            EU AI Act model provenance (register|attest|inference-log|versions|timeline)")
 	fmt.Println("  change-gate      Evidence-backed approval verdict + risk score (--trail <id>; exits 2 on hold)")
 	fmt.Println("  policy           Policies (create|delete|generate | add|list|check --env <id>)")
-	fmt.Println("  metrics          DORA metrics (--days N) or deployment-frequency (--weeks N)")
+	fmt.Println("  metrics          DORA metrics (--days N), deployment-frequency (--weeks N), or")
+	fmt.Println("                   compliance-correlation (--days N): DORA vs risk score & control coverage")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
-	fmt.Println("  search           Search artifacts/attestations (search artifacts|attestations ...)")
-	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to])")
+	fmt.Println("  search           Search artifacts/attestations/components (search artifacts|attestations|components ...)")
+	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
@@ -158,7 +169,7 @@ func printUsage() {
 // 1. Trail Management
 func handleTrail(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "start" {
-		fmt.Println("Usage: fides trail start --flow <flow_id> --trail <trail_name> [--repository <url>] [--commit <sha>]")
+		fmt.Println("Usage: fides trail start --flow <flow_id> --trail <trail_name> [--repository <url>] [--commit <sha>] [--committer <email>]")
 		os.Exit(1)
 	}
 
@@ -169,6 +180,7 @@ func handleTrail(config CLIConfig, args []string) {
 	commit := cmd.String("commit", "", "Git commit SHA")
 	branch := cmd.String("branch", "", "Git branch name")
 	msg := cmd.String("message", "", "Git commit message")
+	committer := cmd.String("committer", "", "Committer identity (email/username) from commit metadata — recorded as a trail tag and used by the segregation-of-duties attestation")
 
 	cmd.Parse(args[1:])
 
@@ -185,6 +197,9 @@ func handleTrail(config CLIConfig, args []string) {
 		"git_commit":     *commit,
 		"git_branch":     *branch,
 		"git_message":    *msg,
+	}
+	if *committer != "" {
+		payload["tags"] = map[string]string{"committer": *committer}
 	}
 
 	respBody, err := postRequest(config, "/api/v1/trails", payload)
@@ -252,9 +267,20 @@ func handleArtifact(config CLIConfig, args []string) {
 
 // 3. Attestation Reporting
 func handleAttest(config CLIConfig, args []string) {
+	// SBOM ingestion: `fides attest sbom --file <bom.json> --artifact-sha <sha> [--trail <id>]`.
+	if len(args) > 0 && args[0] == "sbom" {
+		handleAttestSBOM(config, args[1:])
+		return
+	}
+
 	// Format-specific evidence: `fides attest junit|snyk|trivy --file <report> --trail <id>`.
 	if len(args) > 0 && isEvidenceFormat(args[0]) {
 		handleAttestEvidence(config, args[0], args[1:])
+		return
+	}
+	// Platform-native provenance ingest: `fides attest fetch --provider github|gitlab ...`.
+	if len(args) > 0 && args[0] == "fetch" {
+		handleAttestFetch(config, args[1:])
 		return
 	}
 

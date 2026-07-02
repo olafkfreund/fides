@@ -34,6 +34,7 @@ The statically compiled `fides` CLI drives the full evidence lifecycle from any 
 * **`fides attest`** — attach signed evidence of many kinds: `junit`, `snyk`, `trivy`, `sbom-cyclonedx`, `secret-scan`, `sast`, `iac`, and more (with `--encrypt` and Evidence Vault attachments).
 * **`fides verify-chain`** — validate the tamper-evident attestation chain for a trail or artifact.
 * **`fides assert`** — deterministic policy gate; exits non-zero when an artifact is non-compliant.
+* **`fides verify-image`** — verify a container image's cosign/Sigstore signature (keyless OIDC identity or key-based) and record a `cosign-verification` attestation; exits `2` on a failed/untrusted signature.
 * **`fides change-gate`** — evidence- and risk-backed approve/hold verdict with a 0–100 risk score; exits `2` on hold and can write the verdict back to ServiceNow.
 * **`fides allowlist`** — manage per-environment allow-lists of approved artifacts and rules.
 * **`fides control import|coverage|enforce`** — import framework control catalogs, report coverage, and enforce controls across environments.
