@@ -40,7 +40,7 @@ func TestSBOMIngestionIntegration(t *testing.T) {
 	}
 	// sbom_components is not yet baked into schema.sql (it ships as an
 	// additive migration for existing databases); apply it explicitly here.
-	migration, err := os.ReadFile(filepath.Join("..", "..", "pkg", "db", "migrations", "0011_sbom_components.sql"))
+	migration, err := os.ReadFile(filepath.Join("..", "..", "pkg", "db", "migrations", "0012_sbom_components.sql"))
 	if err != nil {
 		t.Fatalf("read migration: %v", err)
 	}
