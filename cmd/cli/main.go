@@ -58,6 +58,8 @@ func main() {
 		handleAttest(config, os.Args[2:])
 	case "assert":
 		handleAssert(config, os.Args[2:])
+	case "verify-image":
+		handleVerifyImage(config, os.Args[2:])
 	case "snapshot":
 		handleSnapshot(config, os.Args[2:])
 	case "servicenow":
@@ -129,6 +131,7 @@ func printUsage() {
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
 	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy/slsa report (fides attest junit --file ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
+	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")

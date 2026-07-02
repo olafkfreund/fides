@@ -292,3 +292,27 @@ ORG_NAME="Acme Corp" ./scripts/setup-db.sh
 ```
 
 Full walkthrough (RLS role, secrets, first login, upgrade path): [Setup & Seeding](setup.md).
+
+## 20. Cosign / Sigstore image signature verification
+
+Gate a deploy on a container image's cosign signature — keyless (OIDC
+identity anchored via Fulcio + Rekor) or key-based — and record the verdict
+as a `cosign-verification` attestation on the trail.
+
+```bash
+# Keyless: verify a GitHub Actions-signed image and record the verdict
+fides verify-image --sha256 $DIGEST \
+  --signer "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main" \
+  --issuer "https://token.actions.githubusercontent.com" \
+  --bundle ./cosign-bundle.json --trail $TRAIL
+
+# Key-based
+fides verify-image --sha256 $DIGEST --key ./cosign.pub --bundle ./cosign-bundle.json
+```
+
+Exits non-zero (2) if the signature does not verify, so it can be used as a
+deploy gate the same way as `change-gate`/`verify-chain`/`policy check`. The
+`--bundle` flag points at a Sigstore verification bundle (JSON), e.g. from
+`cosign verify --bundle out.json` or `cosign download signature`; automatic
+registry lookup from a bare `--sha256` digest alone is tracked as follow-up
+work (see the TODO in `pkg/cosignverify`).
