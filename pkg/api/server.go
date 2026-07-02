@@ -171,6 +171,11 @@ func (s *Server) Routes() http.Handler {
 	// git/webhooks, environments policies/allow-lists, metrics).
 	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
 
+	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
+	// approvals, change-gate verdict, tamper-evidence chain status), built on
+	// existing read APIs. Same public-shell/session-cookie pattern as above.
+	mux.HandleFunc("GET /evidence", s.handleEvidenceVaultPage)
+
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
