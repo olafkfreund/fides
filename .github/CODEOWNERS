@@ -1,0 +1,14 @@
+# Code owners for fides. Owners are requested for review automatically on PRs
+# that touch matching paths. See https://docs.github.com/articles/about-code-owners
+#
+# main is branch-protected: PRs required, status checks must pass. Reviews are
+# not required to merge (solo repo), but CODEOWNERS keeps review requests routed.
+
+# Default owner for everything in the repo.
+*                       @olafkfreund
+
+# Portal (Next.js static export served by the Go server).
+/portal/                @olafkfreund
+
+# CI/CD, deploy, and repo governance.
+/.github/               @olafkfreund
