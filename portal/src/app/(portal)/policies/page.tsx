@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Plus, Trash2, Save, Sparkles, Info, Loader2, Wand2, ShieldCheck } from "lucide-react";
+import { Plus, Trash2, Save, Sparkles, Info, Loader2, Wand2, ShieldCheck, Maximize2, Minimize2 } from "lucide-react";
 import { apiGet, apiPost, api } from "@/lib/api";
 
 // Monaco is client-only; load it with ssr:false so the static export doesn't try
@@ -32,6 +32,7 @@ export default function Policies() {
   const [wDesc, setWDesc] = useState(""); const [wRules, setWRules] = useState("");
   const [generating, setGenerating] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState("");
   const [msg, setMsg] = useState<{ t: string; ok: boolean }>({ t: "", ok: true });
 
@@ -144,13 +145,17 @@ export default function Policies() {
               <div className="mt-4 mb-1 flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Rules (jq)</span>
                 <div className="flex items-center gap-2">
+                  <button onClick={() => setExpanded((v) => !v)} className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent" title={expanded ? "Collapse editor" : "Expand editor"}>
+                    {expanded ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />} {expanded ? "Collapse" : "Expand"}
+                  </button>
                   <button onClick={format} className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"><Wand2 className="size-3.5" /> Format</button>
                   <button onClick={check} disabled={checking} className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50">
                     {checking ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />} {checking ? "Checking…" : "Check & fix"}
                   </button>
                 </div>
               </div>
-              <JsonEditor value={editRules} onChange={setEditRules} height="16rem" />
+              <JsonEditor value={editRules} onChange={setEditRules} height={expanded ? "80vh" : "32rem"} />
+              <p className="mt-1 text-xs text-muted-foreground">Drag the bottom edge to resize, or use Expand for a larger view.</p>
               {notes && (
                 <div className="mt-2 whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
                   <span className="font-semibold text-foreground">Review notes</span>{"\n"}{notes}

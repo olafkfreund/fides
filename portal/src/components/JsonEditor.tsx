@@ -35,10 +35,12 @@ export default function JsonEditor({
   height?: string;
 }) {
   configureMonaco();
+  // Vertically resizable container (drag the bottom edge); Monaco's automaticLayout
+  // re-fits on resize. The editor fills the container height.
   return (
-    <div className="overflow-hidden rounded-md border border-border">
+    <div className="resize-y overflow-hidden rounded-md border border-border" style={{ height, minHeight: "12rem" }}>
       <Editor
-        height={height}
+        height="100%"
         defaultLanguage="json"
         theme="vs-dark"
         value={value}
