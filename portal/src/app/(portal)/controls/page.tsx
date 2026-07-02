@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Info, Archive, ArchiveRestore } from "lucide-react";
+import { Info, Archive, ArchiveRestore, ShieldCheck } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 
 type Control = { id: string; key: string; name: string; framework?: string; required_types?: string[]; archived?: boolean };
 type Coverage = { total_environments: number; controls: { control: string; name: string; enforced_in: string[]; coverage: number }[] };
+type Env = { id: string; name: string };
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 const panel = "rounded-xl border border-border bg-card p-5";
@@ -21,6 +22,9 @@ const TEMPLATES = [
 export default function Controls() {
   const [controls, setControls] = useState<Control[]>([]);
   const [cov, setCov] = useState<Coverage | null>(null);
+  const [envs, setEnvs] = useState<Env[]>([]);
+  const [target, setTarget] = useState("all"); // "all" or an environment id
+  const [enforcing, setEnforcing] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [key, setKey] = useState(""); const [name, setName] = useState("");
   const [framework, setFramework] = useState("SOC2"); const [require, setRequire] = useState("");
@@ -39,8 +43,22 @@ export default function Controls() {
   const load = () => {
     apiGet<Control[]>(`/api/v1/controls${showArchived ? "?include_archived=true" : ""}`).then(setControls).catch((e) => setMsg({ t: String(e.message), ok: false }));
     apiGet<Coverage>("/api/v1/controls/coverage").then(setCov).catch(() => {});
+    apiGet<Env[]>("/api/v1/environments").then((e) => setEnvs(e || [])).catch(() => {});
   };
   useEffect(() => { load(); }, [showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Enforce a control by creating an enabled environment policy that requires its
+  // evidence types — in the chosen environment, or all of them.
+  const enforce = async (control: string) => {
+    setEnforcing(control); setMsg({ t: "", ok: true });
+    try {
+      const body = target === "all" ? { all: true } : { environment_id: target };
+      const r = await apiPost<{ environments: number }>(`/api/v1/controls/${encodeURIComponent(control)}/enforce`, body);
+      setMsg({ t: `Enforced ${control} in ${r.environments} environment${r.environments === 1 ? "" : "s"}.`, ok: true });
+      load();
+    } catch (e) { setMsg({ t: String((e as Error).message), ok: false }); }
+    finally { setEnforcing(""); }
+  };
 
   const add = async () => {
     setMsg({ t: "", ok: true });
@@ -98,14 +116,32 @@ export default function Controls() {
         </div>
 
         <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Coverage {cov ? `(${cov.total_environments} environments)` : ""}</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Coverage {cov ? `(${cov.total_environments} environments)` : ""}</h2>
+            {cov && cov.controls.length ? (
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">Enforce in
+                <select className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground" value={target} onChange={(e) => setTarget(e.target.value)}>
+                  <option value="all">All environments</option>
+                  {envs.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+                </select>
+              </label>
+            ) : null}
+          </div>
           {cov && cov.controls.length ? (
             <div className="flex flex-col gap-3">
               {cov.controls.map((c) => (
                 <div key={c.control}>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-mono">{c.control} <span className="text-muted-foreground">{c.name}</span></span>
-                    <span className={c.coverage === 0 ? "text-red-400" : c.coverage < 1 ? "text-amber-400" : "text-green-400"}>{Math.round(c.coverage * 100)}%</span>
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="min-w-0 truncate font-mono">{c.control} <span className="text-muted-foreground">{c.name}</span></span>
+                    <span className="flex shrink-0 items-center gap-3">
+                      <span className={c.coverage === 0 ? "text-red-400" : c.coverage < 1 ? "text-amber-400" : "text-green-400"}>{Math.round(c.coverage * 100)}%</span>
+                      {c.coverage < 1 && (
+                        <button onClick={() => enforce(c.control)} disabled={enforcing === c.control}
+                          className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50">
+                          <ShieldCheck className="size-3.5" /> {enforcing === c.control ? "Enforcing…" : "Enforce"}
+                        </button>
+                      )}
+                    </span>
                   </div>
                   <div className="mt-1 h-2 w-full rounded-full bg-muted">
                     <div className={`h-2 rounded-full ${c.coverage === 0 ? "bg-red-500" : c.coverage < 1 ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${Math.round(c.coverage * 100)}%` }} />

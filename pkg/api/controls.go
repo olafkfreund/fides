@@ -1,7 +1,9 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -167,4 +169,106 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 			"enforced_in": c.Enforced, "coverage": pct})
 	}
 	writeJSON(w, map[string]any{"total_environments": totalEnvs, "controls": out})
+}
+
+// handleEnforceControl enforces a control in one environment (or all of the org's
+// environments when {"all": true}) by upserting an enabled environment policy that
+// requires the control's evidence types. This is the one-click path from the
+// Controls coverage view to raise a control that reads 0% (i.e. no environment
+// policy yet requires its attestation types).
+func (s *Server) handleEnforceControl(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	key := r.PathValue("key")
+	if key == "" {
+		http.Error(w, "control key is required", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		EnvironmentID string `json:"environment_id"`
+		All           bool   `json:"all"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if req.EnvironmentID == "" && !req.All {
+		http.Error(w, "environment_id or all is required", http.StatusBadRequest)
+		return
+	}
+
+	// Look up the control and the evidence types it requires.
+	var name string
+	var types pq.StringArray
+	err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT name, required_types FROM controls WHERE org_id = $1 AND key = $2 AND NOT archived`,
+		p.OrgID, key).Scan(&name, &types)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "control not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if len(types) == 0 {
+		http.Error(w, "control has no required evidence types to enforce", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the target environments.
+	var envIDs []uuid.UUID
+	if req.All {
+		rows, err := s.q(r.Context()).QueryContext(r.Context(),
+			`SELECT id FROM environments WHERE org_id = $1`, p.OrgID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				internalError(w, err)
+				return
+			}
+			envIDs = append(envIDs, id)
+		}
+	} else {
+		envID, err := uuid.Parse(req.EnvironmentID)
+		if err != nil {
+			http.Error(w, "invalid environment id", http.StatusBadRequest)
+			return
+		}
+		owned, err := s.envInOrg(r.Context(), envID, p.OrgID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if !owned {
+			http.Error(w, "environment not found", http.StatusNotFound)
+			return
+		}
+		envIDs = append(envIDs, envID)
+	}
+
+	// Upsert an enabled policy per environment. The policy is named after the
+	// control key so re-enforcing is idempotent and it's recognizable in the
+	// environment's policy list.
+	polName := "control:" + key
+	for _, envID := range envIDs {
+		if _, err := s.q(r.Context()).ExecContext(r.Context(),
+			`INSERT INTO environment_policies (environment_id, name, required_types, enabled)
+			 VALUES ($1, $2, $3, TRUE)
+			 ON CONFLICT (environment_id, name) DO UPDATE SET
+			   required_types = EXCLUDED.required_types, enabled = TRUE`,
+			envID, polName, types); err != nil {
+			internalError(w, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]any{"status": "enforced", "control": key, "environments": len(envIDs)})
 }
