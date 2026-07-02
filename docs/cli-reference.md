@@ -11,6 +11,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
+| `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure) |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
 
