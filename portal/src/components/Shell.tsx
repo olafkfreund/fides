@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
 import GlobalSearch from "@/components/GlobalSearch";
+import { registerFidesWebMCP } from "@/lib/webmcp";
 
 type Icon = React.ComponentType<{ className?: string }>;
 type NavItem = { href: string; label: string; icon: Icon };
@@ -59,6 +60,10 @@ export default function Shell({ children }: { children: React.ReactNode }) {
         else setAuthed(true);
       });
   }, [router]);
+
+  // Expose Fides capabilities to browser AI agents / local assistants via WebMCP
+  // once the session is authenticated (tools call the same-origin API).
+  useEffect(() => { if (authed) registerFidesWebMCP(); }, [authed]);
 
   if (authed === null) {
     return <div className="m-auto text-muted-foreground text-sm">Loading…</div>;

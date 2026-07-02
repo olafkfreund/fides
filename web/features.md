@@ -213,6 +213,17 @@ Tools include `list_flows`/`list_environments`/`list_policies`, `check_complianc
 exposes the documentation as MCP **resources** (`fides://docs/*`). Full guide:
 [mcp-server.md](mcp-server.md).
 
+**In-browser WebMCP** — the portal also registers Fides tools with the browser's
+WebMCP surface (the W3C `document.modelContext` API, with the `@mcp-b/global`
+polyfill as a fallback), so a browser-integrated agent or a **local LLM/assistant**
+can drive Fides directly from the page using your session. Exposed tools:
+`fides_list_flows`, `fides_list_environments`, `fides_list_policies`,
+`fides_controls_coverage`, `fides_search_artifacts`, `fides_search_attestations`,
+`fides_deployment_frequency`, `fides_compliance_summary` (read-only), plus the
+safe actions `fides_enforce_control` and `fides_import_framework`. Native WebMCP
+needs Chrome with the origin trial; elsewhere the polyfill bridge is used, and it
+no-ops if the browser has neither.
+
 ## 17. Regulated compliance & governance
 
 Adopt a control framework, gather evidence for it, and turn the result into a change decision that flows into ServiceNow.
