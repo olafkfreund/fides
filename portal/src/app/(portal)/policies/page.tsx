@@ -1,15 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2, Save, Sparkles, Info, Loader2 } from "lucide-react";
+import dynamic from "next/dynamic";
+import { Plus, Trash2, Save, Sparkles, Info, Loader2, Wand2, ShieldCheck } from "lucide-react";
 import { apiGet, apiPost, api } from "@/lib/api";
+
+// Monaco is client-only; load it with ssr:false so the static export doesn't try
+// to prerender it.
+const JsonEditor = dynamic(() => import("@/components/JsonEditor"), {
+  ssr: false,
+  loading: () => <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">Loading editor…</div>,
+});
+
+// Best-effort JSON pretty-print; returns null if the input isn't valid JSON.
+function tryFormat(s: string): string | null {
+  try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return null; }
+}
 
 // The /api/v1/policies list returns rules in `yaml` and the description in `target`
 // (legacy field names). Keep the aliases optional and map them on read.
 type Policy = { id: string; name: string; target?: string; yaml?: string };
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground";
-const mono = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 
 export default function Policies() {
   const [policies, setPolicies] = useState<Policy[]>([]);
@@ -19,12 +31,32 @@ export default function Policies() {
   const [wName, setWName] = useState(""); const [wFramework, setWFramework] = useState("SOC2");
   const [wDesc, setWDesc] = useState(""); const [wRules, setWRules] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [notes, setNotes] = useState("");
   const [msg, setMsg] = useState<{ t: string; ok: boolean }>({ t: "", ok: true });
+
+  // Format the current rules JSON in-place (client-side, no worker needed).
+  const format = () => {
+    const f = tryFormat(editRules);
+    if (f === null) { setMsg({ t: "Invalid JSON — can't format. Try 'Check & fix'.", ok: false }); return; }
+    setEditRules(f); setMsg({ t: "Formatted.", ok: true });
+  };
+  // Ask the backend to review the rules for errors/best practices and rewrite.
+  const check = async () => {
+    setChecking(true); setNotes(""); setMsg({ t: "", ok: true });
+    try {
+      const r = await apiPost<{ fixed: string; notes: string; changed: boolean }>("/api/v1/ai/lint-policy", { rules: editRules });
+      if (r.fixed) setEditRules(r.fixed);
+      setNotes(r.notes || "");
+      setMsg({ t: r.changed ? "Applied fixes — review and save." : "Checked — no changes needed.", ok: true });
+    } catch (e) { setMsg({ t: String((e as Error).message), ok: false }); }
+    finally { setChecking(false); }
+  };
 
   const load = () => apiGet<Policy[]>("/api/v1/policies").then((p) => setPolicies(p || [])).catch((e) => setMsg({ t: String(e.message), ok: false }));
   useEffect(() => { load(); }, []);
 
-  const select = (p: Policy) => { setSel(p); setMode("view"); setEditRules(p.yaml || ""); setMsg({ t: "", ok: true }); };
+  const select = (p: Policy) => { setSel(p); setMode("view"); setEditRules(p.yaml || ""); setNotes(""); setMsg({ t: "", ok: true }); };
 
   const saveRules = async () => {
     if (!sel) return;
@@ -93,9 +125,10 @@ export default function Policies() {
                   {generating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />} {generating ? "Generating…" : "Draft rules with AI"}
                 </button>
               </div>
-              <label className="mt-4 block text-sm"><span className="text-muted-foreground">Rules (review &amp; edit)</span>
-                <textarea className={`${mono} h-56`} value={wRules} onChange={(e) => setWRules(e.target.value)} placeholder='{"controls":[{"name":"no-critical-cves","attestation_type":"snyk-scan","jq_expressions":[".vulnerabilities.critical == 0"]}]}' />
-              </label>
+              <div className="mt-4">
+                <span className="mb-1 block text-sm text-muted-foreground">Rules (review &amp; edit)</span>
+                <JsonEditor value={wRules} onChange={setWRules} height="14rem" />
+              </div>
               <div className="mt-4 flex items-center gap-3">
                 <button onClick={create} disabled={!wName} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Create policy</button>
                 <button onClick={() => setMode("view")} className="rounded-md border border-border px-4 py-2 text-sm">Cancel</button>
@@ -108,9 +141,21 @@ export default function Policies() {
                 <div><div className="font-mono font-semibold">{sel.name}</div>{sel.target && <div className="text-xs text-muted-foreground">{sel.target}</div>}</div>
                 <button onClick={del} className="flex items-center gap-1.5 rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10"><Trash2 className="size-3.5" /> Delete</button>
               </div>
-              <label className="mt-4 block text-sm"><span className="text-muted-foreground">Rules (jq)</span>
-                <textarea className={`${mono} h-64`} value={editRules} onChange={(e) => setEditRules(e.target.value)} />
-              </label>
+              <div className="mt-4 mb-1 flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Rules (jq)</span>
+                <div className="flex items-center gap-2">
+                  <button onClick={format} className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"><Wand2 className="size-3.5" /> Format</button>
+                  <button onClick={check} disabled={checking} className="flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50">
+                    {checking ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />} {checking ? "Checking…" : "Check & fix"}
+                  </button>
+                </div>
+              </div>
+              <JsonEditor value={editRules} onChange={setEditRules} height="16rem" />
+              {notes && (
+                <div className="mt-2 whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">Review notes</span>{"\n"}{notes}
+                </div>
+              )}
               <div className="mt-3 flex items-center gap-3">
                 <button onClick={saveRules} className="flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"><Save className="size-4" /> Save rules</button>
                 {msg.t && <span className={`text-sm ${msg.ok ? "text-green-400" : "text-red-400"}`}>{msg.t}</span>}

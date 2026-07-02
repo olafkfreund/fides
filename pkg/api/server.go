@@ -224,6 +224,7 @@ func (s *Server) Routes() http.Handler {
 
 	// AI Policy Wizard & Chat APIs
 	mux.HandleFunc("POST /api/v1/ai/generate-policy", s.handleAIGeneratePolicy)
+	mux.HandleFunc("POST /api/v1/ai/lint-policy", s.handleAILintPolicy)
 	mux.HandleFunc("POST /api/v1/ai/chat", s.handleAIChat)
 
 	// System Status
@@ -2269,6 +2270,74 @@ func (s *Server) handleAIGeneratePolicy(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(rawResponse))
+}
+
+// handleAILintPolicy reviews a policy's jq-rules JSON for syntax errors and best
+// practices and returns a corrected version. With an LLM configured it asks the
+// model to fix and explain; without one it falls back to a deterministic JSON
+// validity check + pretty-print so the button is always useful.
+func (s *Server) handleAILintPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Rules string `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if strings.TrimSpace(req.Rules) == "" {
+		http.Error(w, "rules are required", http.StatusBadRequest)
+		return
+	}
+
+	// Deterministic baseline used both as the no-LLM fallback and to detect change.
+	var parsed any
+	validJSON := json.Unmarshal([]byte(req.Rules), &parsed) == nil
+
+	if s.LLM == nil {
+		if !validJSON {
+			writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false,
+				"notes": "Invalid JSON, and the AI reviewer is not configured. Fix the syntax (matching braces/brackets, quoted keys) and try again."})
+			return
+		}
+		pretty, _ := json.MarshalIndent(parsed, "", "  ")
+		writeJSON(w, map[string]any{"fixed": string(pretty), "changed": string(pretty) != req.Rules,
+			"notes": "AI reviewer not configured — validated and formatted the JSON. No best-practice rewrite performed."})
+		return
+	}
+
+	prompt := "You are reviewing a Fides compliance policy expressed as JSON containing jq rules. " +
+		"The expected shape is {\"controls\":[{\"name\":\"...\",\"attestation_type\":\"...\",\"jq_expressions\":[\"...\"]}]} " +
+		"(a bare {\"jq\":[...]} form is also valid). Check for JSON syntax errors and jq best practices: " +
+		"valid structure, well-formed jq expressions, no duplicate/redundant rules, sensible names. " +
+		"Respond with ONLY a JSON object, no markdown fences: " +
+		"{\"fixed\": \"<the corrected policy as a JSON string>\", \"notes\": \"<short summary of what you changed, or why it's already fine>\"}.\n\nPolicy:\n" + req.Rules
+
+	resp, err := s.LLM.Chat(r.Context(), nil, prompt)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	// Strip accidental markdown fences, then try to parse the model's {fixed,notes}.
+	clean := strings.TrimSpace(resp)
+	clean = strings.TrimPrefix(clean, "```json")
+	clean = strings.TrimPrefix(clean, "```")
+	clean = strings.TrimSuffix(clean, "```")
+	clean = strings.TrimSpace(clean)
+	var out struct {
+		Fixed string `json:"fixed"`
+		Notes string `json:"notes"`
+	}
+	if json.Unmarshal([]byte(clean), &out) == nil && strings.TrimSpace(out.Fixed) != "" {
+		writeJSON(w, map[string]any{"fixed": out.Fixed, "notes": out.Notes, "changed": out.Fixed != req.Rules})
+		return
+	}
+	// Model didn't return the expected envelope — surface its text as notes and
+	// keep the user's input unchanged.
+	writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false, "notes": strings.TrimSpace(resp)})
 }
 
 type aiChatReq struct {

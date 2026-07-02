@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Monaco AMD build copied in by scripts/copy-monaco.mjs (prebuild)
+/public/monaco/
