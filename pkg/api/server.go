@@ -1310,10 +1310,15 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
+	// Collect all base environments FIRST. Under RLS, s.q(ctx) is a single
+	// pinned connection, so we must drain this cursor before running any
+	// sub-query — otherwise the nested query disrupts the outer cursor and only
+	// the first row is returned.
 	var list []*EnvironmentView
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
+			rows.Close()
 			internalError(w, err)
 			return
 		}
@@ -1321,48 +1326,54 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ev.Running = []RuntimeArtifact{}
 		ev.Drifts = []string{}
 		ev.ShadowChanges = []string{}
+		list = append(list, &ev)
+	}
+	rows.Close()
 
-		// Fetch latest snapshot ID
+	// Enrich each environment now that the outer cursor is closed.
+	for _, ev := range list {
 		var latestSnapID string
 		var snapTime time.Time
 		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-		err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
+		if err := s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime); err != nil {
+			continue
+		}
+		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
 
-		if err == nil {
-			ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
+		// Read all running artifacts into memory before the per-artifact queries.
+		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
+		            FROM snapshot_artifacts sa
+		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
+		            WHERE sa.snapshot_id = $1`
+		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
+		if err != nil {
+			continue
+		}
+		var running []RuntimeArtifact
+		for saRows.Next() {
+			var ra RuntimeArtifact
+			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
+				running = append(running, ra)
+			}
+		}
+		saRows.Close()
 
-			// Query running artifacts in snapshot
-			querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-			            FROM snapshot_artifacts sa
-			            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-			            WHERE sa.snapshot_id = $1`
-			saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-			if err == nil {
-				defer saRows.Close()
-				for saRows.Next() {
-					var ra RuntimeArtifact
-					if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-						ev.Running = append(ev.Running, ra)
-
-						if !ra.Registered {
-							ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-						} else {
-							// Check if registered artifact has drift (failing controls)
-							var trailID sql.NullString
-							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
-							if trailID.Valid {
-								var compliantCount, totalCount int
-								s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
-								if totalCount > 0 && compliantCount < totalCount {
-									ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-								}
-							}
-						}
-					}
+		for _, ra := range running {
+			ev.Running = append(ev.Running, ra)
+			if !ra.Registered {
+				ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
+				continue
+			}
+			var trailID sql.NullString
+			s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+			if trailID.Valid {
+				var compliantCount, totalCount int
+				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+				if totalCount > 0 && compliantCount < totalCount {
+					ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 				}
 			}
 		}
-		list = append(list, &ev)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
