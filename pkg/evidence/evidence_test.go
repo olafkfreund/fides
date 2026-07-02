@@ -56,6 +56,72 @@ func TestParseTrivy(t *testing.T) {
 	}
 }
 
+func TestParseSBOMCycloneDX(t *testing.T) {
+	doc := []byte(`{
+		"bomFormat": "CycloneDX",
+		"specVersion": "1.4",
+		"components": [
+			{"type": "library", "name": "lodash", "version": "4.17.21", "purl": "pkg:npm/lodash@4.17.21", "licenses": [{"license": {"id": "MIT"}}]},
+			{"type": "library", "name": "axios", "version": "1.6.0", "purl": "pkg:npm/axios@1.6.0"}
+		]
+	}`)
+	r, err := ParseSBOM(doc)
+	if err != nil {
+		t.Fatalf("ParseSBOM: %v", err)
+	}
+	if r.Format != "cyclonedx" || !r.Compliant {
+		t.Fatalf("expected compliant cyclonedx result: %+v", r)
+	}
+	if r.Summary["components"] != 2 || len(r.Components) != 2 {
+		t.Fatalf("expected 2 components: %+v", r)
+	}
+	// sorted by name: axios, lodash
+	if r.Components[0].Name != "axios" || r.Components[1].Name != "lodash" {
+		t.Fatalf("components not sorted: %+v", r.Components)
+	}
+	if r.Components[1].PURL != "pkg:npm/lodash@4.17.21" || len(r.Components[1].Licenses) != 1 || r.Components[1].Licenses[0] != "MIT" {
+		t.Fatalf("lodash component wrong: %+v", r.Components[1])
+	}
+}
+
+func TestParseSBOMSPDX(t *testing.T) {
+	doc := []byte(`{
+		"spdxVersion": "SPDX-2.3",
+		"packages": [
+			{
+				"name": "lodash",
+				"versionInfo": "4.17.21",
+				"licenseConcluded": "MIT",
+				"externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:npm/lodash@4.17.21"}]
+			},
+			{"name": "unlicensed-pkg", "versionInfo": "1.0.0", "licenseConcluded": "NOASSERTION"}
+		]
+	}`)
+	r, err := ParseSBOM(doc)
+	if err != nil {
+		t.Fatalf("ParseSBOM: %v", err)
+	}
+	if r.Format != "spdx" || !r.Compliant || len(r.Components) != 2 {
+		t.Fatalf("expected compliant spdx result with 2 components: %+v", r)
+	}
+	// sorted by name: lodash, unlicensed-pkg
+	if r.Components[0].Name != "lodash" || r.Components[0].PURL != "pkg:npm/lodash@4.17.21" {
+		t.Fatalf("lodash component wrong: %+v", r.Components[0])
+	}
+	if len(r.Components[1].Licenses) != 0 {
+		t.Fatalf("NOASSERTION license should not be recorded: %+v", r.Components[1])
+	}
+}
+
+func TestParseSBOMUnrecognized(t *testing.T) {
+	if _, err := ParseSBOM([]byte(`{"foo":"bar"}`)); err == nil {
+		t.Fatalf("unrecognized sbom format must error")
+	}
+	if _, err := ParseSBOM([]byte(`not json`)); err == nil {
+		t.Fatalf("invalid json must error")
+	}
+}
+
 func TestParseDispatchAndErrors(t *testing.T) {
 	if _, err := Parse("unknown", nil); err == nil {
 		t.Fatalf("unknown format must error")

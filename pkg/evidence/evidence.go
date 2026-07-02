@@ -15,10 +15,11 @@ import (
 // Result is the normalized payload recorded as an attestation. The Summary
 // fields are jq-evaluable (e.g. `.summary.failed == 0`).
 type Result struct {
-	Format    string         `json:"format"`
-	Compliant bool           `json:"compliant"`
-	Summary   map[string]any `json:"summary"`
-	Findings  []string       `json:"findings,omitempty"`
+	Format     string         `json:"format"`
+	Compliant  bool           `json:"compliant"`
+	Summary    map[string]any `json:"summary"`
+	Findings   []string       `json:"findings,omitempty"`
+	Components []Component    `json:"components,omitempty"`
 }
 
 // SupportedFormats lists the formats Parse understands.
@@ -180,5 +181,127 @@ func ParseTrivy(data []byte) (Result, error) {
 		Summary: map[string]any{"total": total,
 			"critical": counts["critical"], "high": counts["high"], "medium": counts["medium"], "low": counts["low"]},
 		Findings: findings,
+	}, nil
+}
+
+// ----- SBOM (CycloneDX / SPDX) -----
+
+// Component is a normalized SBOM component (package/library), extracted from
+// a CycloneDX or SPDX document and persisted alongside the artifact it was
+// found in (see `fides attest sbom` / `fides search components`).
+type Component struct {
+	Name     string   `json:"name"`
+	Version  string   `json:"version"`
+	PURL     string   `json:"purl,omitempty"`
+	Licenses []string `json:"licenses,omitempty"`
+}
+
+type cyclonedxDoc struct {
+	BomFormat  string `json:"bomFormat"`
+	Components []struct {
+		Name     string `json:"name"`
+		Version  string `json:"version"`
+		PURL     string `json:"purl"`
+		Licenses []struct {
+			License struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"license"`
+			Expression string `json:"expression"`
+		} `json:"licenses"`
+	} `json:"components"`
+}
+
+type spdxDoc struct {
+	SPDXVersion string `json:"spdxVersion"`
+	Packages    []struct {
+		Name             string `json:"name"`
+		VersionInfo      string `json:"versionInfo"`
+		LicenseConcluded string `json:"licenseConcluded"`
+		LicenseDeclared  string `json:"licenseDeclared"`
+		ExternalRefs     []struct {
+			ReferenceCategory string `json:"referenceCategory"`
+			ReferenceType     string `json:"referenceType"`
+			ReferenceLocator  string `json:"referenceLocator"`
+		} `json:"externalRefs"`
+	} `json:"packages"`
+}
+
+// ParseSBOM auto-detects CycloneDX vs SPDX JSON (via the "bomFormat" /
+// "spdxVersion" discriminators) and normalizes the component list (name,
+// version, purl, licenses). SBOM evidence is informational, so the result is
+// always compliant; Summary reports the component count.
+func ParseSBOM(data []byte) (Result, error) {
+	var probe struct {
+		BomFormat   string `json:"bomFormat"`
+		SPDXVersion string `json:"spdxVersion"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return Result{}, fmt.Errorf("evidence: parse sbom: %w", err)
+	}
+
+	var components []Component
+	var format string
+	switch {
+	case strings.EqualFold(probe.BomFormat, "CycloneDX"):
+		format = "cyclonedx"
+		var doc cyclonedxDoc
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return Result{}, fmt.Errorf("evidence: parse cyclonedx sbom: %w", err)
+		}
+		for _, c := range doc.Components {
+			var licenses []string
+			for _, l := range c.Licenses {
+				switch {
+				case l.License.ID != "":
+					licenses = append(licenses, l.License.ID)
+				case l.License.Name != "":
+					licenses = append(licenses, l.License.Name)
+				case l.Expression != "":
+					licenses = append(licenses, l.Expression)
+				}
+			}
+			components = append(components, Component{Name: c.Name, Version: c.Version, PURL: c.PURL, Licenses: licenses})
+		}
+	case probe.SPDXVersion != "":
+		format = "spdx"
+		var doc spdxDoc
+		if err := json.Unmarshal(data, &doc); err != nil {
+			return Result{}, fmt.Errorf("evidence: parse spdx sbom: %w", err)
+		}
+		for _, p := range doc.Packages {
+			var purl string
+			for _, ref := range p.ExternalRefs {
+				if strings.EqualFold(ref.ReferenceType, "purl") {
+					purl = ref.ReferenceLocator
+					break
+				}
+			}
+			lic := p.LicenseConcluded
+			if lic == "" || strings.EqualFold(lic, "NOASSERTION") {
+				lic = p.LicenseDeclared
+			}
+			var licenses []string
+			if lic != "" && !strings.EqualFold(lic, "NOASSERTION") && !strings.EqualFold(lic, "NONE") {
+				licenses = append(licenses, lic)
+			}
+			components = append(components, Component{Name: p.Name, Version: p.VersionInfo, PURL: purl, Licenses: licenses})
+		}
+	default:
+		return Result{}, fmt.Errorf("evidence: parse sbom: unrecognized format (expected CycloneDX \"bomFormat\" or SPDX \"spdxVersion\")")
+	}
+
+	sort.Slice(components, func(i, j int) bool {
+		if components[i].Name != components[j].Name {
+			return components[i].Name < components[j].Name
+		}
+		return components[i].Version < components[j].Version
+	})
+
+	return Result{
+		Format:     format,
+		Compliant:  true,
+		Summary:    map[string]any{"components": len(components)},
+		Components: components,
 	}, nil
 }

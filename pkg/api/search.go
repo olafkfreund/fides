@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // handleSearchArtifacts filters artifacts by SHA prefix, git commit, or name.
@@ -90,6 +91,50 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 			return
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "type_name": typ, "is_compliant": isCompliant, "trail_id": trailID, "created_at": created})
+	}
+	writeJSON(w, out)
+}
+
+// handleSearchComponents filters SBOM components by purl, artifact SHA256, or
+// name substring — answering "which artifacts contain component X" (fides
+// search components --purl <p> [--artifact <sha>] [--name <substr>]).
+func (s *Server) handleSearchComponents(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	purl := r.URL.Query().Get("purl")
+	artifact := r.URL.Query().Get("artifact")
+	name := r.URL.Query().Get("name")
+
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT sc.id, sc.artifact_sha256, a.name, a.type, sc.name, sc.version, sc.purl, sc.licenses, sc.created_at
+		 FROM sbom_components sc JOIN artifacts a ON a.sha256 = sc.artifact_sha256
+		 WHERE sc.org_id = $1
+		   AND ($2 = '' OR sc.purl = $2)
+		   AND ($3 = '' OR sc.artifact_sha256 = $3)
+		   AND ($4 = '' OR sc.name ILIKE '%' || $4 || '%')
+		 ORDER BY sc.created_at DESC LIMIT 200`, orgID, purl, artifact, name)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var artifactSHA, artifactName, artifactType, compName, version, compPurl string
+		var licenses []string
+		var created interface{}
+		if err := rows.Scan(&id, &artifactSHA, &artifactName, &artifactType, &compName, &version, &compPurl, pq.Array(&licenses), &created); err != nil {
+			internalError(w, err)
+			return
+		}
+		out = append(out, map[string]any{
+			"id": id, "artifact_sha256": artifactSHA, "artifact_name": artifactName, "artifact_type": artifactType,
+			"name": compName, "version": version, "purl": compPurl, "licenses": licenses, "created_at": created,
+		})
 	}
 	writeJSON(w, out)
 }

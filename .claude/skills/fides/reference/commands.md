@@ -51,6 +51,18 @@ fides attest trivy --trail <id> --file reports/trivy.json [--name <n>] [--artifa
 - Normalized payload is `{format, compliant, summary{counts}, findings}` — jq-evaluable
   (e.g. rule `.summary.failed == 0`).
 
+### `fides attest sbom` (SBOM ingestion)
+Auto-detects CycloneDX vs SPDX JSON, normalizes every component (name, version,
+purl, licenses), and persists them linked to the artifact — powering
+`fides search components`.
+```
+fides attest sbom --file bom.json --artifact-sha <hex> [--trail <id>] [--name <n>]
+```
+- `--file` and `--artifact-sha` (required) · `--trail` optional (resolved from the
+  artifact's own trail when omitted) · `--name` defaults to `sbom`
+- Recorded as an attestation typed `sbom-cyclonedx` (satisfies the SBOM control's
+  evidence requirement regardless of the source format).
+
 ### `fides assert` — policy gate (**exit 1** on non-compliance)
 ```
 fides assert --sha256 <hex> [--policy <name>]
@@ -164,6 +176,7 @@ fides approve --trail <id> [--reason <r>] # record a segregation-of-duties appro
 ```
 fides search artifacts    [--sha <prefix>] [--commit <sha>] [--name <substr>]
 fides search attestations [--type <t>] [--trail <id>] [--compliant true|false]
+fides search components   [--purl <p>] [--artifact <sha>] [--name <substr>]  # which artifacts contain component X
 fides metrics                      [--days N]     # DORA delivery metrics (default 30d)
 fides metrics deployment-frequency [--weeks N]    # weekly per-environment (default 12w)
 ```

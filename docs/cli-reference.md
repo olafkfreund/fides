@@ -10,6 +10,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
+| `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
@@ -49,6 +50,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 |---|---|
 | `fides search artifacts [--sha --commit --name]` | Search artifacts |
 | `fides search attestations [--type --trail --compliant]` | Search attestations |
+| `fides search components [--purl --artifact --name]` | Search SBOM components — "which artifacts contain component X" |
 | `fides metrics [--days N]` | DORA delivery metrics |
 | `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |
 
