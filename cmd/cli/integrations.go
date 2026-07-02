@@ -269,16 +269,24 @@ func handleApprove(config CLIConfig, args []string) {
 	post(config, "/api/v1/trails/"+*trail+"/approvals", map[string]any{"reason": *reason}, "Approval recorded")
 }
 
-// fides report --framework <name> — auditor-ready framework report.
+// fides report --framework <name> [--format oscal] — auditor-ready framework
+// report. Default output is Fides' own human-readable JSON; --format oscal
+// requests a NIST OSCAL 1.x assessment-results JSON document instead (the
+// machine-readable format frameworks like FedRAMP 20x mandate).
 func handleReport(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("report", flag.ExitOnError)
 	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+	format := cmd.String("format", "", "output format: default (human-readable JSON) or oscal")
 	cmd.Parse(args)
 	if *framework == "" {
-		fmt.Println("Usage: fides report --framework <name>")
+		fmt.Println("Usage: fides report --framework <name> [--format oscal]")
 		os.Exit(1)
 	}
-	body, err := getRequest(config, "/api/v1/reports/framework/"+*framework)
+	path := "/api/v1/reports/framework/" + neturl.PathEscape(*framework)
+	if *format != "" {
+		path += "?format=" + neturl.QueryEscape(*format)
+	}
+	body, err := getRequest(config, path)
 	fail(err, "framework report")
 	fmt.Println(body)
 }
