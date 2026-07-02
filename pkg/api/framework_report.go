@@ -7,9 +7,27 @@ import (
 	"github.com/lib/pq"
 )
 
+// reportControl is one control's evidence/coverage state within a framework
+// report, shared by the default human-readable JSON output and the OSCAL
+// assessment-results export.
+type reportControl struct {
+	Key               string
+	Name              string
+	RequiredTypes     []string
+	MissingTypes      []string
+	EvidenceSatisfied bool
+	EnforcedIn        []string
+	Coverage          float64
+}
+
 // handleFrameworkReport produces an auditor-ready, framework-scoped report: each
 // control in the framework, whether it is satisfied by compliant evidence, and
 // how many environments enforce it (coverage) — plus a summary.
+//
+// By default the response is Fides' own JSON report shape. Passing
+// ?format=oscal instead produces a NIST OSCAL 1.x assessment-results JSON
+// document mapping the same controls to their collected evidence, for
+// machine-readable submission (e.g. FedRAMP 20x).
 func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
@@ -19,6 +37,11 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 	framework := r.PathValue("framework")
 	if framework == "" {
 		http.Error(w, "framework is required", http.StatusBadRequest)
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format != "" && format != "oscal" {
+		http.Error(w, "unsupported format (supported: oscal)", http.StatusBadRequest)
 		return
 	}
 
@@ -86,7 +109,7 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	controls := []map[string]any{}
+	reportControls := make([]reportControl, 0, len(order))
 	satisfied, withCoverage := 0, 0
 	for _, k := range order {
 		c := byKey[k]
@@ -107,10 +130,24 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 		if len(c.EnforcedIn) > 0 {
 			withCoverage++
 		}
+		reportControls = append(reportControls, reportControl{
+			Key: c.Key, Name: c.Name, RequiredTypes: c.RequiredTypes,
+			MissingTypes: missing, EvidenceSatisfied: evidenceSatisfied,
+			EnforcedIn: c.EnforcedIn, Coverage: coverage,
+		})
+	}
+
+	if format == "oscal" {
+		writeJSON(w, buildOSCALAssessmentResults(framework, reportControls))
+		return
+	}
+
+	controls := make([]map[string]any, 0, len(reportControls))
+	for _, c := range reportControls {
 		controls = append(controls, map[string]any{
 			"control": c.Key, "name": c.Name, "required_types": c.RequiredTypes,
-			"evidence_satisfied": evidenceSatisfied, "missing_types": missing,
-			"enforced_in": c.EnforcedIn, "coverage": coverage,
+			"evidence_satisfied": c.EvidenceSatisfied, "missing_types": c.MissingTypes,
+			"enforced_in": c.EnforcedIn, "coverage": c.Coverage,
 		})
 	}
 

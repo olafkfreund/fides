@@ -22,7 +22,7 @@ type Result struct {
 }
 
 // SupportedFormats lists the formats Parse understands.
-var SupportedFormats = []string{"junit", "snyk", "trivy"}
+var SupportedFormats = []string{"junit", "snyk", "trivy", "slsa"}
 
 // Parse dispatches to the format-specific parser.
 func Parse(format string, data []byte) (Result, error) {
@@ -33,6 +33,8 @@ func Parse(format string, data []byte) (Result, error) {
 		return ParseSnyk(data)
 	case "trivy":
 		return ParseTrivy(data)
+	case "slsa":
+		return ParseSLSA(data)
 	default:
 		return Result{}, fmt.Errorf("unsupported evidence format %q (supported: %s)", format, strings.Join(SupportedFormats, ", "))
 	}
@@ -179,6 +181,115 @@ func ParseTrivy(data []byte) (Result, error) {
 		Compliant: counts["critical"] == 0 && counts["high"] == 0,
 		Summary: map[string]any{"total": total,
 			"critical": counts["critical"], "high": counts["high"], "medium": counts["medium"], "low": counts["low"]},
+		Findings: findings,
+	}, nil
+}
+
+// ----- SLSA v1 provenance -----
+
+// slsaPredicateType is the predicateType a compliant SLSA v1 in-toto
+// provenance statement must declare.
+const slsaPredicateType = "https://slsa.dev/provenance/v1"
+
+// inTotoStatement is a minimal typed subset of an in-toto v1 Statement
+// carrying a SLSA provenance predicate. Deliberately hand-rolled instead of
+// pulling in-toto-golang/slsa-github-generator to keep this a small, focused
+// dependency-free parser (matches the junit/snyk/trivy parsers above).
+type inTotoStatement struct {
+	Type          string          `json:"_type"`
+	PredicateType string          `json:"predicateType"`
+	Subject       []inTotoSubject `json:"subject"`
+	Predicate     slsaPredicate   `json:"predicate"`
+}
+
+type inTotoSubject struct {
+	Name   string            `json:"name"`
+	Digest map[string]string `json:"digest"`
+}
+
+type slsaPredicate struct {
+	BuildDefinition *slsaBuildDefinition `json:"buildDefinition"`
+	RunDetails      *slsaRunDetails      `json:"runDetails"`
+}
+
+type slsaBuildDefinition struct {
+	BuildType            string                   `json:"buildType"`
+	ExternalParameters   map[string]any           `json:"externalParameters,omitempty"`
+	InternalParameters   map[string]any           `json:"internalParameters,omitempty"`
+	ResolvedDependencies []slsaResourceDescriptor `json:"resolvedDependencies,omitempty"`
+}
+
+type slsaRunDetails struct {
+	Builder  *slsaBuilder  `json:"builder"`
+	Metadata *slsaMetadata `json:"metadata,omitempty"`
+}
+
+type slsaBuilder struct {
+	ID      string            `json:"id"`
+	Version map[string]string `json:"version,omitempty"`
+}
+
+type slsaMetadata struct {
+	InvocationID string `json:"invocationId,omitempty"`
+	StartedOn    string `json:"startedOn,omitempty"`
+	FinishedOn   string `json:"finishedOn,omitempty"`
+}
+
+type slsaResourceDescriptor struct {
+	URI    string            `json:"uri,omitempty"`
+	Digest map[string]string `json:"digest,omitempty"`
+}
+
+// ParseSLSA parses a SLSA v1 in-toto provenance statement (predicateType
+// https://slsa.dev/provenance/v1) and validates the fields required for the
+// statement to be a usable attestation of how an artifact was built:
+// predicateType, subject, predicate.buildDefinition (buildType) and
+// predicate.runDetails.builder.id. Compliant only when every required field
+// is present; otherwise each missing/mismatched field is reported as a
+// finding.
+func ParseSLSA(data []byte) (Result, error) {
+	var stmt inTotoStatement
+	if err := json.Unmarshal(data, &stmt); err != nil {
+		return Result{}, fmt.Errorf("evidence: parse slsa: %w", err)
+	}
+
+	var findings []string
+	if stmt.PredicateType != slsaPredicateType {
+		findings = append(findings, fmt.Sprintf("unexpected predicateType %q (want %q)", stmt.PredicateType, slsaPredicateType))
+	}
+	if len(stmt.Subject) == 0 {
+		findings = append(findings, "missing subject")
+	}
+
+	var buildType string
+	if stmt.Predicate.BuildDefinition == nil {
+		findings = append(findings, "missing predicate.buildDefinition")
+	} else {
+		buildType = stmt.Predicate.BuildDefinition.BuildType
+		if buildType == "" {
+			findings = append(findings, "missing predicate.buildDefinition.buildType")
+		}
+	}
+
+	var builderID string
+	if stmt.Predicate.RunDetails == nil {
+		findings = append(findings, "missing predicate.runDetails")
+	} else if stmt.Predicate.RunDetails.Builder == nil || stmt.Predicate.RunDetails.Builder.ID == "" {
+		findings = append(findings, "missing predicate.runDetails.builder.id")
+	} else {
+		builderID = stmt.Predicate.RunDetails.Builder.ID
+	}
+
+	sort.Strings(findings)
+	return Result{
+		Format:    "slsa",
+		Compliant: len(findings) == 0,
+		Summary: map[string]any{
+			"predicate_type": stmt.PredicateType,
+			"builder_id":     builderID,
+			"build_type":     buildType,
+			"subjects":       len(stmt.Subject),
+		},
 		Findings: findings,
 	}, nil
 }

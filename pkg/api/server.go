@@ -87,9 +87,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
+	// Post-approval drift re-evaluation: diff an environment's snapshots and,
+	// if drift is detected, write an elevated risk note back onto the
+	// ServiceNow change request that approved the prior state (ServiceNow has
+	// no native post-approval re-scoring).
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
+
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
 	mux.HandleFunc("GET /api/v1/metrics/deployment-frequency", s.handleDeploymentFrequency)
+	mux.HandleFunc("GET /api/v1/metrics/compliance-correlation", s.handleComplianceCorrelation)
 
 	// Governance controls + coverage
 	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
@@ -125,6 +132,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/environments/{id}/allowlist", s.handleListAllowlist)
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
 	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
+
+	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
+	// gated by an approval record before an action can be applied (issue #235).
+	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
+	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
 
 	// Artifact API
 	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
@@ -174,6 +190,11 @@ func (s *Server) Routes() http.Handler {
 	// Unified Go-served admin console (tabs: ServiceNow, Slack, service accounts,
 	// git/webhooks, environments policies/allow-lists, metrics).
 	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
+
+	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
+	// approvals, change-gate verdict, tamper-evidence chain status), built on
+	// existing read APIs. Same public-shell/session-cookie pattern as above.
+	mux.HandleFunc("GET /evidence", s.handleEvidenceVaultPage)
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.

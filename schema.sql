@@ -361,7 +361,10 @@ CREATE INDEX IF NOT EXISTS idx_controls_org ON controls(org_id);
 
 -- 21b. Trail approvals (segregation-of-duties evidence: who signed off a change).
 -- approver_kind is 'session' for a human SSO user or 'service' for machine
--- automation; four-eyes requires >= 2 distinct human approvers.
+-- automation; four-eyes requires >= 2 distinct human approvers. role separates
+-- reviewer sign-offs ('approver') from the identity that performs the
+-- deployment ('deployer'), feeding the segregation-of-duties attestation
+-- (committer != approver != deployer) recorded by the change gate.
 CREATE TABLE IF NOT EXISTS trail_approvals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -369,6 +372,7 @@ CREATE TABLE IF NOT EXISTS trail_approvals (
     approved_by VARCHAR(255) NOT NULL,      -- approver email / service-account name
     approver_kind VARCHAR(20) NOT NULL,     -- 'session' (human) | 'service'
     reason TEXT,
+    role VARCHAR(20) NOT NULL DEFAULT 'approver', -- 'approver' | 'deployer'
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(trail_id, approved_by)
 );
@@ -466,6 +470,31 @@ CREATE TABLE IF NOT EXISTS tenant_servicenow_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_servicenow_settings_org_id ON tenant_servicenow_settings(org_id);
+
+-- 25. Remediation actions (policy-driven auto-remediation, approval-gated).
+-- Low-risk domains only: environment tags, allowlist entries, drift re-sync.
+-- status: proposed -> approved|rejected -> applied. Applying without an
+-- approved status is rejected at the state-machine level (pkg/remediation).
+CREATE TABLE IF NOT EXISTS remediation_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    domain VARCHAR(30) NOT NULL,             -- 'env_tag' | 'allowlist_entry' | 'drift_resync'
+    status VARCHAR(20) NOT NULL DEFAULT 'proposed', -- 'proposed' | 'approved' | 'applied' | 'rejected'
+    environment_id UUID REFERENCES environments(id) ON DELETE CASCADE,
+    policy_id UUID REFERENCES policies(id) ON DELETE SET NULL,
+    reason TEXT,
+    params JSONB NOT NULL DEFAULT '{}'::jsonb, -- action-specific parameters (e.g. tags, sha256)
+    proposed_by VARCHAR(255) NOT NULL,
+    approved_by VARCHAR(255),
+    applied_by VARCHAR(255),
+    rejected_by VARCHAR(255),
+    result_detail TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_org ON remediation_actions(org_id);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_env ON remediation_actions(environment_id);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_status ON remediation_actions(status);
 
 
 
