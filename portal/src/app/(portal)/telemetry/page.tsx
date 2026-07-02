@@ -102,13 +102,15 @@ export default function Telemetry() {
         <div className={`${panel} mt-6`}>
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Deployment Frequency — weekly, per environment (last 12 weeks)</h2>
           <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={freqData} margin={{ left: -10, right: 8, top: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+            <BarChart data={freqData} margin={{ left: -10, right: 8, top: 5 }} maxBarSize={40} barGap={2} barCategoryGap="28%">
+              <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
               <XAxis dataKey="week" tick={{ fill: MUTED, fontSize: 11 }} stroke="#262626" />
               <YAxis allowDecimals={false} tick={{ fill: MUTED, fontSize: 11 }} stroke="#262626" />
               <Tooltip contentStyle={tooltipStyle} cursor={{ fill: "#ffffff08" }} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
-              {envNames.map((env, i) => <Bar key={env} dataKey={env} stackId="a" fill={PALETTE[i % PALETTE.length]} radius={i === envNames.length - 1 ? [4, 4, 0, 0] : undefined} />)}
+              {/* Grouped (not stacked) so each environment's weekly deployments are
+                  directly comparable; maxBarSize keeps a single week from stretching. */}
+              {envNames.map((env, i) => <Bar key={env} dataKey={env} fill={PALETTE[i % PALETTE.length]} radius={[3, 3, 0, 0]} />)}
             </BarChart>
           </ResponsiveContainer>
         </div>

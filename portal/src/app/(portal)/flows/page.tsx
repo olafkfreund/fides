@@ -83,7 +83,7 @@ export default function Flows() {
   const shown = flows.filter((f) => f.name.toLowerCase().includes(ffilter.toLowerCase()));
 
   return (
-    <div className="max-w-4xl">
+    <div>
       <h1 className="text-xl font-semibold">Flows &amp; Trails</h1>
       <p className="mt-1 text-sm text-muted-foreground">Delivery pipelines and their build trails. Click a flow to see its trails.</p>
 
