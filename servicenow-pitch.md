@@ -138,5 +138,26 @@ ServiceNow monetizes most."*
 
 ---
 
+## 6. The 60-second version (for cold outreach)
+
+> Your team already runs change management in ServiceNow. But every change ticket
+> still relies on screenshots and "trust me" attestations to prove the release
+> was tested, scanned, and approved — which is slow to assemble and painful at
+> audit time.
+>
+> **Fides fixes that.** It sits in your CI/CD pipeline and Kubernetes runtime,
+> automatically captures cryptographically-verifiable evidence of every build,
+> test, scan, and approval, and writes an **approve/hold verdict plus a 0–100
+> risk score straight back onto the matching ServiceNow Change Request** — with
+> the CMDB and ITOM enriched by what's *actually* running.
+>
+> ServiceNow stays your system of record. Fides becomes the evidence layer
+> beneath it: faster change velocity, a CMDB you can trust, and audit-readiness
+> by default across SOC 2, ISO 27001, NIST 800-53, and DORA.
+>
+> **One line:** *ServiceNow runs the process — Fides delivers the proof.*
+
+---
+
 *Ready to go deeper? See the [ServiceNow integration guide](/docs/servicenow-integration.md),
 the live admin page at `/servicenow`, or the [full user guide](/guide.html).*

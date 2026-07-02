@@ -255,6 +255,11 @@ Fides includes a built-in **Model Context Protocol (MCP)** server (`fides-mcp`) 
 
 Fides maps evidence to the controls of the frameworks regulated enterprises answer to, and turns that mapping into an actionable change decision.
 
+> [!TIP]
+> New to why Fides and ServiceNow are better together? Read the
+> **[Fides × ServiceNow pitch](/servicenow-pitch.html)** — how Fides becomes the
+> evidence layer beneath ServiceNow change management.
+
 * **Framework catalogs** — adopt SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, or SOX in one command (`fides control import --framework`). Each control declares the evidence types it requires.
 * **Change gate + risk** — `fides change-gate --trail <id>` returns an approve/hold verdict and a 0–100 risk score computed from which controls pass, fail, or lack evidence. The same verdict + risk is written back onto the matching **ServiceNow Change Request** (work note + risk field) — Fides is the evidence layer; ServiceNow remains the system of record.
 * **Segregation of duties** — approvals are first-class evidence (`fides approve`), distinguishing a human sign-off from machine automation. The gate will not recommend approval without a human review, and four-eyes requires two distinct human approvers.
@@ -345,3 +350,4 @@ and Slack notifications — see:
 * **[Feature guide with real examples](/docs/features.md)**
 * **[Full CLI reference](/docs/cli-reference.md)**
 * **[ServiceNow integration](/docs/servicenow-integration.md)** (admin page at `/servicenow`)
+* **[Fides × ServiceNow — why they're better together](/servicenow-pitch.html)** (sales & partner pitch)
