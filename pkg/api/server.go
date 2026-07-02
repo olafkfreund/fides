@@ -126,6 +126,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
 	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
 
+	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
+	// gated by an approval record before an action can be applied (issue #235).
+	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
+	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
+
 	// Artifact API
 	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)

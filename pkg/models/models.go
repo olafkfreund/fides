@@ -255,6 +255,28 @@ type TenantGitProvider struct {
 	UpdatedAt         time.Time `json:"updated_at" db:"updated_at"`
 }
 
+// RemediationAction is a policy-driven auto-remediation proposal, gated by an
+// approval record before it can be applied. Domain is restricted to low-risk
+// targets: "env_tag", "allowlist_entry", "drift_resync" (pkg/remediation).
+// Status flows proposed -> approved|rejected -> applied.
+type RemediationAction struct {
+	ID            uuid.UUID  `json:"id" db:"id"`
+	OrgID         uuid.UUID  `json:"org_id" db:"org_id"`
+	Domain        string     `json:"domain" db:"domain"`
+	Status        string     `json:"status" db:"status"`
+	EnvironmentID *uuid.UUID `json:"environment_id,omitempty" db:"environment_id"`
+	PolicyID      *uuid.UUID `json:"policy_id,omitempty" db:"policy_id"`
+	Reason        string     `json:"reason" db:"reason"`
+	Params        string     `json:"params" db:"params"` // JSON string, action-specific
+	ProposedBy    string     `json:"proposed_by" db:"proposed_by"`
+	ApprovedBy    string     `json:"approved_by,omitempty" db:"approved_by"`
+	AppliedBy     string     `json:"applied_by,omitempty" db:"applied_by"`
+	RejectedBy    string     `json:"rejected_by,omitempty" db:"rejected_by"`
+	ResultDetail  string     `json:"result_detail,omitempty" db:"result_detail"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+}
+
 type TenantServiceNowSettings struct {
 	ID          uuid.UUID `json:"id" db:"id"`
 	OrgID       uuid.UUID `json:"org_id" db:"org_id"`

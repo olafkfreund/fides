@@ -74,6 +74,8 @@ func main() {
 		handleServiceAccount(config, os.Args[2:])
 	case "allowlist":
 		handleAllowlist(config, os.Args[2:])
+	case "remediation":
+		handleRemediation(config, os.Args[2:])
 	case "search":
 		handleSearch(config, os.Args[2:])
 	case "audit":
@@ -137,6 +139,7 @@ func printUsage() {
 	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
+	fmt.Println("  remediation      Policy-driven auto-remediation (propose|list|get|approve|reject|apply)")
 	fmt.Println("  policy           Manage/check environment policies (add|list|check --env <id>)")
 	fmt.Println("  logical-env      Aggregate physical environments (create|list|add-member|state)")
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
