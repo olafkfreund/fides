@@ -32,6 +32,17 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
 
+## Controls, frameworks & change gate
+| Command | Purpose |
+|---|---|
+| `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX>` | Adopt a regulated framework's control catalog (idempotent) |
+| `fides control frameworks` | List the available framework catalogs |
+| `fides control coverage` | Show each control's evidence + environment coverage |
+| `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
+| `fides report --framework <name>` | Auditor-ready per-framework report (control-by-control evidence + coverage) |
+| `fides change-gate --trail <id>` | Evidence-backed approve/hold verdict + 0–100 risk score (exits 2 on HOLD) |
+| `fides approve --trail <id> [--reason <r>]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans) |
+
 ## Search & metrics
 | Command | Purpose |
 |---|---|
@@ -45,7 +56,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 |---|---|
 | `fides servicenow config\|get\|change-check [...]` | ServiceNow connection + change gate |
 | `fides slack config --secret-path <ref> [--disable]` | Slack notifications |
-| `fides git-provider config --provider --host --api-base --token-path [--inbound-secret-path]` | GitHub/GitLab provider |
+| `fides git-provider config --provider <github\|gitlab\|bitbucket\|azure-devops> --host --api-base --token-path [--inbound-secret-path]` | Git provider (commit status + inbound webhooks) |
 | `fides webhook config --name --url --secret-path [--events] [--disable]` | Outbound signed webhook |
 | `fides service-account create\|list\|issue-key\|revoke-key [...]` | Service accounts + API keys |
 | `fides user set-password --user <id> --password <pw>` | Set a user's local password |

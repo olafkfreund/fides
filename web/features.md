@@ -201,3 +201,58 @@ Tools include `list_flows`/`list_environments`/`list_policies`, `check_complianc
 `get_deployment_frequency`, the ServiceNow tools, and provenance recording. It also
 exposes the documentation as MCP **resources** (`fides://docs/*`). Full guide:
 [mcp-server.md](mcp-server.md).
+
+## 17. Regulated compliance & governance
+
+Adopt a control framework, gather evidence for it, and turn the result into a change decision that flows into ServiceNow.
+
+```bash
+# adopt a framework's control catalog (idempotent); one of
+#   SOC2 | ISO27001 | NIST-800-53 | PCI-DSS | DORA | PSD2 | SOX
+fides control import --framework SOC2
+fides control frameworks          # list catalogs
+fides control coverage            # evidence + environment coverage per control
+
+# auditor-ready, control-by-control report for a framework
+fides report --framework SOC2
+
+# evidence-backed approve/hold verdict + 0-100 risk score (exits 2 on HOLD)
+fides change-gate --trail <trail-id>
+
+# record a segregation-of-duties approval (human vs machine; four-eyes = 2 humans)
+fides approve --trail <trail-id> --reason "reviewed by platform lead"
+```
+
+- **Change gate → ServiceNow**: `POST /api/v1/servicenow/change-gate {trail_id, change_number}`
+  writes the verdict + risk onto the matching Change Request (work note + `risk`
+  field). Fides advises; ServiceNow decides.
+- **Segregation of duties**: the gate will not recommend approval without at least
+  one human approval; a missing sign-off raises the risk score.
+
+## 18. Tenant isolation, WORM retention & git providers
+
+- **Row-Level Security**: enable database-enforced tenant isolation with
+  `FIDES_RLS_ENABLED=true`. The app connects as a least-privilege `fides_app`
+  role; `schema-rls.sql` policies isolate every tenant table. See
+  [Setup & Seeding](setup.md).
+- **WORM evidence retention**: set `FIDES_OBJECT_LOCK_MODE=GOVERNANCE|COMPLIANCE`
+  and `FIDES_EVIDENCE_RETENTION_DAYS=<n>` to write evidence with an S3 Object Lock
+  retain-until date (the bucket must have Object Lock enabled) — for DORA/SOX.
+- **Git providers**: commit-status checks and signed inbound push webhooks for
+  **GitHub, GitLab, Bitbucket, and Azure DevOps**
+  (`fides git-provider config --provider <github|gitlab|bitbucket|azure-devops> ...`).
+
+## 19. Install & seed
+
+Use the Helm chart (server + a one-step seed job) or the seed script:
+
+```bash
+helm install fides ./charts/fides -n fides --create-namespace \
+  --set database.host=<pg-host> --set database.ownerPassword=<pw> \
+  --set database.appPassword=<pw> --set org.id=$(uuidgen) \
+  --set portal.username=admin --set portal.password=<pw>
+# or, against an existing Postgres:
+ORG_NAME="Acme Corp" ./scripts/setup-db.sh
+```
+
+Full walkthrough (RLS role, secrets, first login, upgrade path): [Setup & Seeding](setup.md).

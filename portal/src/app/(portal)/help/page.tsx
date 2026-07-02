@@ -6,6 +6,7 @@ import Md from "@/components/Md";
 // Docs are the Go-served web/*.md files (root-relative, public).
 const DOCS = [
   { title: "Getting Started", path: "/getting_started.md" },
+  { title: "Setup & Seeding", path: "/setup.md" },
   { title: "Features", path: "/features.md" },
   { title: "CLI Reference", path: "/cli-reference.md" },
   { title: "Environment MCP Compliance", path: "/environment-mcp-compliance.md" },
