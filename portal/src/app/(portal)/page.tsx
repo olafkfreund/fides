@@ -16,16 +16,28 @@ type Att = { id: string; name: string; type_name: string; is_compliant: boolean;
 type Coverage = { total_environments: number; controls: { control: string; coverage: number }[] };
 type IntEvent = { event_type: string; status: string; created_at?: string };
 
-function Card({ label, value, sub, icon: Ic, iconClass }: { label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string }>; iconClass?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-5">
+function Card({ label, value, sub, icon: Ic, iconClass, href }: { label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string }>; iconClass?: string; href?: string }) {
+  const body = (
+    <>
       <div className="flex items-start justify-between">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
         <span className={`flex size-8 items-center justify-center rounded-lg bg-primary/10 ${iconClass || "text-primary"}`}><Ic className="size-4" /></span>
       </div>
       <div className="mt-2 text-2xl font-semibold">{value}</div>
       {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
-    </div>
+    </>
+  );
+  const base = "block rounded-xl border border-border bg-card p-5";
+  if (!href) return <div className={base}>{body}</div>;
+  // Clickable stat: highlight on hover/focus and link through to the underlying detail page.
+  return (
+    <a
+      href={href}
+      title={`View ${label} details`}
+      className={`${base} cursor-pointer transition-colors hover:border-primary hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+    >
+      {body}
+    </a>
   );
 }
 
@@ -58,10 +70,10 @@ export default function Overview() {
       <p className="mt-1 text-sm text-muted-foreground">Real-time compliance status of software components.</p>
 
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card label="Tracked Artifacts" value={artifacts === null ? "…" : String(artifacts)} sub="Build artifacts tracked" icon={Package} />
-        <Card label="Compliance Pass" value={dora ? `${Math.round(dora.compliance_rate * 100)}%` : "…"} sub="Artifacts passing JQ gates" icon={ShieldCheck} iconClass="text-green-400" />
-        <Card label="Active Alerts" value={String(alerts)} sub="Non-compliant attestations" icon={AlertTriangle} iconClass={alerts > 0 ? "text-red-400" : "text-muted-foreground"} />
-        <Card label="AI Evaluations" value={aiCount === null ? "…" : String(aiCount)} sub="LLM compliance reports" icon={Bot} />
+        <Card label="Tracked Artifacts" value={artifacts === null ? "…" : String(artifacts)} sub="Build artifacts tracked" icon={Package} href="/artifacts" />
+        <Card label="Compliance Pass" value={dora ? `${Math.round(dora.compliance_rate * 100)}%` : "…"} sub="Artifacts passing JQ gates" icon={ShieldCheck} iconClass="text-green-400" href="/attestations?compliant=true" />
+        <Card label="Active Alerts" value={String(alerts)} sub="Non-compliant attestations" icon={AlertTriangle} iconClass={alerts > 0 ? "text-red-400" : "text-muted-foreground"} href="/attestations?compliant=false" />
+        <Card label="AI Evaluations" value={aiCount === null ? "…" : String(aiCount)} sub="LLM compliance reports" icon={Bot} href="/ai-audits" />
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">

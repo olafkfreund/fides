@@ -16,17 +16,30 @@ export default function Attestations() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
-  const load = () => {
+  const load = (over?: { type?: string; compliance?: string }) => {
+    const t = over?.type ?? type;
+    const c = over?.compliance ?? compliance;
     const q = new URLSearchParams();
-    if (type) q.set("type", type);
-    if (compliance) q.set("compliant", compliance);
+    if (t) q.set("type", t);
+    if (c) q.set("compliant", c);
     setLoading(true);
     apiGet<Att[]>(`/api/v1/search/attestations?${q}`)
       .then((a) => setAtts(a || []))
       .catch((e) => setErr(String(e.message || e)))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { const t = setTimeout(load, 0); return () => clearTimeout(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Preset filters from the URL so dashboard deep-links (e.g. ?compliant=false for
+  // "Active Alerts") land pre-filtered. Static export → read window.location directly.
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const c = sp.get("compliant") || "";
+    const t = sp.get("type") || "";
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (c) setCompliance(c);
+    if (t) setType(t);
+    const timer = setTimeout(() => load({ compliance: c, type: t }), 0);
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = atts.filter((a) => a.name.toLowerCase().includes(name.toLowerCase()));
   const compliant = atts.filter((a) => a.is_compliant).length;
