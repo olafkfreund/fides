@@ -84,6 +84,7 @@ func (s *Server) Routes() http.Handler {
 	// Search / query + snapshot diff
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
+	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
 	// DORA-style delivery metrics
