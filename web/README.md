@@ -14,6 +14,13 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 * **LLM Auditing Gateway (`Fides-AI`)**: Out-of-the-box support for verifying compliance against natural language parameters using Ollama, llama.cpp, and Google Gemini.
 * **Drift & Shadow Change Detection**: Continuously monitor running containers or server state to find unauthorized shadow deployments and configuration drift.
 * **FDA 21 CFR Part 11 Ready**: Built-in support for time-stamped system log tables, electronic records, and ECDSA signature validation for attestation logs.
+* **Regulated Control Frameworks**: One-command adoption of SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, and SOX control catalogs (`fides control import --framework`), with per-framework, audit-ready reports (`fides report --framework`) and coverage across environments.
+* **Change Gate & Risk Scoring**: An evidence-backed approve/hold verdict with a 0–100 risk score for any change (`fides change-gate`), driven by which controls pass, fail, or lack evidence — and written back onto the matching **ServiceNow Change Request** (work note + risk field). Fides advises; ServiceNow decides.
+* **Segregation of Duties**: First-class approval evidence (`fides approve`) distinguishing human sign-off from machine automation; four-eyes requires two distinct human approvers, and the change gate will not recommend approval without a human review.
+* **Tenant Isolation (RLS)**: Defense-in-depth Postgres Row-Level Security enforced at the database layer — the app runs as a least-privilege role so a tenant only ever sees its own data (`FIDES_RLS_ENABLED`).
+* **WORM Evidence Retention**: Optional S3 Object Lock retention so stored evidence is immutable for a fixed window (`FIDES_OBJECT_LOCK_MODE` + `FIDES_EVIDENCE_RETENTION_DAYS`) — for DORA/SOX.
+* **Git Providers**: Commit-status checks and signed inbound push webhooks for **GitHub, GitLab, Bitbucket, and Azure DevOps**.
+* **Easy Install**: A Helm chart (`charts/fides`) with a one-step seed job, or `scripts/setup-db.sh` — see [docs/setup.md](docs/setup.md).
 
 ---
 
@@ -52,7 +59,7 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 
 ## Model Context Protocol (MCP) Server
 
-Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, and build attestations as LLM-executable tools. It can be integrated into modern AI clients (like Claude Desktop, Cursor, or Antigravity) to enable conversational interactions with your builds, audits, and pipelines.
+Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, artifacts, attestations, controls coverage, and deployment metrics as LLM-executable **tools** — and the Fides documentation as MCP **resources** (`fides://docs/*`) that an assistant can read on demand. It integrates with **Claude Code**, Claude Desktop, Cursor, and other AI clients for conversational interaction with your builds, audits, and pipelines. The binary is also shipped in the server image at `/usr/local/bin/fides-mcp`. See the full guide: [mcp-server.md](mcp-server.md).
 
 ### Configuration for Claude Desktop
 Add the following configuration to your `claude_desktop_config.json` (located at `~/.config/Claude/claude_desktop_config.json` on Linux/macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
@@ -77,4 +84,45 @@ Add the following configuration to your `claude_desktop_config.json` (located at
 - `check_compliance`: Query policies compliance validation status for a specific artifact signature SHA256.
 - `create_flow`: Converse with LLM to register new pipeline flow streams.
 - `create_trail` / `report_artifact` / `report_attestation`: Programmatic inputs to register pipeline activities and evidence.
+
+
+## Web Portal Tour
+
+Fides features a premium, state-of-the-art web portal for security auditors and DevSecOps controllers. Below is a tour of the portal pages:
+
+### 1. Overview Dashboard (Dark & Light Modes)
+The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs.
+- **Dark Mode:**
+  ![Fides Overview Dashboard - Dark Mode](assets/screenshots/screenshot_20260630_151424-region.png)
+- **Light Mode:**
+  ![Fides Overview Dashboard - Light Mode](assets/screenshots/screenshot_20260630_151711-region.png)
+
+### 2. Artifacts & SBOM Management
+Trace built software deliverables and verify SBOM package compatibility. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
+![Artifacts & SBOM Management](assets/screenshots/screenshot_20260630_151450-region.png)
+
+### 3. Environments & MCP Connections
+Monitor active deployment environments (EKS, ECS, etc.) and configure Model Context Protocol (MCP) sensors (e.g. `k8s-sensor`) to query and verify compliance rules directly.
+![Environments & MCP Connections](assets/screenshots/screenshot_20260630_151515-region.png)
+
+### 4. Policies & JQ Rule Configurator
+Configure deterministic compliance gates using JQ rules or let the **LLM Policy Wizard** automatically generate rule configurations based on text-described goals.
+![Policies & JQ Rule Configurator](assets/screenshots/screenshot_20260630_151532-region.png)
+
+### 5. AI Audits & LLM Evaluator Reports
+Review deep risk and compliance assessments generated asynchronously by local or cloud LLMs for every reported attestation.
+![AI Audits & LLM Evaluator Reports](assets/screenshots/screenshot_20260630_151543-region.png)
+
+### 6. Telemetry & OpenTelemetry Metrics
+Gain observability into the Fides API backend, request rates, error rates, DB connection pools, and export data directly to Prometheus `/metrics` or OpenTelemetry scrapers.
+![Telemetry & OpenTelemetry Metrics](assets/screenshots/screenshot_20260630_151558-region.png)
+
+### 7. Settings & SSO Group Mappings
+Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group claims), and define roles.
+![Settings & SSO Group Mappings](assets/screenshots/screenshot_20260630_151619-region.png)
+
+### 8. Help & Documentation Center
+A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
+![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
+
 
