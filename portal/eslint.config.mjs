@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Monaco's minified AMD build is copied here by the prebuild step; never lint it.
+    "public/monaco/**",
   ]),
 ]);
 
