@@ -670,15 +670,30 @@ curl "http://localhost:8191/api/v1/attestations/<attestation-id>"
 ```
 
 The Artifacts SBOM panel only has real components to show if the pipeline attests
-an actual SBOM document. Note that `fides attest` parses `junit`, `snyk`, and
-`trivy` reports as first-class subcommands; an SBOM is attested with the generic
-form, naming it `sbom` (so it surfaces in the Artifacts panel) and typing it
-`sbom-cyclonedx` (so it satisfies the SBOM control's evidence requirement):
+an actual SBOM document. `fides attest` parses `junit`, `snyk`, `trivy`, and
+`sbom` reports as first-class subcommands. `fides attest sbom` auto-detects
+CycloneDX vs SPDX JSON, normalizes every component (name, version, purl,
+licenses), and persists them linked to the artifact — powering
+`fides search components` ("which artifacts contain component X?"). It records
+the attestation named `sbom` and typed `sbom-cyclonedx` (so it satisfies the
+SBOM control's evidence requirement, regardless of the source format):
 
 ```bash
 # Produce a real CycloneDX SBOM from the image, then attest it.
 syft myorg/auth-service:1.4.2 -o cyclonedx-json > sbom.json
 
+fides attest sbom \
+  --artifact-sha $DIGEST \
+  --file sbom.json
+  # --trail is optional here — it is resolved from the artifact.
+
+# Which artifacts (across every trail) bundle a vulnerable lodash version?
+fides search components --purl pkg:npm/lodash@4.17.20
+```
+
+Older pipelines that attested SBOMs via the generic form still work unchanged:
+
+```bash
 fides attest \
   --trail $TRAIL \
   --artifact-sha $DIGEST \

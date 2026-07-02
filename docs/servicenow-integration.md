@@ -84,7 +84,43 @@ same alert instead of creating new ones.
    attestation on the trail, and emits `compliance.evaluated` — so `fides
    assert` and the GitHub/GitLab commit-status gate both reflect it.
 
-## 6. CMDB deployment anchoring (change close / deploy)
+## 6. Change↔Control linkage
+
+Gating a deploy on an approved change (§5) proves the change happened; it
+doesn't record *which control* the change satisfied, or *what evidence*
+proved it. `link-control` closes that gap: it records, on the Fides side,
+that change `CHGxxxx` implemented control `<key>` via a specific attestation
+(evidence) at a point in time — then writes that same reference back onto the
+ServiceNow `change_request` (a work note, plus best-effort `u_fides_control` /
+`u_fides_attestation_id` / `u_fides_attested_at` fields if your instance has
+added them), so an auditor reading the change in ServiceNow can trace
+straight to the Fides evidence.
+
+```bash
+fides servicenow link-control \
+  --trail "$TRAIL_UUID" \
+  --change CHG0030192 \
+  --control SOC2-CC7.1
+  # --attestation <id> optional — defaults to the trail's most recent attestation
+```
+
+or via the API:
+
+```bash
+curl -X POST https://<fides>/api/v1/servicenow/link-control \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"trail_id":"'$TRAIL_UUID'","change_number":"CHG0030192","control":"SOC2-CC7.1"}'
+```
+
+The Fides-side linkage (`change_control_links`) is always persisted, even if
+ServiceNow is unreachable or unconfigured — the response's
+`servicenow_written` field (plus `servicenow_message` when `false`) reports
+whether the change_request write-back succeeded, so pipelines can gate on the
+Fides record regardless of ServiceNow availability. Re-linking the same
+trail/control/change upserts in place (idempotent).
+
+## 7. CMDB deployment anchoring (change close / deploy)
 
 Proves the artifact that was actually deployed matches change intent by
 attaching the signed deployment attestation — image digest, commit, build log
@@ -115,13 +151,26 @@ it's what the change actually authorized), or by name via `--ci`/`ci`. Fides:
    as a CI attachment via the Attachment API and posts a short summary onto the
    CI record.
 
-## 7. MCP tools (developer agents)
+## 8. MCP tools (developer agents)
 
 `fides-mcp` exposes:
 
 - `get_change_request_status` — `GET /api/v1/servicenow/change-status`
 - `create_compliance_incident` — `POST /api/v1/servicenow/incident`
 - `search_cmdb_ci` — `GET /api/v1/servicenow/cmdb`
+
+## 9. DevGovOps spoke (packaging artifacts)
+
+ServiceNow-side packaging artifacts — a signature-verifying Scripted REST API, an
+IntegrationHub spoke / Flow Designer action spec, and a Now Assist grounding
+guide — live under [`servicenow/`](servicenow/) (epic #216):
+
+- [`servicenow/hmac-webhook-verification.md`](servicenow/hmac-webhook-verification.md)
+  — verify the Fides `X-Fides-Signature` HMAC on inbound webhooks (#229).
+- [`servicenow/flow-designer-actions.md`](servicenow/flow-designer-actions.md)
+  — "Attach Fides evidence", "Require Fides gate", "Anchor deployment in CMDB" (#232).
+- [`servicenow/now-assist-grounding.md`](servicenow/now-assist-grounding.md)
+  — ground Now Assist change-risk predictions on signed Fides evidence (#233).
 
 ## Testing
 

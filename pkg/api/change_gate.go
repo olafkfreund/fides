@@ -157,5 +157,11 @@ func (s *Server) handleChangeGate(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	// Refresh the segregation-of-duties evidence (committer != approver !=
+	// deployer) as part of the gate evaluation. Best-effort: never fails the
+	// gate verdict the caller is waiting on.
+	if sod := s.emitSegregationOfDutiesAttestation(r.Context(), orgID, trailID); sod != nil {
+		out["segregation_of_duties"] = sod
+	}
 	writeJSON(w, out)
 }

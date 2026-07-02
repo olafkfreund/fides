@@ -2,9 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -45,6 +43,16 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Signed evidence bundle: the tamper-evident hash-chain verdict, artifact
+	// digests, and per-type attestation counts backing the verdict above.
+	// Fides advises with cryptographic evidence; ServiceNow still decides.
+	bundle, err := s.computeEvidenceBundle(r.Context(), trailID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	gate["evidence_bundle"] = bundle
+
 	cfg, enabled, err := servicenow.NewDBLoader(s.DB, s.Secrets).ServiceNowConfig(r.Context(), orgID)
 	if err != nil || !enabled {
 		http.Error(w, "ServiceNow is not configured for this organization", http.StatusBadRequest)
@@ -80,7 +88,7 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 		riskField = "3"
 	}
 
-	note := buildGateNote(gate)
+	note := servicenow.BuildChangeGateNote(gate)
 	if _, err := client.UpdateRecord(r.Context(), "change_request", sysID, map[string]any{
 		"work_notes": note,
 		"risk":       riskField,
@@ -104,26 +112,4 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 		"risk_score":     gate["risk_score"],
 		"gate":           gate,
 	})
-}
-
-func buildGateNote(gate map[string]any) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "Fides Change Gate — recommendation: %v (risk %v / %v)\n%v\n",
-		gate["recommendation"], gate["risk_score"], gate["risk_level"], gate["summary"])
-	if passed, ok := gate["passed"].([]string); ok && len(passed) > 0 {
-		fmt.Fprintf(&b, "Passed controls: %s\n", strings.Join(passed, ", "))
-	}
-	if failed, ok := gate["failed"].([]map[string]any); ok && len(failed) > 0 {
-		b.WriteString("Failed controls:\n")
-		for _, f := range failed {
-			fmt.Fprintf(&b, "  - %v (%v): %v\n", f["control"], f["name"], f["reasons"])
-		}
-	}
-	if missing, ok := gate["missing_evidence"].([]map[string]any); ok && len(missing) > 0 {
-		b.WriteString("Missing evidence:\n")
-		for _, m := range missing {
-			fmt.Fprintf(&b, "  - %v (%v): %v\n", m["control"], m["name"], m["reasons"])
-		}
-	}
-	return b.String()
 }

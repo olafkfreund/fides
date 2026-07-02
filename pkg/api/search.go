@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // handleSearchArtifacts filters artifacts by SHA prefix, git commit, or name.
@@ -94,6 +96,50 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 	writeJSON(w, out)
 }
 
+// handleSearchComponents filters SBOM components by purl, artifact SHA256, or
+// name substring — answering "which artifacts contain component X" (fides
+// search components --purl <p> [--artifact <sha>] [--name <substr>]).
+func (s *Server) handleSearchComponents(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	purl := r.URL.Query().Get("purl")
+	artifact := r.URL.Query().Get("artifact")
+	name := r.URL.Query().Get("name")
+
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT sc.id, sc.artifact_sha256, a.name, a.type, sc.name, sc.version, sc.purl, sc.licenses, sc.created_at
+		 FROM sbom_components sc JOIN artifacts a ON a.sha256 = sc.artifact_sha256
+		 WHERE sc.org_id = $1
+		   AND ($2 = '' OR sc.purl = $2)
+		   AND ($3 = '' OR sc.artifact_sha256 = $3)
+		   AND ($4 = '' OR sc.name ILIKE '%' || $4 || '%')
+		 ORDER BY sc.created_at DESC LIMIT 200`, orgID, purl, artifact, name)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id uuid.UUID
+		var artifactSHA, artifactName, artifactType, compName, version, compPurl string
+		var licenses []string
+		var created interface{}
+		if err := rows.Scan(&id, &artifactSHA, &artifactName, &artifactType, &compName, &version, &compPurl, pq.Array(&licenses), &created); err != nil {
+			internalError(w, err)
+			return
+		}
+		out = append(out, map[string]any{
+			"id": id, "artifact_sha256": artifactSHA, "artifact_name": artifactName, "artifact_type": artifactType,
+			"name": compName, "version": version, "purl": compPurl, "licenses": licenses, "created_at": created,
+		})
+	}
+	writeJSON(w, out)
+}
+
 // handleGetAttestation returns a single attestation with its full evidence
 // payload and signing/tamper-evidence metadata (tenant-scoped). Powers the
 // artifact/attestation detail views. The payload is JSONB, returned verbatim.
@@ -168,29 +214,45 @@ func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	from, to := r.URL.Query().Get("from"), r.URL.Query().Get("to")
-	if from == "" || to == "" {
-		// Default to the two most recent snapshots.
-		ids, err := s.recentSnapshotIDs(r, envID)
-		if err != nil {
-			internalError(w, err)
+	diff, err := s.diffSnapshots(r.Context(), envID, from, to)
+	if err != nil {
+		if errors.Is(err, errNeedTwoSnapshots) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, diff)
+}
+
+// errNeedTwoSnapshots is returned by diffSnapshots when an environment has
+// fewer than two snapshots and no explicit from/to was given.
+var errNeedTwoSnapshots = errors.New("need at least two snapshots to diff")
+
+// diffSnapshots computes the added/removed/changed services between two
+// snapshots of an environment (defaulting to the two most recent). Shared by
+// the HTTP diff endpoint and the post-approval drift re-evaluation path.
+func (s *Server) diffSnapshots(ctx context.Context, envID uuid.UUID, from, to string) (map[string]any, error) {
+	if from == "" || to == "" {
+		// Default to the two most recent snapshots.
+		ids, err := s.recentSnapshotIDs(ctx, envID)
+		if err != nil {
+			return nil, err
+		}
 		if len(ids) < 2 {
-			http.Error(w, "need at least two snapshots to diff", http.StatusBadRequest)
-			return
+			return nil, errNeedTwoSnapshots
 		}
 		to, from = ids[0], ids[1] // ids[0] is newest
 	}
 
-	fromMap, err := s.snapshotServices(r, from)
+	fromMap, err := s.snapshotServices(ctx, from)
 	if err != nil {
-		internalError(w, err)
-		return
+		return nil, err
 	}
-	toMap, err := s.snapshotServices(r, to)
+	toMap, err := s.snapshotServices(ctx, to)
 	if err != nil {
-		internalError(w, err)
-		return
+		return nil, err
 	}
 
 	added, removed := []map[string]string{}, []map[string]string{}
@@ -207,11 +269,11 @@ func (s *Server) handleSnapshotDiff(w http.ResponseWriter, r *http.Request) {
 			removed = append(removed, map[string]string{"service": svc, "digest": dig})
 		}
 	}
-	writeJSON(w, map[string]any{"from": from, "to": to, "added": added, "removed": removed, "changed": changed})
+	return map[string]any{"from": from, "to": to, "added": added, "removed": removed, "changed": changed}, nil
 }
 
-func (s *Server) recentSnapshotIDs(r *http.Request, envID uuid.UUID) ([]string, error) {
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+func (s *Server) recentSnapshotIDs(ctx context.Context, envID uuid.UUID) ([]string, error) {
+	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT id FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 2`, envID)
 	if err != nil {
 		return nil, err
@@ -228,12 +290,12 @@ func (s *Server) recentSnapshotIDs(r *http.Request, envID uuid.UUID) ([]string, 
 	return ids, nil
 }
 
-func (s *Server) snapshotServices(r *http.Request, snapshotID string) (map[string]string, error) {
+func (s *Server) snapshotServices(ctx context.Context, snapshotID string) (map[string]string, error) {
 	sid, err := uuid.Parse(snapshotID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT service_name, runtime_digest FROM snapshot_artifacts WHERE snapshot_id = $1`, sid)
 	if err != nil {
 		return nil, err
