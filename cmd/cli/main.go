@@ -127,7 +127,8 @@ func printUsage() {
 	fmt.Println("Commands:")
 	fmt.Println("  trail start      Initialize a new build trail")
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
-	fmt.Println("  attest           Report custom evidence, or a junit/snyk/trivy report (fides attest junit --file ...)")
+	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy report, or ingest GitHub/GitLab")
+	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
 	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check)")
@@ -255,6 +256,11 @@ func handleAttest(config CLIConfig, args []string) {
 	// Format-specific evidence: `fides attest junit|snyk|trivy --file <report> --trail <id>`.
 	if len(args) > 0 && isEvidenceFormat(args[0]) {
 		handleAttestEvidence(config, args[0], args[1:])
+		return
+	}
+	// Platform-native provenance ingest: `fides attest fetch --provider github|gitlab ...`.
+	if len(args) > 0 && args[0] == "fetch" {
+		handleAttestFetch(config, args[1:])
 		return
 	}
 
