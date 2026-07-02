@@ -191,6 +191,9 @@ bracket matching, line numbers) with two actions:
   LLM; falls back to a deterministic validate-and-format when no LLM is set),
   showing review notes below the editor.
 
+The editor is resizable (drag the bottom edge) and has an **Expand** toggle for a
+near-fullscreen view.
+
 ## 16. AI tools — the Fides MCP server (`fides-mcp`)
 
 Fides ships a Model Context Protocol server so **Claude Code**, Cursor, and Claude
@@ -241,11 +244,15 @@ fides approve --trail <trail-id> --reason "reviewed by platform lead"
   field). Fides advises; ServiceNow decides.
 - **Segregation of duties**: the gate will not recommend approval without at least
   one human approval; a missing sign-off raises the risk score.
-- **Portal**: the **Controls** page shows per-control coverage bars and a one-click
-  **Enforce** button (pick an environment, or *All environments*) that creates the
-  backing environment policy — the coverage bar moves immediately. The **Dashboard**
-  top stat cards are clickable and deep-link to their source (e.g. *Active Alerts* →
-  non-compliant attestations, *Tracked Artifacts* → the artifacts list).
+- **Portal**: the **Controls** page opens on an at-a-glance summary (control count,
+  average coverage, fully-covered vs gaps) with coverage **grouped by framework**
+  (least-covered first). **Click a control** to drill into its required evidence
+  types and **per-environment enforcement** — enforce it in one environment or
+  everywhere with a button; the backing environment policy is created and coverage
+  updates immediately. Adopting a framework and adding custom controls live in a
+  collapsible "Add or import controls" section. The **Dashboard** top stat cards are
+  clickable and deep-link to their source (e.g. *Active Alerts* → non-compliant
+  attestations, *Tracked Artifacts* → the artifacts list).
 
 ## 18. Tenant isolation, WORM retention & git providers
 
