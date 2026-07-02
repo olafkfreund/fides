@@ -13,11 +13,57 @@ Fides tracks and validates software deliverables from source code commits to run
 
 ### Core Modules
 
-* **Fides CLI (`fides`)**: Statically compiled cross-platform CLI tool that runs in CI/CD runners or server hosts.
-* **Fides Core API Server**: Orchestrates data models, manages vaults and storage systems, and evaluates policy rules.
-* **LLM Verification Gateway (`Fides-AI`)**: Leverages natural language models (Ollama, llama.cpp, Google Gemini) to check licenses, scan for credentials, and assess compliance risks.
-* **Management Web Portal**: React dashboard for configuring environments, policies, and viewing compliance states.
-* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance data as tools **and the Fides docs as resources** to AI clients like **Claude Code**, Cursor, and Claude Desktop. See the [MCP server guide](/mcp-server.html).
+* **Fides CLI (`fides`)**: Statically compiled cross-platform CLI tool that runs in CI/CD runners or server hosts. Commands span `trail`/`artifact`/`attest`, `verify-chain`, `assert`, `change-gate`, `allowlist`, `control import|coverage|enforce`, `report`, and `metrics`.
+* **Fides Core API Server**: Orchestrates data models, manages vaults and storage systems, evaluates policy rules, and serves the portal, the governance APIs, and the AI endpoints (e.g. `POST /api/v1/ai/lint-policy`).
+* **LLM Verification Gateway (`Fides-AI`)**: Leverages natural language models (Ollama, llama.cpp, Google Gemini) to check licenses, scan for credentials, assess compliance risks, and power the portal's "Check & fix" policy linter and scored AI audit reports.
+* **Management Web Portal**: Next.js static export served by the Go server — clickable dashboard KPI cards, redesigned Controls & Coverage, a Monaco policy editor, SBOM/attestation drill-down, AI audits, telemetry charts, and a voice-enabled AI Assistant.
+* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance data as **15 tools** **and the Fides docs as resources** to AI clients like **Claude Code**, Cursor, and Claude Desktop. See the [MCP server guide](/mcp-server.html).
+* **In-browser WebMCP**: The portal registers Fides tools directly in the browser via the native `document.modelContext` API (with the `@mcp-b/global` polyfill fallback), so browser agents and local LLMs can drive Fides from the same session the auditor is using.
+
+### High-Level Architecture
+
+<pre class="mermaid">
+graph TD
+    subgraph CLIENTS ["Producers & Clients"]
+        CLI[Fides CLI]
+        CI[CI/CD Pipeline<br/>GitHub / GitLab]
+        AITOOLS[AI Clients<br/>Claude Code / Cursor]
+        BROWSER[Browser Agents<br/>& Local LLMs]
+    end
+
+    subgraph FIDES ["Fides Control Plane"]
+        API[Fides Core API Server]
+        AI[Fides-AI LLM Gateway]
+        MCP[fides-mcp Server]
+        PORTAL[Web Portal<br/>+ In-browser WebMCP]
+    end
+
+    subgraph DATA ["State & Evidence"]
+        PG[(PostgreSQL<br/>RLS + WORM metadata)]
+        OBJ[(Object Store<br/>S3 / GCS)]
+    end
+
+    subgraph SINKS ["Integration Sinks"]
+        SNOW[ServiceNow<br/>change-gate write-back]
+        SLACK[Slack]
+        GIT[GitHub / GitLab<br/>commit-status]
+        HOOKS[Webhooks]
+    end
+
+    CLI --> API
+    CI --> CLI
+    AITOOLS --> MCP
+    MCP --> API
+    BROWSER --> PORTAL
+    PORTAL --> API
+    API --> AI
+    API --> PG
+    API --> OBJ
+    API --> SNOW
+    API --> SLACK
+    API --> GIT
+    API --> HOOKS
+</pre>
 
 ---
 
@@ -188,15 +234,21 @@ graph TD
 
 ## 6. Built-in MCP Server (`fides-mcp`)
 
-Fides includes a built-in **Model Context Protocol (MCP)** server enabling AI tools to inspect and interact with the compliance registry.
+Fides includes a built-in **Model Context Protocol (MCP)** server (`fides-mcp`) exposing **15 tools** plus the Fides docs as MCP resources (`fides://docs/*`), enabling AI tools to inspect and interact with the compliance registry.
 
-### Supported Tools
+### Supported Tools (selection)
 
-* `list_flows`: Fetch compliance pipelines.
-* `list_environments`: Retrieve runtime snapshots and configuration drifts.
-* `list_policies`: Fetch JQ rules.
+* `list_flows` / `list_environments` / `list_policies`: Fetch pipelines, runtime snapshots, and JQ rules.
 * `check_compliance`: Run rule evaluation against artifact SHA256s.
-* `create_flow`: Programmatically register pipeline flows.
+* `search_artifacts` / `search_attestations`: Query evidence and signed attestations.
+* `get_controls_coverage`: Report control coverage across frameworks.
+* `get_deployment_frequency`: DORA deployment-frequency metrics.
+* ServiceNow + provenance-recording tools for change-gate write-back and trail capture.
+
+### Two ways AI drives Fides
+
+* **`fides-mcp` (out-of-browser)** — shipped in the image at `/usr/local/bin/fides-mcp` for Claude Code, Cursor, and Claude Desktop.
+* **In-browser WebMCP** — the portal registers the same Fides tools via the native `document.modelContext` API (with the `@mcp-b/global` polyfill fallback), so browser agents and local LLMs can act inside the auditor's authenticated session.
 
 
 ## 7. Regulated Compliance & Governance
@@ -212,43 +264,70 @@ Fides maps evidence to the controls of the frameworks regulated enterprises answ
 
 Git coverage spans **GitHub, GitLab, Bitbucket, and Azure DevOps**. Install with the Helm chart (`charts/fides`) or `scripts/setup-db.sh` — see [Setup & Seeding](setup.md) and the [CLI Reference](cli-reference.md).
 
+### Change-Gate & Segregation-of-Duties Flow
+
+The change gate turns collected evidence into an approve/hold verdict with a 0–100 risk score, requires a human sign-off before recommending approval (four-eyes needs two distinct approvers), and writes the verdict back to the matching ServiceNow Change Request.
+
+<pre class="mermaid">
+flowchart TD
+    Start([fides change-gate --trail id]) --> Collect[Collect Evidence<br/>attestations + control mappings]
+    Collect --> Rules{Evaluate Policy Rules<br/>+ Control Coverage}
+    Rules -->|Rules fail / evidence missing| Hold[Verdict: HOLD<br/>high risk score]
+    Rules -->|Rules pass| Risk[Compute Risk Score 0-100]
+    Risk --> SoD{Human Approval Present?<br/>fides approve}
+    SoD -->|No approval| Hold
+    SoD -->|Single approver, four-eyes required| Hold
+    SoD -->|Distinct human approver s| Approve[Verdict: APPROVE]
+    Approve --> Writeback[Write verdict + risk to<br/>ServiceNow Change Request]
+    Hold --> Writeback
+    Writeback --> Deploy{Verdict}
+    Deploy -->|APPROVE| Go[Allow Deployment]
+    Deploy -->|HOLD| Stop[Block Deployment]
+</pre>
+
 
 ## Web Portal Tour
 
 Fides features a premium, state-of-the-art web portal for security auditors and DevSecOps controllers. Below is a tour of the portal pages:
 
 ### 1. Overview Dashboard (Dark & Light Modes)
-The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs.
+The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs. Every **KPI card is clickable** and deep-links straight to the underlying source records.
 - **Dark Mode:**
   ![Fides Overview Dashboard - Dark Mode](assets/screenshots/screenshot_20260630_151424-region.png)
 - **Light Mode:**
   ![Fides Overview Dashboard - Light Mode](assets/screenshots/screenshot_20260630_151711-region.png)
 
-### 2. Artifacts & SBOM Management
-Trace built software deliverables and verify SBOM package compatibility. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
+### 2. Controls & Coverage
+A redesigned Controls & Coverage view: a coverage summary, **per-framework grouping** (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX), and **click-to-drill** into per-environment enforcement for each control. Enforce a control across an environment with a single **one-click Enforce** action.
+
+### 3. Artifacts, SBOM & Attestation Drill-down
+Trace built software deliverables and drill into their SBOM: parsed **CycloneDX / SPDX / Syft** components, licenses, and vulnerabilities. Opening an attestation (`GET /api/v1/attestations/{id}`) returns the full evidence payload plus signing and tamper-evidence metadata.
 ![Artifacts & SBOM Management](assets/screenshots/screenshot_20260630_151450-region.png)
 
-### 3. Environments & MCP Connections
+### 4. Environments & MCP Connections
 Monitor active deployment environments (EKS, ECS, etc.) and configure Model Context Protocol (MCP) sensors (e.g. `k8s-sensor`) to query and verify compliance rules directly.
 ![Environments & MCP Connections](assets/screenshots/screenshot_20260630_151515-region.png)
 
-### 4. Policies & JQ Rule Configurator
-Configure deterministic compliance gates using JQ rules or let the **LLM Policy Wizard** automatically generate rule configurations based on text-described goals.
+### 5. Policies Editor (Monaco + AI)
+Author deterministic compliance gates in a full **Monaco editor** with **Format** and an AI **"Check & fix"** action (`POST /api/v1/ai/lint-policy`) that validates and repairs rule configurations, or let the **LLM Policy Wizard** generate rules from text-described goals.
 ![Policies & JQ Rule Configurator](assets/screenshots/screenshot_20260630_151532-region.png)
 
-### 5. AI Audits & LLM Evaluator Reports
-Review deep risk and compliance assessments generated asynchronously by local or cloud LLMs for every reported attestation.
+### 6. AI Audits & LLM Evaluator Reports
+Review deep, **parsed and scored** risk/compliance assessments generated asynchronously by local or cloud LLMs for every reported attestation.
 ![AI Audits & LLM Evaluator Reports](assets/screenshots/screenshot_20260630_151543-region.png)
 
-### 6. Telemetry & OpenTelemetry Metrics
-Gain observability into the Fides API backend, request rates, error rates, DB connection pools, and export data directly to Prometheus `/metrics` or OpenTelemetry scrapers.
+### 7. Telemetry & OpenTelemetry Metrics
+Gain observability into the Fides API backend with telemetry charts — request rates, error rates, DB connection pools — and export directly to Prometheus `/metrics` or OpenTelemetry scrapers.
 ![Telemetry & OpenTelemetry Metrics](assets/screenshots/screenshot_20260630_151558-region.png)
 
-### 7. Settings & SSO Group Mappings
+### 8. AI Assistant (Voice-enabled)
+A built-in **AI Assistant** with **voice input and spoken replies**, backed by the same Fides tools exposed through in-browser WebMCP so agents can act within the authenticated session.
+
+### 9. Settings & SSO Group Mappings
 Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group claims), and define roles.
 ![Settings & SSO Group Mappings](assets/screenshots/screenshot_20260630_151619-region.png)
 
-### 8. Help & Documentation Center
+### 10. Help & Documentation Center
 A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
 ![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
 

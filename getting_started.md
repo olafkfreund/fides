@@ -28,6 +28,8 @@ Verify the installation:
 ./fides --help
 ```
 
+> **Tip:** Once the server is running, open the **web portal** at `http://localhost:8080` to watch trails, artifacts, and control coverage appear live as you run the CLI below. The same actions are available conversationally through the built-in AI Assistant / `fides-mcp` MCP server.
+
 ---
 
 ## 2. Bootstrapping Your First Flow (CLI Walkthrough)
@@ -60,6 +62,44 @@ Define the compliance parameters for vulnerability scans. For example, a custom 
 curl -X POST http://localhost:8080/api/v1/attestation-types \
   -H "Content-Type: application/json" \
   -d "{\"org_id\": \"$ORG_ID\", \"name\": \"snyk-scan\", \"description\": \"Snyk Vulnerability Scan Rule\", \"jq_rules\": [\".vulnerabilities.critical == 0\"]}"
+```
+
+### Step 3: Attest, Verify, and Gate a Change
+With a trail open and an artifact reported, attach evidence, prove the chain is intact, and ask for a release verdict:
+```bash
+# Attach evidence (many types supported: junit, snyk, trivy, sbom-cyclonedx,
+# secret-scan, sast, iac, ...)
+fides attest --trail $TRAIL_ID --artifact-sha $DIGEST \
+  --name "snyk-vulnerabilities" --type "snyk-scan" --payload snyk-summary.json
+
+# Verify the tamper-evident attestation chain for the artifact
+fides verify-chain --sha256 $DIGEST
+
+# Deterministic policy gate (exits non-zero if non-compliant)
+fides assert --sha256 $DIGEST --policy "production-release-rules"
+
+# Evidence- and risk-backed verdict (exits 2 on HOLD); with ServiceNow
+# configured, the verdict is written back onto the matching Change Request
+fides change-gate --sha256 $DIGEST --environment "production"
+```
+
+### Step 4: Adopt & Enforce Regulated Controls
+Import a framework catalog, review coverage, and enforce a control on an environment — the CLI equivalent of the portal's **Controls & Coverage** page (grouped, drill-down, one-click **Enforce**):
+```bash
+# Import a control catalog (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)
+fides control import --framework soc2
+
+# See which controls are covered across environments
+fides control coverage --environment "production"
+
+# Enforce a control so releases are gated on it
+fides control enforce --environment "production" --control CC7.2
+
+# Generate an audit-ready, per-framework report
+fides report --framework soc2
+
+# DORA-style delivery metrics
+fides metrics deployment-frequency --weeks 4
 ```
 
 ---

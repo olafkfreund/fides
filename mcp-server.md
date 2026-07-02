@@ -61,6 +61,59 @@ them on demand (`resources/list` + `resources/read`):
 - `fides://docs/aws-secrets-manager` — secrets
 - `fides://docs/architecture_proposal` — architecture
 
+## In-browser WebMCP
+
+Separately from the standalone `fides-mcp` server, the **Fides portal registers
+its capabilities with the browser's WebMCP surface**. This lets
+browser-integrated AI agents and local LLMs/assistants drive Fides directly from
+the page, using the **logged-in session** — no separate server or token needed.
+
+### Transport
+
+The portal prefers the native **W3C `document.modelContext.registerTool(...)`**
+API where the browser exposes it (currently a Chrome origin trial). Where that is
+unavailable, it falls back to the [`@mcp-b/global`](https://www.npmjs.com/package/@mcp-b/global)
+polyfill (`navigator.modelContext`). If the browser supports neither, registration
+**no-ops** — the portal keeps working normally.
+
+Registration happens **automatically once the portal is authenticated**; there is
+nothing to install or configure.
+
+### Tools exposed
+
+Each tool calls the **same-origin, cookie-authenticated** Fides API using the
+current user's session, so an agent only sees what the signed-in user is allowed
+to see.
+
+**Read-only**
+
+| Tool | What it does |
+|------|--------------|
+| `fides_list_flows` | List pipelines |
+| `fides_list_environments` | List runtime environments |
+| `fides_list_policies` | List policies |
+| `fides_controls_coverage` | Governance controls + per-environment coverage |
+| `fides_search_artifacts` | Find artifacts by name / SHA prefix / git commit |
+| `fides_search_attestations` | Find attestations by evidence type / compliance status |
+| `fides_deployment_frequency` | Weekly deployment frequency per environment |
+| `fides_compliance_summary` | Overall compliance summary |
+
+**Safe actions**
+
+| Tool | What it does |
+|------|--------------|
+| `fides_enforce_control` | Enforce a control (`control` + `environment_id`, or `all`) |
+| `fides_import_framework` | Import a controls `framework` |
+
+### WebMCP vs. the `fides-mcp` server
+
+| | `fides-mcp` server | In-browser WebMCP |
+|---|---|---|
+| Where it runs | Standalone MCP server (stdio binary) | Inside the portal browser tab |
+| Clients | Claude Code, Claude Desktop, Cursor | Browser-integrated AI agents, local LLMs/assistants |
+| Auth | Service-account API token (`FIDES_API_TOKEN`) | The user's existing portal session (cookie) |
+| Setup | Configure `.mcp.json` + issue a key | Automatic once you're logged in |
+
 ## Try it in Claude Code
 
 > "Using the fides tools, list our environments and their controls coverage, then

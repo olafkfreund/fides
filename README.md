@@ -20,7 +20,25 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 * **Tenant Isolation (RLS)**: Defense-in-depth Postgres Row-Level Security enforced at the database layer — the app runs as a least-privilege role so a tenant only ever sees its own data (`FIDES_RLS_ENABLED`).
 * **WORM Evidence Retention**: Optional S3 Object Lock retention so stored evidence is immutable for a fixed window (`FIDES_OBJECT_LOCK_MODE` + `FIDES_EVIDENCE_RETENTION_DAYS`) — for DORA/SOX.
 * **Git Providers**: Commit-status checks and signed inbound push webhooks for **GitHub, GitLab, Bitbucket, and Azure DevOps**.
+* **Multi-Tenant Go API + Postgres**: A single Go compliance API backed by multi-tenant PostgreSQL with embedded, self-applying migrations (no separate migration step on boot).
 * **Easy Install**: A Helm chart (`charts/fides`) with a one-step seed job, or `scripts/setup-db.sh` — see [docs/setup.md](docs/setup.md).
+
+---
+
+## Command-Line Interface (`fides`)
+
+The statically compiled `fides` CLI drives the full evidence lifecycle from any pipeline:
+
+* **`fides trail start`** — open a build trail bound to a flow, repository, commit, and branch.
+* **`fides artifact report`** — register a built artifact by its SHA256 digest for supply-chain provenance.
+* **`fides attest`** — attach signed evidence of many kinds: `junit`, `snyk`, `trivy`, `sbom-cyclonedx`, `secret-scan`, `sast`, `iac`, and more (with `--encrypt` and Evidence Vault attachments).
+* **`fides verify-chain`** — validate the tamper-evident attestation chain for a trail or artifact.
+* **`fides assert`** — deterministic policy gate; exits non-zero when an artifact is non-compliant.
+* **`fides change-gate`** — evidence- and risk-backed approve/hold verdict with a 0–100 risk score; exits `2` on hold and can write the verdict back to ServiceNow.
+* **`fides allowlist`** — manage per-environment allow-lists of approved artifacts and rules.
+* **`fides control import|coverage|enforce`** — import framework control catalogs, report coverage, and enforce controls across environments.
+* **`fides report --framework`** — generate per-framework, audit-ready reports (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX).
+* **`fides metrics deployment-frequency`** — DORA-style delivery metrics.
 
 ---
 
@@ -82,8 +100,15 @@ Add the following configuration to your `claude_desktop_config.json` (located at
 - `list_environments`: List runtime environment snapshots, active services, and drifts.
 - `list_policies`: Fetch compliance policies and JQ release gate rules.
 - `check_compliance`: Query policies compliance validation status for a specific artifact signature SHA256.
+- `search_artifacts` / `search_attestations`: Query recorded artifacts and evidence.
+- `get_controls_coverage`: Report control coverage across frameworks and environments.
+- `get_deployment_frequency`: Return DORA-style delivery metrics.
 - `create_flow`: Converse with LLM to register new pipeline flow streams.
 - `create_trail` / `report_artifact` / `report_attestation`: Programmatic inputs to register pipeline activities and evidence.
+- ServiceNow tools for reading change events and driving change-gate write-back.
+
+### WebMCP (in-browser)
+Beyond the standalone `fides-mcp` binary, the portal ships an in-browser **WebMCP** endpoint so browser agents and local LLMs can drive Fides directly from the authenticated web session — no separate client install required.
 
 
 ## Web Portal Tour
@@ -91,22 +116,25 @@ Add the following configuration to your `claude_desktop_config.json` (located at
 Fides features a premium, state-of-the-art web portal for security auditors and DevSecOps controllers. Below is a tour of the portal pages:
 
 ### 1. Overview Dashboard (Dark & Light Modes)
-The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs.
+The dashboard provides a real-time summary of compliance parameters via **clickable KPI cards** (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) that drill down into the underlying records, alongside workload environment status and audit logs.
 - **Dark Mode:**
   ![Fides Overview Dashboard - Dark Mode](assets/screenshots/screenshot_20260630_151424-region.png)
 - **Light Mode:**
   ![Fides Overview Dashboard - Light Mode](assets/screenshots/screenshot_20260630_151711-region.png)
 
 ### 2. Artifacts & SBOM Management
-Trace built software deliverables and verify SBOM package compatibility. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
+Trace built software deliverables and drill down from an artifact into its SBOM packages and attestation evidence. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
 ![Artifacts & SBOM Management](assets/screenshots/screenshot_20260630_151450-region.png)
+
+### Controls & Coverage
+Adopt regulated control frameworks and see coverage **grouped by control**, drill down into the evidence behind each control, and apply **one-click Enforce** to gate environments on a control — the browser companion to `fides control import|coverage|enforce`.
 
 ### 3. Environments & MCP Connections
 Monitor active deployment environments (EKS, ECS, etc.) and configure Model Context Protocol (MCP) sensors (e.g. `k8s-sensor`) to query and verify compliance rules directly.
 ![Environments & MCP Connections](assets/screenshots/screenshot_20260630_151515-region.png)
 
 ### 4. Policies & JQ Rule Configurator
-Configure deterministic compliance gates using JQ rules or let the **LLM Policy Wizard** automatically generate rule configurations based on text-described goals.
+Author deterministic compliance gates in a **Monaco editor** with syntax highlighting, or let the LLM Policy Wizard's **AI Check & fix** validate and repair your JQ rules from a text-described goal.
 ![Policies & JQ Rule Configurator](assets/screenshots/screenshot_20260630_151532-region.png)
 
 ### 5. AI Audits & LLM Evaluator Reports
@@ -124,5 +152,8 @@ Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group clai
 ### 8. Help & Documentation Center
 A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
 ![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
+
+### 9. AI Assistant (with Voice)
+A conversational AI Assistant is embedded in the portal — including **voice input** — and is backed by the in-browser WebMCP endpoint, so you can query flows, artifacts, controls coverage, and audits or drive Fides actions in natural language without leaving the browser.
 
 
