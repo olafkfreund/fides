@@ -56,6 +56,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | Command | Purpose |
 |---|---|
 | `fides servicenow config\|get\|change-check [...]` | ServiceNow connection + change gate |
+| `fides servicenow link-control --trail <id> --change <CHGxxxx> --control <key> [--attestation <id>]` | Record that a ServiceNow change implemented a Fides control via a specific attestation (writes the reference back onto the change_request) |
 | `fides slack config --secret-path <ref> [--disable]` | Slack notifications |
 | `fides git-provider config --provider <github\|gitlab\|bitbucket\|azure-devops> --host --api-base --token-path [--inbound-secret-path]` | Git provider (commit status + inbound webhooks) |
 | `fides webhook config --name --url --secret-path [--events] [--disable]` | Outbound signed webhook |
