@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { Plus, Trash2, Save, Sparkles, Info, Loader2 } from "lucide-react";
 import { apiGet, apiPost, api } from "@/lib/api";
 
-type Policy = { id: string; name: string; description?: string; rules?: string };
+// The /api/v1/policies list returns rules in `yaml` and the description in `target`
+// (legacy field names). Keep the aliases optional and map them on read.
+type Policy = { id: string; name: string; target?: string; yaml?: string };
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground";
 const mono = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
@@ -22,7 +24,7 @@ export default function Policies() {
   const load = () => apiGet<Policy[]>("/api/v1/policies").then((p) => setPolicies(p || [])).catch((e) => setMsg({ t: String(e.message), ok: false }));
   useEffect(() => { load(); }, []);
 
-  const select = (p: Policy) => { setSel(p); setMode("view"); setEditRules(p.rules || ""); setMsg({ t: "", ok: true }); };
+  const select = (p: Policy) => { setSel(p); setMode("view"); setEditRules(p.yaml || ""); setMsg({ t: "", ok: true }); };
 
   const saveRules = async () => {
     if (!sel) return;
@@ -68,7 +70,7 @@ export default function Policies() {
           {policies.length ? policies.map((p) => (
             <button key={p.id} onClick={() => select(p)} className={`mb-1 block w-full rounded-md px-3 py-2 text-left text-sm ${sel?.id === p.id ? "bg-primary/15 font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}>
               <div className="font-mono">{p.name}</div>
-              {p.description && <div className="truncate text-xs text-muted-foreground">{p.description}</div>}
+              {p.target && <div className="truncate text-xs text-muted-foreground">{p.target}</div>}
             </button>
           )) : <p className="p-3 text-sm text-muted-foreground">No policies yet.</p>}
         </div>
@@ -103,7 +105,7 @@ export default function Policies() {
           ) : sel ? (
             <>
               <div className="flex items-start justify-between">
-                <div><div className="font-mono font-semibold">{sel.name}</div>{sel.description && <div className="text-xs text-muted-foreground">{sel.description}</div>}</div>
+                <div><div className="font-mono font-semibold">{sel.name}</div>{sel.target && <div className="text-xs text-muted-foreground">{sel.target}</div>}</div>
                 <button onClick={del} className="flex items-center gap-1.5 rounded-md border border-red-500/40 px-3 py-1.5 text-xs text-red-400 hover:bg-red-500/10"><Trash2 className="size-3.5" /> Delete</button>
               </div>
               <label className="mt-4 block text-sm"><span className="text-muted-foreground">Rules (jq)</span>
