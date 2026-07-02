@@ -1,7 +1,9 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -53,6 +55,7 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 	}
 	typeName := r.URL.Query().Get("type")
 	compliant := r.URL.Query().Get("compliant") // "", "true", "false"
+	sha := r.URL.Query().Get("sha")             // filter to one artifact's attestations
 	trail := ""
 	if t := r.URL.Query().Get("trail"); t != "" {
 		if _, err := uuid.Parse(t); err != nil {
@@ -69,7 +72,8 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 		   AND ($2 = '' OR at.type_name = $2)
 		   AND ($3 = '' OR at.trail_id = NULLIF($3, '')::uuid)
 		   AND ($4 = '' OR at.is_compliant = ($4 = 'true'))
-		 ORDER BY at.created_at DESC LIMIT 100`, orgID, typeName, trail, compliant)
+		   AND ($5 = '' OR at.artifact_sha256 = $5)
+		 ORDER BY at.created_at DESC LIMIT 100`, orgID, typeName, trail, compliant, sha)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -88,6 +92,56 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 		out = append(out, map[string]any{"id": id, "name": name, "type_name": typ, "is_compliant": isCompliant, "trail_id": trailID, "created_at": created})
 	}
 	writeJSON(w, out)
+}
+
+// handleGetAttestation returns a single attestation with its full evidence
+// payload and signing/tamper-evidence metadata (tenant-scoped). Powers the
+// artifact/attestation detail views. The payload is JSONB, returned verbatim.
+func (s *Server) handleGetAttestation(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid attestation id", http.StatusBadRequest)
+		return
+	}
+	var (
+		name, typeName, signedBy, sigAlgo, manifest, contentHash, artSha string
+		isCompliant                                                      bool
+		payload                                                          []byte
+		created                                                          interface{}
+		trailID                                                          uuid.UUID
+	)
+	err = s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT at.name, at.type_name, at.is_compliant, at.payload,
+		        COALESCE(at.signed_by,''), COALESCE(at.signature_algorithm,''),
+		        COALESCE(at.manifestation_reason,''), COALESCE(at.content_hash,''),
+		        at.created_at, at.trail_id, COALESCE(at.artifact_sha256,'')
+		 FROM attestations at JOIN trails tr ON tr.id = at.trail_id JOIN flows f ON f.id = tr.flow_id
+		 WHERE at.id = $1 AND f.org_id = $2`, id, orgID).
+		Scan(&name, &typeName, &isCompliant, &payload, &signedBy, &sigAlgo, &manifest, &contentHash, &created, &trailID, &artSha)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "attestation not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	// payload is valid JSONB; embed verbatim (fall back to a JSON string if empty).
+	raw := json.RawMessage(payload)
+	if len(payload) == 0 {
+		raw = json.RawMessage(`null`)
+	}
+	writeJSON(w, map[string]any{
+		"id": id, "name": name, "type_name": typeName, "is_compliant": isCompliant,
+		"payload": raw, "signed_by": signedBy, "signature_algorithm": sigAlgo,
+		"manifestation_reason": manifest, "content_hash": contentHash,
+		"created_at": created, "trail_id": trailID, "artifact_sha256": artSha,
+	})
 }
 
 // handleSnapshotDiff compares the running services of two snapshots of an

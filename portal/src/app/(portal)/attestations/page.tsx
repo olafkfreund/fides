@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiGet } from "@/lib/api";
 
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; trail_id: string; created_at?: string };
+type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algorithm?: string; content_hash?: string; artifact_sha256?: string };
 
 const control = "rounded-md border border-border bg-background px-3 py-2 text-sm";
 
@@ -14,7 +15,14 @@ export default function Attestations() {
   const [compliance, setCompliance] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [open, setOpen] = useState<Record<string, AttDetail>>({});
   const [err, setErr] = useState("");
+
+  const toggle = async (id: string) => {
+    if (open[id]) { setOpen((s) => { const n = { ...s }; delete n[id]; return n; }); return; }
+    try { const d = await apiGet<AttDetail>(`/api/v1/attestations/${id}`); setOpen((s) => ({ ...s, [id]: d })); }
+    catch (e) { setErr(String((e as Error).message)); }
+  };
 
   const load = (over?: { type?: string; compliance?: string }) => {
     const t = over?.type ?? type;
@@ -67,18 +75,36 @@ export default function Attestations() {
         </div>
 
         {loading ? <p className="text-sm text-muted-foreground">Loading…</p> : shown.length ? (
-          <div className="flex flex-col">
-            {shown.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0">
-                {a.is_compliant ? <CheckCircle2 className="size-4 shrink-0 text-green-400" /> : <XCircle className="size-4 shrink-0 text-red-400" />}
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">{a.name}</div>
-                  <div className="truncate font-mono text-xs text-muted-foreground">trail {a.trail_id.slice(0, 8)} · {(a.created_at || "").replace("T", " ").slice(0, 19)}</div>
+          <div className="flex flex-col divide-y divide-border">
+            {shown.map((a) => {
+              const d = open[a.id];
+              return (
+                <div key={a.id} className="py-2.5">
+                  <button onClick={() => toggle(a.id)} aria-expanded={!!d} className="flex w-full items-center gap-3 text-left">
+                    <ChevronRight className={`size-4 shrink-0 text-muted-foreground transition-transform ${d ? "rotate-90" : ""}`} />
+                    {a.is_compliant ? <CheckCircle2 className="size-4 shrink-0 text-green-400" /> : <XCircle className="size-4 shrink-0 text-red-400" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{a.name}</div>
+                      <div className="truncate font-mono text-xs text-muted-foreground">trail {a.trail_id.slice(0, 8)} · {(a.created_at || "").replace("T", " ").slice(0, 19)}</div>
+                    </div>
+                    <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{a.type_name}</span>
+                    <span className={`w-24 text-right text-xs font-medium ${a.is_compliant ? "text-green-400" : "text-red-400"}`}>{a.is_compliant ? "Compliant" : "Non-compliant"}</span>
+                  </button>
+                  {d && (
+                    <div className="mt-2 space-y-2 pl-11">
+                      {(d.signed_by || d.content_hash || d.artifact_sha256) && (
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                          {d.artifact_sha256 && <span>artifact <code className="font-mono">{d.artifact_sha256.slice(0, 16)}…</code></span>}
+                          {d.signed_by && <span>signed by <span className="text-foreground">{d.signed_by}</span>{d.signature_algorithm ? ` (${d.signature_algorithm})` : ""}</span>}
+                          {d.content_hash && <span>chain hash <code className="font-mono">{d.content_hash.slice(0, 16)}…</code></span>}
+                        </div>
+                      )}
+                      <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground/90">{d.payload != null ? JSON.stringify(d.payload, null, 2) : "(no payload)"}</pre>
+                    </div>
+                  )}
                 </div>
-                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{a.type_name}</span>
-                <span className={`w-24 text-right text-xs font-medium ${a.is_compliant ? "text-green-400" : "text-red-400"}`}>{a.is_compliant ? "Compliant" : "Non-compliant"}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : <p className="text-sm text-muted-foreground">No attestations match.</p>}
       </div>
