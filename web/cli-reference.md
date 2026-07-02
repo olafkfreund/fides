@@ -30,6 +30,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
+| `fides env diff --env <id> --reevaluate-change CHGxxxx [--from --to]` | Post-approval drift re-evaluation: diffs snapshots and, if drift is detected, escalates the ServiceNow change's risk + posts a work note (exits 2 on drift) |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
 
 ## Controls, frameworks & change gate

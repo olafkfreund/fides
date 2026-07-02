@@ -737,17 +737,31 @@ func handleEnvVerify(config CLIConfig, args []string) {
 	}
 }
 
-// fides env diff --env <id> [--from <snap> --to <snap>]
+// fides env diff --env <id> [--from <snap> --to <snap>] [--reevaluate-change CHGxxxx]
 func handleEnvDiff(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("env diff", flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
 	from := cmd.String("from", "", "from snapshot UUID (default: 2nd most recent)")
 	to := cmd.String("to", "", "to snapshot UUID (default: most recent)")
+	reevaluateChange := cmd.String("reevaluate-change", "", "ServiceNow change number (e.g. CHG0030192); on detected drift, escalates its risk and posts a work note")
 	cmd.Parse(args)
 	if *env == "" {
-		fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>]")
+		fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>] [--reevaluate-change CHGxxxx]")
 		os.Exit(1)
 	}
+
+	if *reevaluateChange != "" {
+		body, err := postRequest(config, "/api/v1/environments/"+*env+"/snapshots/reevaluate-change", map[string]any{
+			"change_number": *reevaluateChange, "from": *from, "to": *to,
+		})
+		fail(err, "drift re-evaluation")
+		fmt.Println(body)
+		if strings.Contains(body, "\"drift_detected\":true") {
+			os.Exit(2) // non-zero so CI/pipelines can react to post-approval drift
+		}
+		return
+	}
+
 	q := neturl.Values{}
 	setIf(q, "from", *from)
 	setIf(q, "to", *to)
