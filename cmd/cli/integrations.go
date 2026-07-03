@@ -157,8 +157,66 @@ func handleServiceNow(config CLIConfig, args []string) {
 		post(config, "/api/v1/servicenow/deployment-anchor", map[string]any{
 			"trail_id": *trail, "change_number": *change, "ci": *ci, "build_log_ref": *buildLog,
 		}, "")
+	case "mcp":
+		handleServiceNowMCP(config, args[1:])
 	default:
-		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|mcp> [flags]")
+		os.Exit(1)
+	}
+}
+
+// handleServiceNowMCP drives the ServiceNow MCP client subcommands: discover
+// MCP servers, do a governed record lookup, and list/call governed tools.
+func handleServiceNowMCP(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides servicenow mcp <servers|lookup|tools|call> [flags]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "servers":
+		body, err := getRequest(config, "/api/v1/servicenow/mcp/servers")
+		fail(err, "list ServiceNow MCP servers")
+		fmt.Println(body)
+	case "lookup":
+		cmd := flag.NewFlagSet("servicenow mcp lookup", flag.ExitOnError)
+		table := cmd.String("table", "", "ServiceNow table, e.g. change_request | cmdb_ci | sn_compliance_control")
+		query := cmd.String("query", "", "encoded query (optional)")
+		limit := cmd.Int("limit", 10, "max records")
+		cmd.Parse(args[1:])
+		if *table == "" {
+			fmt.Println("Error: --table is required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/mcp/lookup", map[string]any{
+			"table": *table, "query": *query, "limit": *limit,
+		}, "")
+	case "tools":
+		cmd := flag.NewFlagSet("servicenow mcp tools", flag.ExitOnError)
+		server := cmd.String("server", "", "MCP server name (default sn_mcp_server_default)")
+		cmd.Parse(args[1:])
+		post(config, "/api/v1/servicenow/mcp/tools", map[string]any{"server": *server}, "")
+	case "call":
+		cmd := flag.NewFlagSet("servicenow mcp call", flag.ExitOnError)
+		server := cmd.String("server", "", "MCP server name (default sn_mcp_server_default)")
+		tool := cmd.String("tool", "", "tool name")
+		argsJSON := cmd.String("args", "", "tool arguments as a JSON object")
+		cmd.Parse(args[1:])
+		if *tool == "" {
+			fmt.Println("Error: --tool is required")
+			os.Exit(1)
+		}
+		payload := map[string]any{"server": *server, "tool": *tool}
+		if *argsJSON != "" {
+			var a any
+			if err := json.Unmarshal([]byte(*argsJSON), &a); err != nil {
+				fmt.Println("Error: --args must be valid JSON:", err)
+				os.Exit(1)
+			}
+			payload["arguments"] = a
+		}
+		post(config, "/api/v1/servicenow/mcp/call", payload, "")
+	default:
+		fmt.Println("Usage: fides servicenow mcp <servers|lookup|tools|call> [flags]")
 		os.Exit(1)
 	}
 }
