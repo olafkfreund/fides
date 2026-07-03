@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -715,6 +716,13 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err = s.q(r.Context()).ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
+		// A duplicate trail name for the flow (UNIQUE(flow_id, name)) is a
+		// client error, not a server fault — return 409 rather than 500.
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			http.Error(w, "a trail with this name already exists for the flow", http.StatusConflict)
+			return
+		}
 		internalError(w, err)
 		return
 	}
