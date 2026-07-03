@@ -29,6 +29,7 @@ Create/rotate the key with `fides service-account issue-key --account <sa> --lab
 | `fides allowlist check --env $ENV --sha $DIGEST` | digest not approved for the environment (**exit 2**) |
 | `fides change-gate --trail $TRAIL` | verdict is HOLD (**exit 2**) |
 | `fides verify-chain --trail $TRAIL` | attestation chain broken/tampered (**exit 2**) |
+| `fides verify-image --sha256 $DIGEST --signer <id> --issuer <oidc>` | cosign/Sigstore signature invalid (**exit 2**) |
 
 ## GitHub Actions
 

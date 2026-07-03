@@ -17,15 +17,28 @@ It ships in the container image at `/usr/local/bin/fides-mcp`.
 } } }
 ```
 
-**Tools (15)** — read + record provenance:
+**Tools** — read + record provenance:
 - `list_flows`, `list_environments`, `list_policies`
 - `check_compliance` — evaluate rules against an artifact SHA256
 - `search_artifacts`, `search_attestations`
 - `get_controls_coverage` — control coverage across frameworks
 - `get_deployment_frequency` — DORA deployment-frequency metrics
+- `ground_change` — Now Assist grounding pack for a change number (control-coverage +
+  evidence + change-gate risk + a natural-language `grounding_summary` to quote)
 - ServiceNow tools (change-gate write-back) + provenance-recording tools (trail/artifact/attest)
 
 **Resources:** the documentation is exposed as MCP resources under `fides://docs/*`.
+
+### Fides ⇄ ServiceNow over MCP
+- **Fides → SN (MCP client):** Fides consumes ServiceNow's native MCP server to read CMDB
+  CIs, change requests, and GRC controls *through SN's governance* — `fides servicenow mcp
+  servers|lookup|tools|call`, or the API `/api/v1/servicenow/mcp/*`. GA endpoint is
+  `<instance>/sncapps/mcp-server/mcp/<server>` (Streamable HTTP, OAuth); governed lookup is
+  `/api/sn_mcp_server/mcp_lookup_service/get_records`. See `docs/servicenow-mcp.md`.
+- **SN → Fides (grounding):** ServiceNow's Now Assist is grounded on Fides evidence via
+  `GET /api/v1/servicenow/grounding?change=CHGxxxx` (or the `ground_change` MCP tool /
+  `fides servicenow grounding`). See `docs/servicenow-now-assist-grounding.md`.
+- "Fides advises; ServiceNow decides."
 
 Full guide: `docs/mcp-server.md`.
 
