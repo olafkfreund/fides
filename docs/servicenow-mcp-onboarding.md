@@ -161,6 +161,12 @@ Credential is set.
 
 ## Step 7 — Make it callable by Now Assist (AI Agent Studio)
 
+> **Role required:** AI Agent Studio needs the **`sn_aia.admin`** role. With only
+> `sn_aia.viewer` you'll see a *"Read-only"* banner and *Create and manage* is disabled.
+> Have an admin grant `sn_aia.admin` first (System Administration → Users → *your user* →
+> Roles → add `sn_aia.admin`). Now Assist / Generative AI Controller must also be
+> activated on the instance.
+
 Tool **discovery** works after Step 6; **invocation** needs the tools *synced* into the
 tool registry — which AI Agent Studio does when you attach the server to an agent:
 
