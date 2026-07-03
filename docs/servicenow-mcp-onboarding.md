@@ -1,5 +1,10 @@
 # Onboarding Fides as an MCP server in ServiceNow
 
+> 📄 **Shareable version:** [servicenow-mcp-onboarding.docx](servicenow-mcp-onboarding.docx)
+> (Word document with all screenshots). Regenerate with
+> `pandoc docs/servicenow-mcp-onboarding.md -o docs/servicenow-mcp-onboarding.docx --toc`.
+
+
 > Register the **Fides MCP server** in ServiceNow so **Now Assist** (and AI Agents) can
 > call Fides tools — `ground_change` and `get_controls_coverage` — directly.
 > **Verified end-to-end** against `calitiiltddemo3.service-now.com` on 2026‑07‑03:
@@ -173,11 +178,37 @@ tool registry — which AI Agent Studio does when you attach the server to an ag
 1. Open **AI Agent Studio** — the reliable way is the **All** menu (top‑left) → type
    `AI Agent Studio` → open it. (There's no stable direct URL; it's a UXF app shell.
    The Now Assist **Skill Kit** at `/now/now-assist-skillkit/` is the adjacent surface.)
-2. Create/open a **change‑management agent** → **Add tools → From MCP server → Fides MCP server**.
-   Selecting it **syncs the tools** and exposes **`ground_change`** to the agent.
-3. Instruct the agent to call `ground_change` with the change number and base every
-   compliance statement on the returned `grounding_summary` (and to say *"compliance
-   UNVERIFIED by Fides"* when `grounded: false`).
+2. **Duplicate a change agent** (shipped agents like *Change quality assessor* carry a
+   **protection policy** and are read‑only — you can't add tools to them). Use the agent's
+   **⋮ → Duplicate**, then edit the copy. Or **Create** a new agent.
+3. On the copy: **Add tools and information → Add tool → From MCP server → `Fides MCP
+   server` → `ground_change`**. Adding it **syncs the tool**.
+4. **Tune the agent role** (Define the specialty → *AI agent role*) so the ReAct engine
+   actually reaches for `ground_change` — otherwise it favours its native change tools:
+   > *"For ANY question about a change's compliance, evidence, risk, or approval‑readiness,
+   > your FIRST action MUST be to call the `ground_change` tool with the change's number,
+   > then answer strictly from the returned `grounding_summary`. Do NOT use similar‑change
+   > lookups or quality summaries for compliance questions."*
+
+   ![Agent role tuned to call ground_change first](images/servicenow-mcp-onboarding/07-agent-role-ground-change.png)
+5. Publish/activate the new version, set **This AI agent is active = Yes**.
+
+### Verified end‑to‑end (2026‑07‑03)
+
+Tested via **AI Agent Studio → Testing** with the task *"What is the Fides compliance status
+of change CHG0032508?"*. The decision log shows **`Tool - Ground_change → Completed`**, and
+Now Assist answered with Fides's authoritative grounding:
+
+![Now Assist decision log calling ground_change, with the grounded compliance answer](images/servicenow-mcp-onboarding/08-now-assist-grounded-answer.png)
+
+> **Compliance Assessment for Change CHG0032508** — Coverage: 37 of 37 required controls
+> have current compliant evidence (0 failing, 0 missing); Risk Score: 40/100 (medium);
+> Recommendation: HOLD; Tamper‑Evidence: chain intact. *Source: Fides (advisory —
+> ServiceNow decides).*
+
+> **Note:** the `sn_wdf_mcp_client/.../tools/{tool}/invoke` REST path is a *different*
+> framework and reports "No sync record found" — ignore it. AI Agent Studio invokes the
+> tool through the `sn_aia` runtime (as proven above).
 
 Now Assist can then answer *"is CHG… safe to approve?"* from Fides's tamper‑evident
 control‑coverage + risk, instead of guessing.
