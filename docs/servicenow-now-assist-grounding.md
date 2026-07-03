@@ -88,6 +88,47 @@ Assist grounding is a tool call rather than a scripted fetch.
 - Grounding is **read-only and advisory** — it never changes a change_request.
   ServiceNow remains the decision system of record.
 
+## Worked example (Scripted REST → Now Assist)
+
+A concrete, copy-paste **Scripted REST** resource ServiceNow can call to fetch the
+grounding pack. Create a Scripted REST API (e.g. `x_fides/grounding`) with a GET
+resource `/{change}` and this script; store the Fides base URL + token in a
+**credential/alias** (never inline):
+
+```javascript
+(function process(request, response) {
+    var change = request.pathParams.change;                 // e.g. CHG0032508
+    var base   = gs.getProperty('x_fides.base_url');        // https://fides.../
+    var token  = new sn_cc.StandardCredentialsProvider()    // Fides API token (credential alias)
+                    .getCredentialByID('fides_api_token').getAttribute('password');
+
+    var r = new sn_ws.RESTMessageV2();
+    r.setEndpoint(base + '/api/v1/servicenow/grounding?change=' + encodeURIComponent(change));
+    r.setHttpMethod('GET');
+    r.setRequestHeader('Authorization', 'Bearer ' + token);
+    var res  = r.execute();
+    var body = JSON.parse(res.getBody());
+
+    // Feed body.grounding_summary (+ the structured fields) into the Now Assist
+    // skill's prompt context. If body.grounded === false, the skill must say
+    // "compliance UNVERIFIED by Fides" rather than inventing a conclusion.
+    response.setStatus(res.getStatusCode());
+    response.setBody(body);
+})(request, response);
+```
+
+Then in **Now Assist (Skill Kit)**: add this call as a grounding/tool step in your
+change-summarization or change-approval skill, and instruct the skill to base every
+compliance statement solely on `grounding_summary` / the returned fields.
+
+### Live demo reference
+`CHG0032508` on the demo instance is wired end-to-end:
+- **Fides → ServiceNow (governed MCP read):** `fides servicenow mcp lookup --table change_request` returns real CRs through SN's MCP governance.
+- **ServiceNow change record carries Fides evidence:** a work note ("this change implements control SOC2-CC8.1 … attested via Fides attestation …") and the change **risk field set to Moderate** by the change gate.
+- **Now Assist grounding:** `GET /api/v1/servicenow/grounding?change=CHG0032508` → `grounded:true`, **37/37 controls satisfied**, risk 40/100 (medium), recommendation HOLD, tamper-evidence chain intact — the `grounding_summary` is the sentence Now Assist quotes.
+
+Reproduce with `scripts/servicenow-demo.sh` (env-driven; see the script header).
+
 ## Related
 - [servicenow-integration.md](servicenow-integration.md) — write-back (change gate, control linkage, CMDB anchor).
 - [servicenow-mcp.md](servicenow-mcp.md) — Fides consuming ServiceNow's MCP server (#167).
