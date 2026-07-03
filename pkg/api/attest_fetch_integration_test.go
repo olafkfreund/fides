@@ -31,7 +31,7 @@ func randSHA256() string {
 
 // End-to-end: handleAttestFetch resolves the tenant's configured GitHub
 // provider, fetches a (faked) Artifact Attestations bundle, normalizes it,
-// and records it as a "provenance" attestation on the trail's tamper-evidence
+// and records it as a "slsa-provenance" attestation on the trail's tamper-evidence
 // chain. Gated by FIDES_TEST_DB_DSN.
 func TestAttestFetchIntegration(t *testing.T) {
 	dsn := os.Getenv("FIDES_TEST_DB_DSN")
@@ -108,7 +108,7 @@ func TestAttestFetchIntegration(t *testing.T) {
 
 	var count int
 	if err := pool.QueryRow(
-		`SELECT count(*) FROM attestations WHERE trail_id=$1 AND type_name='provenance' AND artifact_sha256=$2 AND is_compliant=true`,
+		`SELECT count(*) FROM attestations WHERE trail_id=$1 AND type_name='slsa-provenance' AND artifact_sha256=$2 AND is_compliant=true`,
 		trail, sha).Scan(&count); err != nil {
 		t.Fatalf("count query: %v", err)
 	}

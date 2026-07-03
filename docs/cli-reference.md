@@ -9,9 +9,9 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>]` | Begin a build trail (`--committer` records commit-metadata identity used by the segregation-of-duties attestation) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
-| `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
+| `fides attest junit\|snyk\|trivy\|slsa --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation (SLSA in-toto provenance records under type `slsa-provenance`) |
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
-| `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab attestations for an artifact |
+| `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab SLSA attestations for an artifact (records under type `slsa-provenance`) |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure) |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
@@ -39,7 +39,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 ## Controls, frameworks & change gate
 | Command | Purpose |
 |---|---|
-| `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX>` | Adopt a regulated framework's control catalog (idempotent) |
+| `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX\|SLSA>` | Adopt a regulated framework's control catalog (idempotent). `SLSA` is a supply-chain integrity catalog requiring `slsa-provenance`, `cosign-verification`, and `sbom-cyclonedx` evidence |
 | `fides control frameworks` | List the available framework catalogs |
 | `fides control coverage` | Show each control's evidence + environment coverage |
 | `fides control enforce --key <key> --env <id>` / `--all-controls --all-environments` | Enforce control(s) — create enabled environment policies requiring their evidence types, raising coverage (idempotent) |

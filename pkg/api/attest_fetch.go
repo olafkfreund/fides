@@ -32,8 +32,11 @@ type attestFetchResult struct {
 // handleAttestFetch fetches platform-native SLSA provenance/attestations for
 // an artifact sha256 from the configured git provider (using its stored
 // token), normalizes each into an evidence.Result, and records them as
-// attestations on the trail's tamper-evidence chain -- federating
-// GitHub/GitLab-native attestations into the Fides chain.
+// "slsa-provenance" attestations on the trail's tamper-evidence chain --
+// federating GitHub/GitLab-native attestations into the Fides chain. The
+// canonical "slsa-provenance" type_name (shared with `fides attest slsa`) is
+// what framework controls require, so provenance contributes to control
+// coverage and the change-gate risk score.
 func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
@@ -135,7 +138,7 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(result)
 		name := fmt.Sprintf("%s-provenance-%d", cfg.Provider, i+1)
 
-		contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, name, "provenance", string(payload), result.Compliant)
+		contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, name, "slsa-provenance", string(payload), result.Compliant)
 		if err != nil {
 			internalError(w, err)
 			return
@@ -143,7 +146,7 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		_, err = s.q(r.Context()).ExecContext(r.Context(),
 			`INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-			uuid.New(), trailID, sha, name, "provenance", string(payload), result.Compliant, contentHash, prevHash)
+			uuid.New(), trailID, sha, name, "slsa-provenance", string(payload), result.Compliant, contentHash, prevHash)
 		if err != nil {
 			internalError(w, err)
 			return
@@ -153,7 +156,7 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
-			"trail_id": trailID.String(), "attestation": "provenance", "compliant": allCompliant,
+			"trail_id": trailID.String(), "attestation": "slsa-provenance", "compliant": allCompliant,
 		})
 	}
 
