@@ -261,14 +261,14 @@ how to drive Fides — **every CLI command, all configuration, management, and C
 pipeline actions**. It's plain Markdown (a `SKILL.md` plus reference files), no
 dependencies.
 
-**Download:** [`.zip`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.zip) ·
-[`.tar.gz`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.tar.gz) ·
+**Download:** [`.zip`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.1.0/fides-skill-v1.1.0.zip) ·
+[`.tar.gz`](https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.1.0/fides-skill-v1.1.0.tar.gz) ·
 [all releases](https://github.com/olafkfreund/fides/releases)
 
 ```sh
 # one-liner: download, extract, install for your user (all projects)
-curl -sSL https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.0.0/fides-skill-v1.0.0.tar.gz \
-  | tar -xz && ./fides-skill-v1.0.0/install.sh
+curl -sSL https://github.com/olafkfreund/fides/releases/download/fides-skill-v1.1.0/fides-skill-v1.1.0.tar.gz \
+  | tar -xz && ./fides-skill-v1.1.0/install.sh
 #   ./install.sh --project   installs into ./.claude/skills/fides instead
 ```
 
