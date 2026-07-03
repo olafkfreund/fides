@@ -40,16 +40,30 @@ fides attest --trail <id> --name <n> --type <t> --payload <json|file.json> [--ar
 - `--encrypt` encrypt the payload with `FIDES_ENCRYPTION_KEY` (AES-256-GCM). Encryption is
   also auto-applied if `FIDES_ENCRYPTION_KEY` is set.
 
-### `fides attest junit|snyk|trivy` (format parsers)
+### `fides attest junit|snyk|trivy|slsa` (format parsers)
 Normalize a raw report into a compliant/non-compliant attestation (original file attached).
 ```
 fides attest junit --trail <id> --file reports/junit.xml [--name <n>] [--artifact-sha <hex>]
 fides attest snyk  --trail <id> --file reports/snyk.json  [--name <n>] [--artifact-sha <hex>]
 fides attest trivy --trail <id> --file reports/trivy.json [--name <n>] [--artifact-sha <hex>]
+fides attest slsa  --trail <id> --file provenance.json    [--name <n>] [--artifact-sha <hex>]
 ```
 - `--file` (required) path to the report · `--name` defaults to the format name
 - Normalized payload is `{format, compliant, summary{counts}, findings}` — jq-evaluable
   (e.g. rule `.summary.failed == 0`).
+- **SLSA in-toto provenance** records under type `slsa-provenance` (same type as the
+  platform-native `fides attest fetch` path), so the SLSA/NIST/SOC2 supply-chain
+  controls recognize it.
+
+### `fides attest fetch` / `fides verify-image` (supply-chain provenance)
+```
+fides attest fetch --trail <id> --artifact-sha <hex> [--provider github|gitlab] [--repo <owner/repo>]
+fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]
+```
+- `attest fetch` ingests platform-native GitHub/GitLab SLSA attestations → type `slsa-provenance`.
+- `verify-image` verifies a cosign/Sigstore signature (keyless OIDC or `--key`), records a
+  `cosign-verification` attestation, and **exits 2 on failure** (deploy gate).
+- Both feed the `SLSA` framework controls (`slsa-provenance`, `cosign-verification`, `sbom-cyclonedx`).
 
 ### `fides attest sbom` (SBOM ingestion)
 Auto-detects CycloneDX vs SPDX JSON, normalizes every component (name, version,
@@ -150,17 +164,19 @@ fides flow artifacts --flow <id>   # artifacts across the flow's trails
 ## Controls, frameworks & change gate
 
 ```
-fides control import   --framework <SOC2|ISO27001|NIST-800-53|PCI-DSS|DORA|PSD2|SOX>   # adopt catalog (idempotent)
+fides control import   --framework <SOC2|ISO27001|NIST-800-53|PCI-DSS|DORA|PSD2|SOX|SLSA>   # adopt catalog (idempotent)
 fides control frameworks                                # list available framework catalogs
 fides control list     [--all]                          # controls (--all includes archived)
 fides control coverage                                  # evidence + environment coverage per control
+fides control timeline [--key <k>] [--days N]           # continuous control-test evidence feed over time (default 90d)
 fides control add      --key <k> --name <n> [--description <d>] [--framework <F>] [--require t1,t2]
 fides control enforce  --key <k> --env <id>             # create env policy requiring the control's evidence
 fides control enforce  --all-controls --all-environments   # raise coverage everywhere (idempotent)
 fides control archive   --id <control_id>
 fides control unarchive --id <control_id>
 ```
-- `import`/`report` frameworks: `SOC2 | ISO27001 | NIST-800-53 | PCI-DSS | DORA | PSD2 | SOX`.
+- `import`/`report` frameworks: `SOC2 | ISO27001 | NIST-800-53 | PCI-DSS | DORA | PSD2 | SOX | SLSA`
+  (`SLSA` is the supply-chain integrity catalog: `slsa-provenance`, `cosign-verification`, `sbom-cyclonedx`).
 - `control add --framework`: `SOC2 | ISO27001 | FDA-21CFR11` (custom-control tagging).
 
 ```
@@ -196,7 +212,16 @@ fides servicenow config --instance-url https://<inst>.service-now.com --auth-typ
     --client-id <id-or-username> --secret-path <ref> [--disable]
 fides servicenow get                              # show current config
 fides servicenow change-check --trail <id> (--change CHG0030192 | --ci <cmdb_ci_name>)
+fides servicenow link-control --trail <id> --change CHG0030192 --control <key> [--attestation <id>]
+fides servicenow anchor-deployment --trail <id> (--change CHG0030192 | --ci <name>) [--build-log <url>]
+fides servicenow grounding --change CHG0030192    # Now Assist grounding pack (coverage+evidence+risk+NL summary)
+# Consume ServiceNow's own MCP server (Fides is the MCP client):
+fides servicenow mcp servers                       # discover provisioned SN MCP servers (sn_mcp_server_registry)
+fides servicenow mcp lookup --table <t> [--query <q>] [--limit N]   # governed record lookup (CMDB/change/GRC)
+fides servicenow mcp tools  [--server <name>]      # list a GA MCP server's tools
+fides servicenow mcp call   --tool <t> [--server <name>] [--args '<json>']
 ```
+See `docs/servicenow-mcp.md` (Fides→SN) and `docs/servicenow-now-assist-grounding.md` (SN→Fides).
 
 ### `fides git-provider`
 ```
