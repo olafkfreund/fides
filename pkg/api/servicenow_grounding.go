@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -33,8 +34,22 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "change is required", http.StatusBadRequest)
 		return
 	}
+	pack, grounded, err := s.groundChange(r.Context(), orgID, change)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if !grounded {
+		w.WriteHeader(http.StatusNotFound)
+	}
+	writeJSON(w, pack)
+}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+// groundChange builds the authoritative grounding pack for a change (shared by
+// the HTTP endpoint and the MCP `ground_change` tool). The bool is false when no
+// Fides evidence is linked to the change.
+func (s *Server) groundChange(ctx context.Context, orgID uuid.UUID, change string) (map[string]any, bool, error) {
+	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT DISTINCT l.trail_id, c.key, c.name, l.attestation_id, t.created_at
 		 FROM change_control_links l
 		 JOIN controls c ON c.id = l.control_id
@@ -42,8 +57,7 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 		 WHERE l.org_id = $1 AND l.change_number = $2
 		 ORDER BY t.created_at DESC`, orgID, change)
 	if err != nil {
-		internalError(w, err)
-		return
+		return nil, false, err
 	}
 	defer rows.Close()
 
@@ -57,8 +71,7 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 		var key, name, attID string
 		var createdAt time.Time
 		if err := rows.Scan(&trailID, &key, &name, &attID, &createdAt); err != nil {
-			internalError(w, err)
-			return
+			return nil, false, err
 		}
 		controls = append(controls, map[string]any{"control": key, "name": name, "attestation_id": attID})
 		controlKeys = append(controlKeys, key)
@@ -72,25 +85,21 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 	}
 
 	if len(controls) == 0 {
-		w.WriteHeader(http.StatusNotFound)
-		writeJSON(w, map[string]any{
+		return map[string]any{
 			"change_number": change,
 			"grounded":      false,
 			"grounding_summary": fmt.Sprintf(
 				"No Fides evidence is linked to change %s. Fides has no control-coverage or attestations to ground this change; treat its compliance as UNVERIFIED.", change),
-		})
-		return
+		}, false, nil
 	}
 
-	gate, err := s.computeChangeGate(r.Context(), orgID, primaryTrail)
+	gate, err := s.computeChangeGate(ctx, orgID, primaryTrail)
 	if err != nil {
-		internalError(w, err)
-		return
+		return nil, false, err
 	}
-	bundle, err := s.computeEvidenceBundle(r.Context(), primaryTrail)
+	bundle, err := s.computeEvidenceBundle(ctx, primaryTrail)
 	if err != nil {
-		internalError(w, err)
-		return
+		return nil, false, err
 	}
 
 	passed, _ := gate["passed"].([]string)
@@ -124,7 +133,7 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 		riskScore, riskLevel, strings.ToUpper(recommendation),
 		attTotal, attNonCompliant, chainStatus)
 
-	writeJSON(w, map[string]any{
+	return map[string]any{
 		"change_number":   change,
 		"grounded":        true,
 		"trails":          trails,
@@ -149,7 +158,7 @@ func (s *Server) handleServiceNowGrounding(w http.ResponseWriter, r *http.Reques
 			"tamper_evident":     chainIntact,
 		},
 		"grounding_summary": summary,
-	})
+	}, true, nil
 }
 
 // uniqueStrings preserves order while removing duplicates (a change may link the
