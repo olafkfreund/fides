@@ -89,6 +89,9 @@ curl -s -X POST https://<fides-host>/api/v1/mcp \
 
 #### Register it in ServiceNow (admin runbook)
 
+> **Full step-by-step with screenshots: [servicenow-mcp-onboarding.md](servicenow-mcp-onboarding.md)** —
+> verified end-to-end on a live instance.
+
 Do this in the ServiceNow UI (Connections & Credentials + the MCP Server list) so the
 connection validates — the records below are intricate and are best created there,
 not via the Table API.
