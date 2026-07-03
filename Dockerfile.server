@@ -1,6 +1,17 @@
 # Dockerfile.server for Fides backend service
 # Multi-stage build for Go backend
 
+# Stage 0: Build the source-owned Next.js portal. It is built twice: once for the
+# default root ("/") and once under /next (kept for compatibility / bookmarks).
+FROM node:22-alpine AS portal
+WORKDIR /portal
+COPY portal/package.json portal/package-lock.json ./
+# --include=dev so build tools (tailwind/postcss) install even if NODE_ENV=production.
+RUN npm ci --include=dev
+COPY portal/ ./
+RUN npm run build && cp -r out /portal-root
+RUN PORTAL_BASE_PATH=/next npm run build && cp -r out /portal-next
+
 # Stage 1: Build the Go binary
 FROM golang:alpine AS builder
 
@@ -18,10 +29,21 @@ RUN apk add --no-cache git ca-certificates
 # Copy source code
 COPY . .
 
+# CUTOVER: the new source-owned portal becomes the default at /. Preserve the
+# Go-served markdown docs (used by the Help page) and llms.txt files, then
+# replace the old compiled SPA with the new portal. The /next path keeps serving
+# the same portal for compatibility. To roll back, git-revert this and redeploy.
+RUN mkdir -p /keep && (cp web/*.md /keep/ 2>/dev/null || true) && (cp web/llms*.txt /keep/ 2>/dev/null || true)
+RUN rm -rf web
+COPY --from=portal /portal-root/. ./web/
+COPY --from=portal /portal-next/. ./web/next/
+RUN (cp /keep/*.md web/ 2>/dev/null || true) && (cp /keep/llms*.txt web/ 2>/dev/null || true)
+
 # Build static binaries: the server and the stdio MCP sensor (real MCP server
 # used by environment compliance checks).
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-server cmd/server/main.go
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp-sensor ./cmd/mcp-sensor
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp ./cmd/mcp
 
 # Stage 2: Minimal runtime image
 FROM alpine:3.18
@@ -33,6 +55,7 @@ WORKDIR /app
 # Copy binary and static web assets from builder
 COPY --from=builder /app/fides-server /app/fides-server
 COPY --from=builder /app/fides-mcp-sensor /usr/local/bin/fides-mcp-sensor
+COPY --from=builder /app/fides-mcp /usr/local/bin/fides-mcp
 COPY --from=builder /app/web /app/web
 
 

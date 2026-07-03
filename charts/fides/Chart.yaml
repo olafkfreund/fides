@@ -1,0 +1,9 @@
+apiVersion: v2
+name: fides
+description: Fides — self-hosted compliance/provenance evidence platform with ServiceNow integration, RLS tenant isolation, and one-shot DB seeding.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/olafkfreund/fides
+sources:
+  - https://github.com/olafkfreund/fides

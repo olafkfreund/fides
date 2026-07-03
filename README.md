@@ -14,6 +14,32 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 * **LLM Auditing Gateway (`Fides-AI`)**: Out-of-the-box support for verifying compliance against natural language parameters using Ollama, llama.cpp, and Google Gemini.
 * **Drift & Shadow Change Detection**: Continuously monitor running containers or server state to find unauthorized shadow deployments and configuration drift.
 * **FDA 21 CFR Part 11 Ready**: Built-in support for time-stamped system log tables, electronic records, and ECDSA signature validation for attestation logs.
+* **Regulated Control Frameworks**: One-command adoption of SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, and SOX control catalogs (`fides control import --framework`), with per-framework, audit-ready reports (`fides report --framework`) and coverage across environments.
+* **Change Gate & Risk Scoring**: An evidence-backed approve/hold verdict with a 0–100 risk score for any change (`fides change-gate`), driven by which controls pass, fail, or lack evidence — and written back onto the matching **ServiceNow Change Request** (work note + risk field). Fides advises; ServiceNow decides.
+* **Segregation of Duties**: First-class approval evidence (`fides approve`) distinguishing human sign-off from machine automation; four-eyes requires two distinct human approvers, and the change gate will not recommend approval without a human review.
+* **Tenant Isolation (RLS)**: Defense-in-depth Postgres Row-Level Security enforced at the database layer — the app runs as a least-privilege role so a tenant only ever sees its own data (`FIDES_RLS_ENABLED`).
+* **WORM Evidence Retention**: Optional S3 Object Lock retention so stored evidence is immutable for a fixed window (`FIDES_OBJECT_LOCK_MODE` + `FIDES_EVIDENCE_RETENTION_DAYS`) — for DORA/SOX.
+* **Git Providers**: Commit-status checks and signed inbound push webhooks for **GitHub, GitLab, Bitbucket, and Azure DevOps**.
+* **Multi-Tenant Go API + Postgres**: A single Go compliance API backed by multi-tenant PostgreSQL with embedded, self-applying migrations (no separate migration step on boot).
+* **Easy Install**: A Helm chart (`charts/fides`) with a one-step seed job, or `scripts/setup-db.sh` — see [docs/setup.md](docs/setup.md).
+
+---
+
+## Command-Line Interface (`fides`)
+
+The statically compiled `fides` CLI drives the full evidence lifecycle from any pipeline:
+
+* **`fides trail start`** — open a build trail bound to a flow, repository, commit, and branch.
+* **`fides artifact report`** — register a built artifact by its SHA256 digest for supply-chain provenance.
+* **`fides attest`** — attach signed evidence of many kinds: `junit`, `snyk`, `trivy`, `sbom-cyclonedx`, `secret-scan`, `sast`, `iac`, and more (with `--encrypt` and Evidence Vault attachments).
+* **`fides verify-chain`** — validate the tamper-evident attestation chain for a trail or artifact.
+* **`fides assert`** — deterministic policy gate; exits non-zero when an artifact is non-compliant.
+* **`fides verify-image`** — verify a container image's cosign/Sigstore signature (keyless OIDC identity or key-based) and record a `cosign-verification` attestation; exits `2` on a failed/untrusted signature.
+* **`fides change-gate`** — evidence- and risk-backed approve/hold verdict with a 0–100 risk score; exits `2` on hold and can write the verdict back to ServiceNow.
+* **`fides allowlist`** — manage per-environment allow-lists of approved artifacts and rules.
+* **`fides control import|coverage|enforce`** — import framework control catalogs, report coverage, and enforce controls across environments.
+* **`fides report --framework`** — generate per-framework, audit-ready reports (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX).
+* **`fides metrics deployment-frequency`** — DORA-style delivery metrics.
 
 ---
 
@@ -27,6 +53,28 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 * `pkg/policy/`: Compliance policy checking engine using JQ expressions.
 * `pkg/ai/`: Artificial Intelligence gateway client supporting Ollama, llama.cpp, and Gemini.
 * `pkg/api/`: REST server routers, request validators, and HTTP controllers.
+
+---
+
+## Installation
+
+Three ways to get the `fides-server`, `fides`, `fides-mcp`, and `fides-mcp-sensor`
+binaries — see the full **[Installation guide](installation.md)** for details:
+
+* **Release downloads** — pre-built archives for Linux and macOS (amd64 + arm64),
+  with SHA-256 checksums, on the
+  **[Releases page](https://github.com/olafkfreund/fides/releases)**.
+* **Nix / NixOS** — the repo is a flake:
+  ```bash
+  nix run github:olafkfreund/fides#server      # run the API server
+  nix profile install github:olafkfreund/fides#fides   # install the CLI
+  ```
+  NixOS hosts can enable the service with the bundled module
+  (`fides.nixosModules.default` → `services.fides`).
+* **From source** — `go build ./cmd/cli` (Go 1.26+); see the Quick Start below.
+
+For the full self-hosted stack (Postgres + object store), use the Helm chart
+(`charts/fides`) or the [Getting Started guide](getting_started.md).
 
 ---
 
@@ -52,7 +100,7 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 
 ## Model Context Protocol (MCP) Server
 
-Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, and build attestations as LLM-executable tools. It can be integrated into modern AI clients (like Claude Desktop, Cursor, or Antigravity) to enable conversational interactions with your builds, audits, and pipelines.
+Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, artifacts, attestations, controls coverage, and deployment metrics as LLM-executable **tools** — and the Fides documentation as MCP **resources** (`fides://docs/*`) that an assistant can read on demand. It integrates with **Claude Code**, Claude Desktop, Cursor, and other AI clients for conversational interaction with your builds, audits, and pipelines. The binary is also shipped in the server image at `/usr/local/bin/fides-mcp`. See the full guide: [mcp-server.md](mcp-server.md).
 
 ### Configuration for Claude Desktop
 Add the following configuration to your `claude_desktop_config.json` (located at `~/.config/Claude/claude_desktop_config.json` on Linux/macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
@@ -75,47 +123,95 @@ Add the following configuration to your `claude_desktop_config.json` (located at
 - `list_environments`: List runtime environment snapshots, active services, and drifts.
 - `list_policies`: Fetch compliance policies and JQ release gate rules.
 - `check_compliance`: Query policies compliance validation status for a specific artifact signature SHA256.
+- `search_artifacts` / `search_attestations`: Query recorded artifacts and evidence.
+- `get_controls_coverage`: Report control coverage across frameworks and environments.
+- `get_deployment_frequency`: Return DORA-style delivery metrics.
 - `create_flow`: Converse with LLM to register new pipeline flow streams.
 - `create_trail` / `report_artifact` / `report_attestation`: Programmatic inputs to register pipeline activities and evidence.
+- ServiceNow tools for reading change events and driving change-gate write-back.
+
+### WebMCP (in-browser)
+Beyond the standalone `fides-mcp` binary, the portal ships an in-browser **WebMCP** endpoint so browser agents and local LLMs can drive Fides directly from the authenticated web session — no separate client install required.
+
 
 
 ## Web Portal Tour
 
-Fides features a premium, state-of-the-art web portal for security auditors and DevSecOps controllers. Below is a tour of the portal pages:
+Fides ships a premium web portal for security auditors and DevSecOps controllers.
+Below is a tour of the portal pages. A light/dark theme toggle lives in the sidebar;
+the screenshots below use dark mode.
 
-### 1. Overview Dashboard (Dark & Light Modes)
-The dashboard provides a real-time summary of compliance parameters (Tracked Artifacts, Compliance Pass Rate, Active Alerts, and AI Evaluations) alongside workload environment status and audit logs.
-- **Dark Mode:**
-  ![Fides Overview Dashboard - Dark Mode](assets/screenshots/screenshot_20260630_151424-region.png)
-- **Light Mode:**
-  ![Fides Overview Dashboard - Light Mode](assets/screenshots/screenshot_20260630_151711-region.png)
+### 1. Overview Dashboard
+Real-time compliance status: **clickable KPI cards** (Tracked Artifacts, Compliance
+Pass %, Active Alerts, AI Evaluations), workload environment health, a live audit-log
+trail, per-framework controls coverage, and ServiceNow / webhook integration events.
+![Fides Overview Dashboard](assets/screenshots/screenshot_20260702_214441-region.png)
 
-### 2. Artifacts & SBOM Management
-Trace built software deliverables and verify SBOM package compatibility. Compliant builds show packages, licenses, and vulnerabilities, while pending builds indicate scans in progress.
-![Artifacts & SBOM Management](assets/screenshots/screenshot_20260630_151450-region.png)
+### 2. Flows & Trails
+Delivery pipelines (**Flows**) and their build **Trails**. Expand a flow to see each
+trail's attestation count and act on it — **Change Gate**, **Approve**, **Verify chain**,
+or **Download audit**.
+![Flows & Trails](assets/screenshots/screenshot_20260702_214510-region.png)
 
-### 3. Environments & MCP Connections
-Monitor active deployment environments (EKS, ECS, etc.) and configure Model Context Protocol (MCP) sensors (e.g. `k8s-sensor`) to query and verify compliance rules directly.
-![Environments & MCP Connections](assets/screenshots/screenshot_20260630_151515-region.png)
+### 3. Artifacts, SBOM & Attestation drill-down
+Search build artifacts by SHA256 and drill into an artifact's **SBOM** (CycloneDX / SPDX /
+Syft components, licenses, vulnerabilities) and its full set of signed **attestations**.
+![Artifacts, SBOM & Attestations](assets/screenshots/screenshot_20260702_214531-region.png)
 
-### 4. Policies & JQ Rule Configurator
-Configure deterministic compliance gates using JQ rules or let the **LLM Policy Wizard** automatically generate rule configurations based on text-described goals.
-![Policies & JQ Rule Configurator](assets/screenshots/screenshot_20260630_151532-region.png)
+### 4. Attestations
+Every piece of evidence recorded against build trails, with compliance status, evidence
+type, and totals — filterable by name, type, and compliance.
+![Attestations](assets/screenshots/screenshot_20260702_214547-region.png)
 
-### 5. AI Audits & LLM Evaluator Reports
-Review deep risk and compliance assessments generated asynchronously by local or cloud LLMs for every reported attestation.
-![AI Audits & LLM Evaluator Reports](assets/screenshots/screenshot_20260630_151543-region.png)
+### 5. Environments & MCP Connections
+Monitor runtime environments (EKS / ECS) with running / drift / shadow counts, and let
+Fides run **live compliance checks** against each environment's **MCP sensors** (e.g. the
+in-cluster `fides-mcp-sensor`) — plus per-environment artifact allow-lists.
+![Environments & MCP Connections](assets/screenshots/screenshot_20260702_214610-region.png)
 
-### 6. Telemetry & OpenTelemetry Metrics
-Gain observability into the Fides API backend, request rates, error rates, DB connection pools, and export data directly to Prometheus `/metrics` or OpenTelemetry scrapers.
-![Telemetry & OpenTelemetry Metrics](assets/screenshots/screenshot_20260630_151558-region.png)
+### 6. Policies Editor (Monaco + AI)
+Author deterministic JQ compliance gates in a full **Monaco editor** with **Format** and an
+AI **"Check & fix"** action, or generate rules from a described goal with the LLM Policy Wizard.
+![Policies & JQ Rule Editor](assets/screenshots/screenshot_20260702_214634-region.png)
 
-### 7. Settings & SSO Group Mappings
-Manage local directories, SSO group mappings (e.g. GitHub teams, Okta group claims), and define roles.
-![Settings & SSO Group Mappings](assets/screenshots/screenshot_20260630_151619-region.png)
+### 7. Controls & Coverage
+Adopt regulated frameworks (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX) and see
+coverage **grouped by framework**, with average coverage and gaps at a glance.
+![Controls & Coverage](assets/screenshots/screenshot_20260702_214646-region.png)
 
-### 8. Help & Documentation Center
-A built-in help center providing code templates, CLI usage instructions, and links to `/llms.txt` and `/llms-full.txt` standard context endpoints.
-![Help & Documentation Center](assets/screenshots/screenshot_20260630_151625-region.png)
+Drill into any control to see the evidence it requires and its **per-environment
+enforcement**, with one-click actions to enforce or archive it.
+![Control enforcement by environment](assets/screenshots/screenshot_20260702_214700-region.png)
 
+### 8. AI Audits & LLM Evaluator Reports
+Deep, **parsed and scored** risk / compliance assessments generated by local or cloud LLMs
+for every reported attestation — vulnerabilities, failures, licensing risks, and an overall score.
+![AI Audits & LLM Evaluator Reports](assets/screenshots/screenshot_20260702_214710-region.png)
 
+### 9. Telemetry & OpenTelemetry Metrics
+Live API backend observability — request / error rates, latency, DB connection pools, request
+outcomes — plus **DORA weekly deployment frequency per environment**. Export to Prometheus
+`/metrics` or OpenTelemetry.
+![Telemetry & OpenTelemetry Metrics](assets/screenshots/screenshot_20260702_214724-region.png)
+
+### 10. Settings — Infrastructure
+Configure SSO / OAuth, the evidence storage driver (S3 / GCS / Azure / local), the secrets
+vault (AWS / Vault / …), and the LLM provider — all by **secret reference**, never raw secrets.
+![Settings — Infrastructure](assets/screenshots/screenshot_20260702_214735-region.png)
+
+### 11. Settings — Directory & SSO Group Mappings
+Map identity-provider groups (GitHub teams, GitLab groups, Okta claims) to Fides roles so
+access is managed centrally in your directory instead of per-user.
+![Directory & SSO Group Mappings](assets/screenshots/screenshot_20260702_214750-region.png)
+
+### 12. Settings — Integrations (ServiceNow, Git & Webhooks, Service Accounts)
+Wire the change-gate write-back to **ServiceNow**, connect **Git providers** for commit-status
+checks + signed inbound webhooks, and issue **service-account** API keys for CI/CD.
+![ServiceNow integration](assets/screenshots/screenshot_20260702_214756-region.png)
+![Git providers & outbound webhooks](assets/screenshots/screenshot_20260702_214815-region.png)
+![Service accounts for CI/CD](assets/screenshots/screenshot_20260702_214807-region.png)
+
+### 13. AI Assistant (voice-enabled)
+A built-in AI Assistant with **voice input and spoken replies**, backed by the same Fides
+tools exposed through in-browser WebMCP so agents can act inside the authenticated session.
+![Fides AI Assistant](assets/screenshots/screenshot_20260702_214447-region.png)

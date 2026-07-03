@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fides · Evidence Vault</title>
+<style>
+  :root { --bg:#0a0a0a; --panel:#121212; --border:#262626; --fg:#e5e5e5; --muted:#9ca3af;
+          --green:#34d399; --purple:#a855f7; --red:#f87171; --amber:#fbbf24; --blue:#60a5fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 ui-sans-serif,system-ui,sans-serif; }
+  header { padding:18px 28px; border-bottom:1px solid var(--border); }
+  h1 { margin:0; font:600 18px ui-monospace,monospace; letter-spacing:.04em; }
+  header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
+  main { max-width:1040px; margin:0 auto; padding:24px 28px; display:grid; gap:20px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:20px; }
+  .panel h2 { margin:0 0 14px; font:600 12px ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  label { display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; }
+  input, select { width:100%; background:#1a1a1a; border:1px solid var(--border); color:var(--fg);
+                  border-radius:7px; padding:9px 11px; font:13px ui-monospace,monospace; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  button { background:var(--purple); color:#fff; border:0; border-radius:7px; padding:9px 16px;
+           font:600 13px ui-sans-serif,system-ui; cursor:pointer; margin-top:14px; }
+  button.ghost { background:transparent; border:1px solid var(--border); color:var(--fg); }
+  button.small { padding:5px 10px; font-size:12px; margin-top:0; }
+  button:active { transform:translateY(1px); }
+  .btnrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  pre { background:#1a1a1a; border:1px solid var(--border); border-radius:7px; padding:12px;
+        overflow:auto; font:12px ui-monospace,monospace; color:var(--green); max-height:320px; white-space:pre-wrap; word-break:break-word; }
+  .msg { font-size:12px; margin-top:10px; min-height:16px; }
+  .ok { color:var(--green); } .err { color:var(--red); }
+  .muted { color:var(--muted); }
+  .pill { padding:2px 8px; border-radius:999px; font-size:11px; font-weight:600; }
+  .compliant { background:rgba(52,211,153,.15); color:var(--green); }
+  .noncompliant { background:rgba(248,113,113,.15); color:var(--red); }
+  .approve { background:rgba(52,211,153,.15); color:var(--green); }
+  .hold { background:rgba(251,191,36,.15); color:var(--amber); }
+  .risk-low { color:var(--green); } .risk-medium { color:var(--amber); } .risk-high { color:var(--red); }
+  .summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }
+  .stat { background:#1a1a1a; border:1px solid var(--border); border-radius:8px; padding:12px 14px; }
+  .stat .label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .stat .value { font:600 20px ui-monospace,monospace; margin-top:4px; }
+  .chain-valid { color:var(--green); } .chain-broken { color:var(--red); }
+  /* Timeline */
+  .timeline { position:relative; margin-left:10px; padding-left:24px; border-left:2px solid var(--border); }
+  .tl-item { position:relative; margin-bottom:18px; }
+  .tl-item:last-child { margin-bottom:0; }
+  .tl-dot { position:absolute; left:-31px; top:2px; width:14px; height:14px; border-radius:50%; border:2px solid var(--bg); }
+  .tl-dot.dot-compliant { background:var(--green); }
+  .tl-dot.dot-noncompliant { background:var(--red); }
+  .tl-dot.dot-approval { background:var(--blue); }
+  .tl-dot.dot-trail { background:var(--purple); }
+  .tl-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; cursor:pointer; }
+  .tl-head:hover .tl-name { text-decoration:underline; }
+  .tl-name { font:600 13px ui-monospace,monospace; }
+  .tl-time { color:var(--muted); font-size:11px; margin-left:auto; white-space:nowrap; }
+  .tl-meta { color:var(--muted); font-size:12px; margin-top:2px; }
+  .tl-detail { display:none; margin-top:8px; }
+  .tl-detail.open { display:block; }
+  .empty { color:var(--muted); font-style:italic; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Evidence Vault</h1>
+  <p>Per-trail evidence timeline: attestations, approvals, change-gate verdict and tamper-evidence chain status. Sign in to the portal first — this page uses your session.</p>
+</header>
+<main>
+  <section class="panel">
+    <h2>Select Trail</h2>
+    <div class="row">
+      <div>
+        <label>Flow</label>
+        <select id="flowSel"><option value="">Loading flows…</option></select>
+      </div>
+      <div>
+        <label>Trail</label>
+        <select id="trailSel"><option value="">Select a flow first</option></select>
+      </div>
+    </div>
+    <div class="btnrow">
+      <button class="ghost" onclick="loadFlows()">Reload flows</button>
+      <button onclick="loadTimeline()">Load evidence timeline</button>
+    </div>
+    <div id="pickMsg" class="msg"></div>
+  </section>
+
+  <section class="panel" id="summaryPanel" style="display:none">
+    <h2>Trail Summary</h2>
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="label">Chain integrity</div>
+        <div class="value" id="chainStat">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Change gate</div>
+        <div class="value" id="gateStat">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Risk score</div>
+        <div class="value" id="riskStat">—</div>
+      </div>
+      <div class="stat">
+        <div class="label">Human approvals</div>
+        <div class="value" id="approvalStat">—</div>
+      </div>
+    </div>
+    <div id="gateSummary" class="msg"></div>
+  </section>
+
+  <section class="panel" id="timelinePanel" style="display:none">
+    <h2>Evidence Timeline</h2>
+    <div id="timelineMsg" class="msg"></div>
+    <div id="timeline" class="timeline"></div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+async function api(method, path, body) {
+  const opt = { method, credentials: 'include', headers: {} };
+  if (body) { opt.headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  const text = await r.text();
+  if (r.status === 401) throw new Error('Not signed in — open the portal and log in, then reload this page.');
+  if (!r.ok) throw new Error(text || ('HTTP ' + r.status));
+  try { return JSON.parse(text); } catch { return text; }
+}
+function setMsg(id, text, ok) { const e = $(id); e.textContent = text; e.className = 'msg ' + (ok ? 'ok' : 'err'); }
+function fmtTime(t) { return (t || '').replace('T', ' ').slice(0, 19); }
+
+async function loadFlows() {
+  const sel = $('flowSel');
+  sel.innerHTML = '<option value="">Loading…</option>';
+  try {
+    const flows = await api('GET', '/api/v1/flows');
+    sel.innerHTML = '<option value="">Select a flow…</option>';
+    for (const f of (flows || [])) {
+      const o = document.createElement('option');
+      o.value = f.id; o.textContent = f.name;
+      sel.appendChild(o);
+    }
+    setMsg('pickMsg', (flows || []).length + ' flow(s) available.', true);
+  } catch (e) { sel.innerHTML = '<option value="">(failed to load)</option>'; setMsg('pickMsg', e.message, false); }
+}
+
+async function loadTrailsForFlow() {
+  const flowID = $('flowSel').value;
+  const trailSel = $('trailSel');
+  trailSel.innerHTML = '<option value="">Loading…</option>';
+  if (!flowID) { trailSel.innerHTML = '<option value="">Select a flow first</option>'; return; }
+  try {
+    const trails = await api('GET', '/api/v1/flows/' + encodeURIComponent(flowID) + '/trails');
+    trailSel.innerHTML = '<option value="">Select a trail…</option>';
+    for (const t of (trails || [])) {
+      const o = document.createElement('option');
+      o.value = t.id;
+      const commit = t.git_commit ? (' @ ' + t.git_commit.slice(0, 8)) : '';
+      o.textContent = (t.name || t.id) + commit + ' — ' + fmtTime(t.created_at) + (t.compliant ? '' : ' ⚠');
+      trailSel.appendChild(o);
+    }
+    setMsg('pickMsg', (trails || []).length + ' trail(s) in this flow.', true);
+  } catch (e) { trailSel.innerHTML = '<option value="">(failed to load)</option>'; setMsg('pickMsg', e.message, false); }
+}
+$('flowSel').addEventListener('change', loadTrailsForFlow);
+
+async function loadTimeline() {
+  const trailID = $('trailSel').value;
+  if (!trailID) { setMsg('pickMsg', 'Select a trail first.', false); return; }
+  setMsg('pickMsg', 'Loading evidence…', true);
+  $('summaryPanel').style.display = 'none';
+  $('timelinePanel').style.display = 'none';
+
+  try {
+    const [chain, gate, approvals, attestations] = await Promise.all([
+      api('GET', '/api/v1/trails/' + encodeURIComponent(trailID) + '/verify-chain'),
+      api('GET', '/api/v1/trails/' + encodeURIComponent(trailID) + '/change-gate'),
+      api('GET', '/api/v1/trails/' + encodeURIComponent(trailID) + '/approvals'),
+      api('GET', '/api/v1/search/attestations?trail=' + encodeURIComponent(trailID)),
+    ]);
+
+    renderSummary(chain, gate);
+    renderTimeline(approvals || [], attestations || []);
+    setMsg('pickMsg', 'Evidence timeline loaded.', true);
+  } catch (e) { setMsg('pickMsg', e.message, false); }
+}
+
+function renderSummary(chain, gate) {
+  $('summaryPanel').style.display = 'block';
+  const chainEl = $('chainStat');
+  if (chain.valid) {
+    chainEl.textContent = 'Valid (' + chain.count + ')';
+    chainEl.className = 'value chain-valid';
+  } else {
+    chainEl.textContent = 'BROKEN';
+    chainEl.className = 'value chain-broken';
+  }
+
+  const gateEl = $('gateStat');
+  gateEl.textContent = gate.recommendation || (gate.approved ? 'approve' : 'hold');
+  gateEl.className = 'value ' + (gate.approved ? 'chain-valid' : 'chain-broken');
+
+  const riskEl = $('riskStat');
+  riskEl.textContent = (gate.risk_score != null ? gate.risk_score : '—') + ' / 100';
+  riskEl.className = 'value risk-' + (gate.risk_level || 'low');
+
+  const appr = gate.approvals || {};
+  $('approvalStat').textContent = (appr.human_approvers || 0) + (appr.four_eyes ? ' (four-eyes)' : '');
+
+  const gs = $('gateSummary');
+  let text = gate.summary || '';
+  if (!chain.valid) text = 'TAMPER-EVIDENCE CHAIN BROKEN at entry #' + chain.broken_at + ' (' + (chain.reason || 'unknown') + '). ' + text;
+  gs.textContent = text;
+  gs.className = 'msg ' + ((gate.approved && chain.valid) ? 'ok' : 'err');
+}
+
+function renderTimeline(approvals, attestations) {
+  const events = [];
+  for (const a of attestations) {
+    events.push({
+      kind: 'attestation', id: a.id, time: a.created_at,
+      title: a.name + ' (' + a.type_name + ')',
+      compliant: a.is_compliant,
+    });
+  }
+  for (const ap of approvals) {
+    events.push({
+      kind: 'approval', time: ap.created_at,
+      title: 'Approved by ' + ap.approved_by + ' (' + ap.approver_kind + ')',
+      meta: ap.reason || '',
+    });
+  }
+  events.sort((x, y) => new Date(x.time) - new Date(y.time));
+
+  const el = $('timeline');
+  el.innerHTML = '';
+  $('timelinePanel').style.display = 'block';
+  if (!events.length) {
+    el.innerHTML = '<p class="empty">No evidence recorded on this trail yet.</p>';
+    setMsg('timelineMsg', 'No events.', true);
+    return;
+  }
+  events.forEach(ev => {
+    const item = document.createElement('div');
+    item.className = 'tl-item';
+    let dotClass = 'dot-approval';
+    if (ev.kind === 'attestation') dotClass = ev.compliant ? 'dot-compliant' : 'dot-noncompliant';
+
+    const head = document.createElement('div');
+    head.className = 'tl-head';
+    const pillHTML = ev.kind === 'attestation'
+      ? '<span class="pill ' + (ev.compliant ? 'compliant' : 'noncompliant') + '">' + (ev.compliant ? 'compliant' : 'non-compliant') + '</span>'
+      : '<span class="pill approve">approval</span>';
+    head.innerHTML = '<span class="tl-dot ' + dotClass + '"></span>'
+      + '<span class="tl-name">' + escapeHtml(ev.title) + '</span>' + pillHTML
+      + '<span class="tl-time">' + fmtTime(ev.time) + '</span>';
+
+    const meta = document.createElement('div');
+    meta.className = 'tl-meta';
+    meta.textContent = ev.meta || (ev.kind === 'attestation' ? 'Click to view full evidence payload' : '');
+
+    const detail = document.createElement('div');
+    detail.className = 'tl-detail';
+    const pre = document.createElement('pre');
+    detail.appendChild(pre);
+
+    if (ev.kind === 'attestation') {
+      head.onclick = async () => {
+        detail.classList.toggle('open');
+        if (detail.classList.contains('open') && !pre.textContent) {
+          pre.textContent = 'Loading…';
+          try {
+            const full = await api('GET', '/api/v1/attestations/' + encodeURIComponent(ev.id));
+            pre.textContent = JSON.stringify(full, null, 2);
+          } catch (e) { pre.textContent = 'Error: ' + e.message; }
+        }
+      };
+    }
+
+    item.appendChild(head);
+    item.appendChild(meta);
+    if (ev.kind === 'attestation') item.appendChild(detail);
+    el.appendChild(item);
+  });
+  setMsg('timelineMsg', events.length + ' event(s) on this trail.', true);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+loadFlows();
+</script>
+</body>
+</html>

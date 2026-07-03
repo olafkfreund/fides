@@ -56,6 +56,72 @@ func TestParseTrivy(t *testing.T) {
 	}
 }
 
+func TestParseSBOMCycloneDX(t *testing.T) {
+	doc := []byte(`{
+		"bomFormat": "CycloneDX",
+		"specVersion": "1.4",
+		"components": [
+			{"type": "library", "name": "lodash", "version": "4.17.21", "purl": "pkg:npm/lodash@4.17.21", "licenses": [{"license": {"id": "MIT"}}]},
+			{"type": "library", "name": "axios", "version": "1.6.0", "purl": "pkg:npm/axios@1.6.0"}
+		]
+	}`)
+	r, err := ParseSBOM(doc)
+	if err != nil {
+		t.Fatalf("ParseSBOM: %v", err)
+	}
+	if r.Format != "cyclonedx" || !r.Compliant {
+		t.Fatalf("expected compliant cyclonedx result: %+v", r)
+	}
+	if r.Summary["components"] != 2 || len(r.Components) != 2 {
+		t.Fatalf("expected 2 components: %+v", r)
+	}
+	// sorted by name: axios, lodash
+	if r.Components[0].Name != "axios" || r.Components[1].Name != "lodash" {
+		t.Fatalf("components not sorted: %+v", r.Components)
+	}
+	if r.Components[1].PURL != "pkg:npm/lodash@4.17.21" || len(r.Components[1].Licenses) != 1 || r.Components[1].Licenses[0] != "MIT" {
+		t.Fatalf("lodash component wrong: %+v", r.Components[1])
+	}
+}
+
+func TestParseSBOMSPDX(t *testing.T) {
+	doc := []byte(`{
+		"spdxVersion": "SPDX-2.3",
+		"packages": [
+			{
+				"name": "lodash",
+				"versionInfo": "4.17.21",
+				"licenseConcluded": "MIT",
+				"externalRefs": [{"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:npm/lodash@4.17.21"}]
+			},
+			{"name": "unlicensed-pkg", "versionInfo": "1.0.0", "licenseConcluded": "NOASSERTION"}
+		]
+	}`)
+	r, err := ParseSBOM(doc)
+	if err != nil {
+		t.Fatalf("ParseSBOM: %v", err)
+	}
+	if r.Format != "spdx" || !r.Compliant || len(r.Components) != 2 {
+		t.Fatalf("expected compliant spdx result with 2 components: %+v", r)
+	}
+	// sorted by name: lodash, unlicensed-pkg
+	if r.Components[0].Name != "lodash" || r.Components[0].PURL != "pkg:npm/lodash@4.17.21" {
+		t.Fatalf("lodash component wrong: %+v", r.Components[0])
+	}
+	if len(r.Components[1].Licenses) != 0 {
+		t.Fatalf("NOASSERTION license should not be recorded: %+v", r.Components[1])
+	}
+}
+
+func TestParseSBOMUnrecognized(t *testing.T) {
+	if _, err := ParseSBOM([]byte(`{"foo":"bar"}`)); err == nil {
+		t.Fatalf("unrecognized sbom format must error")
+	}
+	if _, err := ParseSBOM([]byte(`not json`)); err == nil {
+		t.Fatalf("invalid json must error")
+	}
+}
+
 func TestParseDispatchAndErrors(t *testing.T) {
 	if _, err := Parse("unknown", nil); err == nil {
 		t.Fatalf("unknown format must error")
@@ -65,5 +131,97 @@ func TestParseDispatchAndErrors(t *testing.T) {
 	}
 	if _, err := Parse("junit", []byte("<bad")); err == nil {
 		t.Fatalf("invalid xml must error")
+	}
+}
+
+func TestParseSLSACompliant(t *testing.T) {
+	stmt := `{
+	  "_type": "https://in-toto.io/Statement/v1",
+	  "predicateType": "https://slsa.dev/provenance/v1",
+	  "subject": [{"name": "app", "digest": {"sha256": "abc123"}}],
+	  "predicate": {
+	    "buildDefinition": {
+	      "buildType": "https://github.com/actions/runner/github-hosted",
+	      "externalParameters": {"workflow": "build.yml"}
+	    },
+	    "runDetails": {
+	      "builder": {"id": "https://github.com/actions/runner"},
+	      "metadata": {"invocationId": "1234", "startedOn": "2026-07-01T00:00:00Z"}
+	    }
+	  }
+	}`
+	r, err := Parse("slsa", []byte(stmt))
+	if err != nil {
+		t.Fatalf("ParseSLSA: %v", err)
+	}
+	if !r.Compliant {
+		t.Fatalf("expected compliant provenance, findings=%+v", r.Findings)
+	}
+	if r.Format != "slsa" {
+		t.Fatalf("format wrong: %+v", r.Format)
+	}
+	if r.Summary["builder_id"] != "https://github.com/actions/runner" {
+		t.Fatalf("summary builder_id wrong: %+v", r.Summary)
+	}
+	if r.Summary["build_type"] != "https://github.com/actions/runner/github-hosted" {
+		t.Fatalf("summary build_type wrong: %+v", r.Summary)
+	}
+	if r.Summary["subjects"] != 1 {
+		t.Fatalf("summary subjects wrong: %+v", r.Summary)
+	}
+	if len(r.Findings) != 0 {
+		t.Fatalf("expected no findings: %+v", r.Findings)
+	}
+}
+
+func TestParseSLSANonCompliantMissingFields(t *testing.T) {
+	// Wrong predicateType, no subject, no builder.id.
+	stmt := `{
+	  "_type": "https://in-toto.io/Statement/v1",
+	  "predicateType": "https://example.com/not-slsa",
+	  "predicate": {
+	    "buildDefinition": {"buildType": ""},
+	    "runDetails": {"builder": {"id": ""}}
+	  }
+	}`
+	r, err := ParseSLSA([]byte(stmt))
+	if err != nil {
+		t.Fatalf("ParseSLSA: %v", err)
+	}
+	if r.Compliant {
+		t.Fatalf("malformed provenance must not be compliant: %+v", r)
+	}
+	wantFindings := []string{
+		`missing predicate.buildDefinition.buildType`,
+		`missing predicate.runDetails.builder.id`,
+		`missing subject`,
+		`unexpected predicateType "https://example.com/not-slsa" (want "https://slsa.dev/provenance/v1")`,
+	}
+	if len(r.Findings) != len(wantFindings) {
+		t.Fatalf("findings wrong: got %+v want %+v", r.Findings, wantFindings)
+	}
+	for i, f := range wantFindings {
+		if r.Findings[i] != f {
+			t.Fatalf("finding %d wrong: got %q want %q", i, r.Findings[i], f)
+		}
+	}
+}
+
+func TestParseSLSAMissingRunDetailsAndBuildDefinition(t *testing.T) {
+	r, err := ParseSLSA([]byte(`{"predicateType":"https://slsa.dev/provenance/v1","subject":[{"name":"x"}],"predicate":{}}`))
+	if err != nil {
+		t.Fatalf("ParseSLSA: %v", err)
+	}
+	if r.Compliant {
+		t.Fatalf("missing buildDefinition/runDetails must not be compliant: %+v", r)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("expected 2 findings, got %+v", r.Findings)
+	}
+}
+
+func TestParseSLSAInvalidJSON(t *testing.T) {
+	if _, err := Parse("slsa", []byte("not json")); err == nil {
+		t.Fatalf("invalid json must error")
 	}
 }

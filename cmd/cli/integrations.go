@@ -8,6 +8,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"fides/pkg/evidence"
@@ -21,6 +22,18 @@ func isEvidenceFormat(name string) bool {
 		}
 	}
 	return false
+}
+
+// evidenceTypeName maps a parse format to the canonical attestation type_name
+// that framework controls require. Most formats map 1:1, but SLSA provenance
+// is recorded as "slsa-provenance" so that both `fides attest slsa` (local
+// report) and `fides attest fetch` (platform-native) land under one type_name
+// the change gate and control catalogs recognize.
+func evidenceTypeName(format string) string {
+	if format == "slsa" {
+		return "slsa-provenance"
+	}
+	return format
 }
 
 // handleAttestEvidence parses a CI/security report (JUnit/Snyk/Trivy) into a
@@ -43,9 +56,29 @@ func handleAttestEvidence(config CLIConfig, format string, args []string) {
 	fail(err, "parse "+format+" report")
 	payload, _ := json.Marshal(result)
 
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, format, string(payload), []string{*file}, false)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, evidenceTypeName(format), string(payload), []string{*file}, false)
 	fail(err, "record attestation")
 	fmt.Printf("Recorded %s attestation (compliant=%v): %s\n", format, result.Compliant, respBody)
+}
+
+// handleAttestFetch fetches platform-native SLSA provenance/attestations
+// (GitHub Artifact Attestations, GitLab Attestations) for a built artifact
+// using the configured git-provider token, and records them onto the trail.
+func handleAttestFetch(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("attest fetch", flag.ExitOnError)
+	trailID := cmd.String("trail", "", "Trail UUID")
+	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (hex, required)")
+	provider := cmd.String("provider", "", "github | gitlab (optional; inferred from the trail's git host if omitted)")
+	repo := cmd.String("repo", "", "owner/repo (github) or group/project (gitlab); defaults to the trail's recorded git repository")
+	cmd.Parse(args)
+
+	if *trailID == "" || *artSHA == "" {
+		fmt.Println("Error: --trail and --artifact-sha are required\nUsage: fides attest fetch --trail <id> --artifact-sha <hex> [--provider github|gitlab] [--repo <owner/repo>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/attest/fetch", map[string]any{
+		"trail_id": *trailID, "artifact_sha256": *artSHA, "provider": *provider, "repo": *repo,
+	}, "")
 }
 
 // getRequest performs an authenticated GET and returns the response body.
@@ -69,10 +102,10 @@ func getRequest(config CLIConfig, path string) (string, error) {
 	return string(b), nil
 }
 
-// fides servicenow config|get|change-check
+// fides servicenow config|get|change-check|link-control
 func handleServiceNow(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides servicenow <config|get|change-check> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|grounding|mcp> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -109,8 +142,105 @@ func handleServiceNow(config CLIConfig, args []string) {
 		post(config, "/api/v1/servicenow/change-check", map[string]any{
 			"trail_id": *trail, "change_number": *change, "ci": *ci,
 		}, "")
+	case "link-control":
+		cmd := flag.NewFlagSet("servicenow link-control", flag.ExitOnError)
+		trail := cmd.String("trail", "", "trail UUID")
+		change := cmd.String("change", "", "change number, e.g. CHG0030192")
+		control := cmd.String("control", "", "control key, e.g. SOC2-CC7.1")
+		attestation := cmd.String("attestation", "", "attestation UUID (optional; defaults to the trail's most recent attestation)")
+		cmd.Parse(args[1:])
+		if *trail == "" || *change == "" || *control == "" {
+			fmt.Println("Error: --trail, --change, and --control are required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/link-control", map[string]any{
+			"trail_id": *trail, "change_number": *change, "control": *control, "attestation_id": *attestation,
+		}, "")
+	case "anchor-deployment":
+		cmd := flag.NewFlagSet("servicenow anchor-deployment", flag.ExitOnError)
+		trail := cmd.String("trail", "", "trail UUID")
+		change := cmd.String("change", "", "change number, e.g. CHG0030192 (resolves the CI via change_request.cmdb_ci)")
+		ci := cmd.String("ci", "", "cmdb_ci name (alternative/fallback to --change)")
+		buildLog := cmd.String("build-log", "", "pointer to the build log (CI run URL, etc.)")
+		cmd.Parse(args[1:])
+		if *trail == "" || (*change == "" && *ci == "") {
+			fmt.Println("Error: --trail and one of --change/--ci are required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/deployment-anchor", map[string]any{
+			"trail_id": *trail, "change_number": *change, "ci": *ci, "build_log_ref": *buildLog,
+		}, "")
+	case "grounding":
+		cmd := flag.NewFlagSet("servicenow grounding", flag.ExitOnError)
+		change := cmd.String("change", "", "change number, e.g. CHG0030192")
+		cmd.Parse(args[1:])
+		if *change == "" {
+			fmt.Println("Error: --change is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/servicenow/grounding?change="+neturl.QueryEscape(*change))
+		fail(err, "grounding")
+		fmt.Println(body)
+	case "mcp":
+		handleServiceNowMCP(config, args[1:])
 	default:
-		fmt.Println("Usage: fides servicenow <config|get|change-check> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|grounding|mcp> [flags]")
+		os.Exit(1)
+	}
+}
+
+// handleServiceNowMCP drives the ServiceNow MCP client subcommands: discover
+// MCP servers, do a governed record lookup, and list/call governed tools.
+func handleServiceNowMCP(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides servicenow mcp <servers|lookup|tools|call> [flags]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "servers":
+		body, err := getRequest(config, "/api/v1/servicenow/mcp/servers")
+		fail(err, "list ServiceNow MCP servers")
+		fmt.Println(body)
+	case "lookup":
+		cmd := flag.NewFlagSet("servicenow mcp lookup", flag.ExitOnError)
+		table := cmd.String("table", "", "ServiceNow table, e.g. change_request | cmdb_ci | sn_compliance_control")
+		query := cmd.String("query", "", "encoded query (optional)")
+		limit := cmd.Int("limit", 10, "max records")
+		cmd.Parse(args[1:])
+		if *table == "" {
+			fmt.Println("Error: --table is required")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/servicenow/mcp/lookup", map[string]any{
+			"table": *table, "query": *query, "limit": *limit,
+		}, "")
+	case "tools":
+		cmd := flag.NewFlagSet("servicenow mcp tools", flag.ExitOnError)
+		server := cmd.String("server", "", "MCP server name (default sn_mcp_server_default)")
+		cmd.Parse(args[1:])
+		post(config, "/api/v1/servicenow/mcp/tools", map[string]any{"server": *server}, "")
+	case "call":
+		cmd := flag.NewFlagSet("servicenow mcp call", flag.ExitOnError)
+		server := cmd.String("server", "", "MCP server name (default sn_mcp_server_default)")
+		tool := cmd.String("tool", "", "tool name")
+		argsJSON := cmd.String("args", "", "tool arguments as a JSON object")
+		cmd.Parse(args[1:])
+		if *tool == "" {
+			fmt.Println("Error: --tool is required")
+			os.Exit(1)
+		}
+		payload := map[string]any{"server": *server, "tool": *tool}
+		if *argsJSON != "" {
+			var a any
+			if err := json.Unmarshal([]byte(*argsJSON), &a); err != nil {
+				fmt.Println("Error: --args must be valid JSON:", err)
+				os.Exit(1)
+			}
+			payload["arguments"] = a
+		}
+		post(config, "/api/v1/servicenow/mcp/call", payload, "")
+	default:
+		fmt.Println("Usage: fides servicenow mcp <servers|lookup|tools|call> [flags]")
 		os.Exit(1)
 	}
 }
@@ -118,7 +248,7 @@ func handleServiceNow(config CLIConfig, args []string) {
 // fides git-provider config
 func handleGitProvider(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "config" {
-		fmt.Println("Usage: fides git-provider config --provider <github|gitlab> --host <h> --api-base <url> --token-path <ref> [--inbound-secret-path <ref>] [--disable]")
+		fmt.Println("Usage: fides git-provider config --provider <github|gitlab|bitbucket|azure-devops> --host <h> --api-base <url> --token-path <ref> [--inbound-secret-path <ref>] [--disable]")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("git-provider config", flag.ExitOnError)
@@ -129,8 +259,8 @@ func handleGitProvider(config CLIConfig, args []string) {
 	inboundSecret := cmd.String("inbound-secret-path", "", "inbound webhook secret reference (optional)")
 	disable := cmd.Bool("disable", false, "disable the provider")
 	cmd.Parse(args[1:])
-	if (*provider != "github" && *provider != "gitlab") || *host == "" || *apiBase == "" || *tokenPath == "" {
-		fmt.Println("Error: --provider (github|gitlab), --host, --api-base, --token-path are required")
+	if !map[string]bool{"github": true, "gitlab": true, "bitbucket": true, "azure-devops": true}[*provider] || *host == "" || *apiBase == "" || *tokenPath == "" {
+		fmt.Println("Error: --provider (github|gitlab|bitbucket|azure-devops), --host, --api-base, --token-path are required")
 		os.Exit(1)
 	}
 	post(config, "/api/v1/tenant/git-providers", map[string]any{
@@ -256,10 +386,69 @@ func handleSlack(config CLIConfig, args []string) {
 	post(config, "/api/v1/tenant/slack", map[string]any{"webhook_secret_path": *secretPath, "enabled": !*disable}, "Slack configuration saved")
 }
 
+// fides approve --trail <id> [--reason r] [--role approver|deployer] — record a
+// segregation-of-duties approval. Each approve call refreshes the trail's
+// segregation-of-duties attestation (committer != approver != deployer).
+func handleApprove(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("approve", flag.ExitOnError)
+	trail := cmd.String("trail", "", "trail UUID")
+	reason := cmd.String("reason", "", "approval reason")
+	role := cmd.String("role", "approver", "segregation-of-duties role this approval represents: approver | deployer")
+	cmd.Parse(args)
+	if *trail == "" {
+		fmt.Println("Usage: fides approve --trail <id> [--reason <r>] [--role approver|deployer]")
+		os.Exit(1)
+	}
+	if *role != "approver" && *role != "deployer" {
+		fmt.Println("Error: --role must be 'approver' or 'deployer'")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/trails/"+*trail+"/approvals", map[string]any{"reason": *reason, "role": *role}, "Approval recorded")
+}
+
+// fides report --framework <name> [--format oscal] — auditor-ready framework
+// report. Default output is Fides' own human-readable JSON; --format oscal
+// requests a NIST OSCAL 1.x assessment-results JSON document instead (the
+// machine-readable format frameworks like FedRAMP 20x mandate).
+func handleReport(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("report", flag.ExitOnError)
+	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+	format := cmd.String("format", "", "output format: default (human-readable JSON) or oscal")
+	cmd.Parse(args)
+	if *framework == "" {
+		fmt.Println("Usage: fides report --framework <name> [--format oscal]")
+		os.Exit(1)
+	}
+	path := "/api/v1/reports/framework/" + neturl.PathEscape(*framework)
+	if *format != "" {
+		path += "?format=" + neturl.QueryEscape(*format)
+	}
+	body, err := getRequest(config, path)
+	fail(err, "framework report")
+	fmt.Println(body)
+}
+
+// fides change-gate --trail <id> — evidence-backed approval verdict + risk score.
+func handleChangeGate(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("change-gate", flag.ExitOnError)
+	trail := cmd.String("trail", "", "trail UUID")
+	cmd.Parse(args)
+	if *trail == "" {
+		fmt.Println("Usage: fides change-gate --trail <id>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/trails/"+*trail+"/change-gate")
+	fail(err, "evaluate change gate")
+	fmt.Println(body)
+	if strings.Contains(body, "\"approved\":false") {
+		os.Exit(2) // non-zero so CI / a change pipeline can gate on the verdict
+	}
+}
+
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive> [flags]")
+		fmt.Println("Usage: fides control <add|list|coverage|timeline|frameworks|import|enforce|archive|unarchive> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -269,7 +458,7 @@ func handleControl(config CLIConfig, args []string) {
 		name := cmd.String("name", "", "control name")
 		desc := cmd.String("description", "", "description")
 		framework := cmd.String("framework", "", "SOC2 | ISO27001 | FDA-21CFR11")
-		require := cmd.String("require", "", "comma-separated attestation types")
+		require := cmd.String("require", "", "comma-separated attestation types (e.g. junit,trivy,sbom-cyclonedx,slsa-provenance,cosign-verification)")
 		cmd.Parse(args[1:])
 		if *key == "" || *name == "" {
 			fmt.Println("Error: --key and --name are required")
@@ -295,6 +484,75 @@ func handleControl(config CLIConfig, args []string) {
 		body, err := getRequest(config, "/api/v1/controls/coverage")
 		fail(err, "controls coverage")
 		fmt.Println(body)
+	case "timeline":
+		cmd := flag.NewFlagSet("control timeline", flag.ExitOnError)
+		key := cmd.String("key", "", "scope to a single control key (optional)")
+		days := cmd.Int("days", 90, "look-back window in days")
+		cmd.Parse(args[1:])
+		p := "/api/v1/controls/timeline?days=" + strconv.Itoa(*days)
+		if *key != "" {
+			p += "&key=" + neturl.QueryEscape(*key)
+		}
+		body, err := getRequest(config, p)
+		fail(err, "control timeline")
+		fmt.Println(body)
+	case "frameworks":
+		body, err := getRequest(config, "/api/v1/frameworks")
+		fail(err, "list frameworks")
+		fmt.Println(body)
+	case "import":
+		cmd := flag.NewFlagSet("control import", flag.ExitOnError)
+		framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+		cmd.Parse(args[1:])
+		if *framework == "" {
+			fmt.Println("Error: --framework is required (see: fides control frameworks)")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/controls/import-framework", map[string]any{"framework": *framework}, "Framework controls imported")
+	case "enforce":
+		cmd := flag.NewFlagSet("control enforce", flag.ExitOnError)
+		key := cmd.String("key", "", "control key to enforce (omit when using --all-controls)")
+		env := cmd.String("env", "", "environment UUID (omit when using --all-environments)")
+		allEnvs := cmd.Bool("all-environments", false, "enforce across every environment")
+		allControls := cmd.Bool("all-controls", false, "enforce every active control")
+		cmd.Parse(args[1:])
+		if *key == "" && !*allControls {
+			fmt.Println("Error: --key or --all-controls is required")
+			os.Exit(1)
+		}
+		if *env == "" && !*allEnvs {
+			fmt.Println("Error: --env or --all-environments is required")
+			os.Exit(1)
+		}
+		body := map[string]any{}
+		if *allEnvs {
+			body["all"] = true
+		} else {
+			body["environment_id"] = *env
+		}
+		keys := []string{}
+		if *allControls {
+			raw, err := getRequest(config, "/api/v1/controls")
+			fail(err, "list controls")
+			var ctrls []struct {
+				Key string `json:"key"`
+			}
+			if err := json.Unmarshal([]byte(raw), &ctrls); err != nil {
+				fail(err, "parse controls")
+			}
+			for _, c := range ctrls {
+				keys = append(keys, c.Key)
+			}
+			if len(keys) == 0 {
+				fmt.Println("No active controls to enforce — import a framework first (fides control import).")
+				return
+			}
+		} else {
+			keys = append(keys, *key)
+		}
+		for _, k := range keys {
+			post(config, "/api/v1/controls/"+neturl.PathEscape(k)+"/enforce", body, "Enforced "+k)
+		}
 	case "archive", "unarchive":
 		cmd := flag.NewFlagSet("control "+args[0], flag.ExitOnError)
 		id := cmd.String("id", "", "control UUID")
@@ -305,19 +563,65 @@ func handleControl(config CLIConfig, args []string) {
 		}
 		post(config, "/api/v1/controls/"+*id+"/"+args[0], map[string]any{}, "Done")
 	default:
-		fmt.Println("Usage: fides control <add|list|coverage|archive|unarchive>")
+		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|enforce|archive|unarchive>")
 		os.Exit(1)
 	}
 }
 
 // fides metrics [--days N]
 func handleMetrics(config CLIConfig, args []string) {
+	if len(args) > 0 && args[0] == "deployment-frequency" {
+		cmd := flag.NewFlagSet("metrics deployment-frequency", flag.ExitOnError)
+		weeks := cmd.Int("weeks", 12, "number of weeks")
+		cmd.Parse(args[1:])
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/deployment-frequency?weeks=%d", *weeks))
+		fail(err, "fetch deployment frequency")
+		fmt.Println(body)
+		return
+	}
+	if len(args) > 0 && args[0] == "compliance-correlation" {
+		cmd := flag.NewFlagSet("metrics compliance-correlation", flag.ExitOnError)
+		days := cmd.Int("days", 30, "window in days")
+		cmd.Parse(args[1:])
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/compliance-correlation?days=%d", *days))
+		fail(err, "fetch compliance correlation")
+		fmt.Println(body)
+		return
+	}
 	cmd := flag.NewFlagSet("metrics", flag.ExitOnError)
 	days := cmd.Int("days", 30, "window in days")
 	cmd.Parse(args)
 	body, err := getRequest(config, fmt.Sprintf("/api/v1/metrics/dora?days=%d", *days))
 	fail(err, "fetch metrics")
 	fmt.Println(body)
+}
+
+// fides flow list | trails --flow <id> | artifacts --flow <id>
+func handleFlow(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides flow <list|trails|artifacts> [--flow <id>]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "list":
+		body, err := getRequest(config, "/api/v1/flows")
+		fail(err, "list flows")
+		fmt.Println(body)
+	case "trails", "artifacts":
+		cmd := flag.NewFlagSet("flow "+args[0], flag.ExitOnError)
+		flow := cmd.String("flow", "", "flow UUID")
+		cmd.Parse(args[1:])
+		if *flow == "" {
+			fmt.Println("Error: --flow is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/flows/"+*flow+"/"+args[0])
+		fail(err, "list flow "+args[0])
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides flow <list|trails|artifacts> [--flow <id>]")
+		os.Exit(1)
+	}
 }
 
 // fides logical-env create|list|add-member|state
@@ -366,13 +670,59 @@ func handleLogicalEnv(config CLIConfig, args []string) {
 // fides policy add|list|check --env <id> ...
 func handlePolicy(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides policy <add|list|check> --env <id> [--name --require t1,t2 --if-tag --if-value | --trail]")
+		fmt.Println("Usage: fides policy <create|delete|generate|add|list|check> [flags]")
 		os.Exit(1)
+	}
+	// Global (org-level) policies: create / delete / AI-generate.
+	switch args[0] {
+	case "create":
+		c := flag.NewFlagSet("policy create", flag.ExitOnError)
+		name := c.String("name", "", "policy name")
+		desc := c.String("description", "", "description")
+		rulesFile := c.String("rules-file", "", "file with the policy rules (jq/JSON)")
+		c.Parse(args[1:])
+		if *name == "" {
+			fmt.Println("Error: --name is required")
+			os.Exit(1)
+		}
+		rules := ""
+		if *rulesFile != "" {
+			data, err := os.ReadFile(*rulesFile) // #nosec G304 G703 -- CLI reads a user-specified rules file by design
+			fail(err, "read rules file")
+			rules = string(data)
+		}
+		post(config, "/api/v1/policies/create", map[string]any{"name": *name, "description": *desc, "rules": rules}, "Policy created")
+		return
+	case "delete":
+		c := flag.NewFlagSet("policy delete", flag.ExitOnError)
+		id := c.String("id", "", "policy UUID")
+		c.Parse(args[1:])
+		if *id == "" {
+			fmt.Println("Error: --id is required")
+			os.Exit(1)
+		}
+		body, err := deleteRequest(config, "/api/v1/policies/"+*id)
+		fail(err, "delete policy")
+		fmt.Println(body)
+		return
+	case "generate":
+		c := flag.NewFlagSet("policy generate", flag.ExitOnError)
+		framework := c.String("framework", "SOC2", "compliance framework")
+		desc := c.String("description", "", "what the policy should enforce")
+		c.Parse(args[1:])
+		if *desc == "" {
+			fmt.Println("Error: --description is required")
+			os.Exit(1)
+		}
+		body, err := postRequest(config, "/api/v1/ai/generate-policy", map[string]any{"framework": *framework, "description": *desc})
+		fail(err, "generate policy")
+		fmt.Println(body)
+		return
 	}
 	cmd := flag.NewFlagSet("policy "+args[0], flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
 	name := cmd.String("name", "", "policy name")
-	require := cmd.String("require", "", "comma-separated required attestation types")
+	require := cmd.String("require", "", "comma-separated required attestation types (e.g. junit,trivy,sbom-cyclonedx,slsa-provenance,cosign-verification)")
 	ifTag := cmd.String("if-tag", "", "only enforce when flow tag == value")
 	ifValue := cmd.String("if-value", "", "tag value")
 	trail := cmd.String("trail", "", "trail UUID (for check)")
@@ -447,19 +797,21 @@ func handleAudit(config CLIConfig, args []string) {
 	fmt.Printf("Wrote audit package to %s\n", dest)
 }
 
-// fides search artifacts|attestations
+// fides search artifacts|attestations|components
 func handleSearch(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides search <artifacts|attestations> [--sha --commit --name | --type --trail --compliant]")
+		fmt.Println("Usage: fides search <artifacts|attestations|components> [--sha --commit --name | --type --trail --compliant | --purl --artifact --name]")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("search "+args[0], flag.ExitOnError)
 	sha := cmd.String("sha", "", "artifact SHA256 prefix")
 	commit := cmd.String("commit", "", "git commit")
-	name := cmd.String("name", "", "artifact name (substring)")
+	name := cmd.String("name", "", "artifact name (substring), or component name (substring)")
 	typ := cmd.String("type", "", "attestation type name")
 	trail := cmd.String("trail", "", "trail UUID")
 	compliant := cmd.String("compliant", "", "true|false")
+	purl := cmd.String("purl", "", "component package URL (purl), exact match")
+	artifact := cmd.String("artifact", "", "artifact SHA256, exact match (which deployed artifacts contain this component)")
 	cmd.Parse(args[1:])
 
 	q := neturl.Values{}
@@ -475,8 +827,13 @@ func handleSearch(config CLIConfig, args []string) {
 		setIf(q, "type", *typ)
 		setIf(q, "trail", *trail)
 		setIf(q, "compliant", *compliant)
+	case "components":
+		path = "/api/v1/search/components"
+		setIf(q, "purl", *purl)
+		setIf(q, "artifact", *artifact)
+		setIf(q, "name", *name)
 	default:
-		fmt.Println("Usage: fides search <artifacts|attestations>")
+		fmt.Println("Usage: fides search <artifacts|attestations|components>")
 		os.Exit(1)
 	}
 	body, err := getRequest(config, path+"?"+q.Encode())
@@ -529,17 +886,31 @@ func handleEnvVerify(config CLIConfig, args []string) {
 	}
 }
 
-// fides env diff --env <id> [--from <snap> --to <snap>]
+// fides env diff --env <id> [--from <snap> --to <snap>] [--reevaluate-change CHGxxxx]
 func handleEnvDiff(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("env diff", flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
 	from := cmd.String("from", "", "from snapshot UUID (default: 2nd most recent)")
 	to := cmd.String("to", "", "to snapshot UUID (default: most recent)")
+	reevaluateChange := cmd.String("reevaluate-change", "", "ServiceNow change number (e.g. CHG0030192); on detected drift, escalates its risk and posts a work note")
 	cmd.Parse(args)
 	if *env == "" {
-		fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>]")
+		fmt.Println("Usage: fides env diff --env <id> [--from <snap> --to <snap>] [--reevaluate-change CHGxxxx]")
 		os.Exit(1)
 	}
+
+	if *reevaluateChange != "" {
+		body, err := postRequest(config, "/api/v1/environments/"+*env+"/snapshots/reevaluate-change", map[string]any{
+			"change_number": *reevaluateChange, "from": *from, "to": *to,
+		})
+		fail(err, "drift re-evaluation")
+		fmt.Println(body)
+		if strings.Contains(body, "\"drift_detected\":true") {
+			os.Exit(2) // non-zero so CI/pipelines can react to post-approval drift
+		}
+		return
+	}
+
 	q := neturl.Values{}
 	setIf(q, "from", *from)
 	setIf(q, "to", *to)
@@ -603,6 +974,118 @@ func handleAllowlist(config CLIConfig, args []string) {
 	default:
 		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>]")
 		os.Exit(1)
+	}
+}
+
+// fides remediation propose|list|get|approve|reject|apply
+//
+// Policy-driven auto-remediation with approval gates (issue #235): propose a
+// low-risk fix (env tag, allowlist entry, or drift re-sync), have a distinct
+// principal approve it, then apply. Apply always fails server-side unless the
+// action is approved — this CLI never applies without going through approve.
+func handleRemediation(config CLIConfig, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: fides remediation <propose|list|get|approve|reject|apply> [flags]")
+		os.Exit(1)
+	}
+	switch args[0] {
+	case "propose":
+		cmd := flag.NewFlagSet("remediation propose", flag.ExitOnError)
+		env := cmd.String("env", "", "environment UUID")
+		domain := cmd.String("domain", "", "env_tag | allowlist_entry | drift_resync")
+		reason := cmd.String("reason", "", "why this remediation is being proposed")
+		policy := cmd.String("policy", "", "policy UUID that was violated (optional)")
+		tags := cmd.String("tags", "", "comma-separated key=value pairs (domain=env_tag)")
+		sha := cmd.String("sha", "", "artifact SHA256 (domain=allowlist_entry|drift_resync)")
+		cmd.Parse(args[1:])
+		if *env == "" || *domain == "" {
+			fmt.Println("Error: --env and --domain are required")
+			os.Exit(1)
+		}
+		params := map[string]any{}
+		switch *domain {
+		case "env_tag":
+			if *tags == "" {
+				fmt.Println("Error: --tags is required for domain=env_tag (e.g. --tags team=payments,pci-scope=false)")
+				os.Exit(1)
+			}
+			tagMap := map[string]string{}
+			for _, kv := range strings.Split(*tags, ",") {
+				parts := strings.SplitN(kv, "=", 2)
+				if len(parts) != 2 || parts[0] == "" {
+					fmt.Printf("Error: invalid --tags entry %q (want key=value)\n", kv)
+					os.Exit(1)
+				}
+				tagMap[parts[0]] = parts[1]
+			}
+			params["tags"] = tagMap
+		case "allowlist_entry", "drift_resync":
+			if *sha == "" {
+				fmt.Printf("Error: --sha is required for domain=%s\n", *domain)
+				os.Exit(1)
+			}
+			params["artifact_sha256"] = *sha
+		default:
+			fmt.Println("Error: --domain must be one of env_tag, allowlist_entry, drift_resync")
+			os.Exit(1)
+		}
+		body, err := postRequest(config, "/api/v1/remediation", map[string]any{
+			"environment_id": *env, "domain": *domain, "reason": *reason, "policy_id": *policy, "params": params,
+		})
+		fail(err, "propose remediation")
+		fmt.Println(body)
+	case "list":
+		cmd := flag.NewFlagSet("remediation list", flag.ExitOnError)
+		status := cmd.String("status", "", "filter by status (proposed|approved|applied|rejected)")
+		env := cmd.String("env", "", "filter by environment UUID")
+		cmd.Parse(args[1:])
+		q := neturl.Values{}
+		setIf(q, "status", *status)
+		setIf(q, "environment_id", *env)
+		path := "/api/v1/remediation"
+		if enc := q.Encode(); enc != "" {
+			path += "?" + enc
+		}
+		body, err := getRequest(config, path)
+		fail(err, "list remediation actions")
+		fmt.Println(body)
+	case "get":
+		cmd := flag.NewFlagSet("remediation get", flag.ExitOnError)
+		id := cmd.String("id", "", "remediation action UUID")
+		cmd.Parse(args[1:])
+		if *id == "" {
+			fmt.Println("Error: --id is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/remediation/"+*id)
+		fail(err, "get remediation action")
+		fmt.Println(body)
+	case "approve":
+		remediationTransition(config, args[1:], "approve")
+	case "reject":
+		remediationTransition(config, args[1:], "reject")
+	case "apply":
+		remediationTransition(config, args[1:], "apply")
+	default:
+		fmt.Println("Usage: fides remediation <propose|list|get|approve|reject|apply> [flags]")
+		os.Exit(1)
+	}
+}
+
+func remediationTransition(config CLIConfig, args []string, verb string) {
+	cmd := flag.NewFlagSet("remediation "+verb, flag.ExitOnError)
+	id := cmd.String("id", "", "remediation action UUID")
+	reason := cmd.String("reason", "", "optional note")
+	cmd.Parse(args)
+	if *id == "" {
+		fmt.Printf("Error: --id is required\n")
+		os.Exit(1)
+	}
+	body, err := postRequest(config, "/api/v1/remediation/"+*id+"/"+verb, map[string]any{"reason": *reason})
+	fail(err, "remediation "+verb)
+	fmt.Println(body)
+	if verb == "apply" && strings.Contains(body, "\"error\"") {
+		os.Exit(2)
 	}
 }
 

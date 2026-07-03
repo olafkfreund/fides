@@ -13,8 +13,10 @@ import (
 
 // Providers.
 const (
-	GitHub = "github"
-	GitLab = "gitlab"
+	GitHub      = "github"
+	GitLab      = "gitlab"
+	Bitbucket   = "bitbucket"
+	AzureDevOps = "azure-devops"
 )
 
 // TrailInfo is the provenance extracted from a push event.
@@ -51,12 +53,18 @@ func VerifyGitLab(secret, tokenHeader string) bool {
 	return subtle.ConstantTimeCompare([]byte(secret), []byte(tokenHeader)) == 1
 }
 
-// Verify dispatches to the provider-specific check.
+// Verify dispatches to the provider-specific check. Bitbucket (Server/DC) signs
+// with X-Hub-Signature (HMAC-SHA256, like GitHub); Azure DevOps service hooks use
+// a shared token (like GitLab).
 func Verify(provider, secret, sigOrToken string, body []byte) bool {
 	switch provider {
 	case GitHub:
 		return VerifyGitHub(secret, sigOrToken, body)
+	case Bitbucket:
+		return VerifyGitHub(secret, sigOrToken, body)
 	case GitLab:
+		return VerifyGitLab(secret, sigOrToken)
+	case AzureDevOps:
 		return VerifyGitLab(secret, sigOrToken)
 	default:
 		return false
@@ -88,6 +96,48 @@ type gitlabPush struct {
 		ID      string `json:"id"`
 		Message string `json:"message"`
 	} `json:"commits"`
+}
+
+type bitbucketPush struct {
+	Push struct {
+		Changes []struct {
+			New struct {
+				Name   string `json:"name"`
+				Target struct {
+					Hash    string `json:"hash"`
+					Message string `json:"message"`
+				} `json:"target"`
+			} `json:"new"`
+		} `json:"changes"`
+	} `json:"push"`
+	Repository struct {
+		FullName string `json:"full_name"`
+		Links    struct {
+			HTML struct {
+				Href string `json:"href"`
+			} `json:"html"`
+		} `json:"links"`
+	} `json:"repository"`
+}
+
+type azurePush struct {
+	Resource struct {
+		RefUpdates []struct {
+			Name        string `json:"name"`
+			NewObjectID string `json:"newObjectId"`
+		} `json:"refUpdates"`
+		Commits []struct {
+			CommitID string `json:"commitId"`
+			Comment  string `json:"comment"`
+		} `json:"commits"`
+		Repository struct {
+			Name      string `json:"name"`
+			RemoteURL string `json:"remoteUrl"`
+			Project   struct {
+				Name string `json:"name"`
+			} `json:"project"`
+		} `json:"repository"`
+	} `json:"resource"`
 }
 
 // ParsePush extracts trail provenance from a push event. It returns false if the
@@ -134,6 +184,45 @@ func ParsePush(provider string, body []byte) (TrailInfo, bool) {
 			FullName:   p.Project.PathWithNamespace,
 			Commit:     commit,
 			Branch:     branchFromRef(p.Ref),
+			Message:    msg,
+		}, true
+	case Bitbucket:
+		var p bitbucketPush
+		if err := json.Unmarshal(body, &p); err != nil || len(p.Push.Changes) == 0 {
+			return TrailInfo{}, false
+		}
+		ch := p.Push.Changes[0].New
+		if ch.Target.Hash == "" {
+			return TrailInfo{}, false
+		}
+		return TrailInfo{
+			Repository: p.Repository.Links.HTML.Href,
+			FullName:   p.Repository.FullName,
+			Commit:     ch.Target.Hash,
+			Branch:     ch.Name,
+			Message:    ch.Target.Message,
+		}, true
+	case AzureDevOps:
+		var p azurePush
+		if err := json.Unmarshal(body, &p); err != nil || len(p.Resource.RefUpdates) == 0 {
+			return TrailInfo{}, false
+		}
+		commit := p.Resource.RefUpdates[0].NewObjectID
+		msg := ""
+		if len(p.Resource.Commits) > 0 {
+			if commit == "" {
+				commit = p.Resource.Commits[0].CommitID
+			}
+			msg = p.Resource.Commits[0].Comment
+		}
+		if commit == "" {
+			return TrailInfo{}, false
+		}
+		return TrailInfo{
+			Repository: p.Resource.Repository.RemoteURL,
+			FullName:   p.Resource.Repository.Project.Name + "/" + p.Resource.Repository.Name,
+			Commit:     commit,
+			Branch:     branchFromRef(p.Resource.RefUpdates[0].Name),
 			Message:    msg,
 		}, true
 	default:

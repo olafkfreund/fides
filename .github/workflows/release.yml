@@ -1,0 +1,76 @@
+name: Release
+
+# Cut a release by pushing a semver tag, e.g.:
+#   git tag v0.2.0 && git push origin v0.2.0
+# Cross-compiles the Go binaries for linux/darwin (amd64+arm64), packages one
+# archive per platform, and publishes a GitHub release with checksums.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # create the release + upload assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          version="${GITHUB_REF_NAME}"
+          dist="fides_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "$dist"
+          # Same binary names as the flake and .gitignore convention.
+          go build -trimpath -ldflags '-s -w' -o "$dist/fides-server"     ./cmd/server
+          go build -trimpath -ldflags '-s -w' -o "$dist/fides"            ./cmd/cli
+          go build -trimpath -ldflags '-s -w' -o "$dist/fides-mcp"        ./cmd/mcp
+          go build -trimpath -ldflags '-s -w' -o "$dist/fides-mcp-sensor" ./cmd/mcp-sensor
+          tar -czf "${dist}.tar.gz" "$dist"
+          sha256sum "${dist}.tar.gz" > "${dist}.tar.gz.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fides-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            fides_*.tar.gz
+            fides_*.tar.gz.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/fides_*.tar.gz
+            dist/fides_*.tar.gz.sha256

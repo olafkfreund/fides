@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,6 +96,156 @@ func TestCMDBSinkPostsIRE(t *testing.T) {
 	}
 }
 
+// TestAnchorDeploymentAttestationUploadsAttachmentAndUpdatesCI is the core
+// proof for issue #228: anchoring a signed deployment attestation onto a CMDB
+// CI must (1) upload it as a file attachment carrying the image digest, commit,
+// build log ref and runtime snapshot ref, and (2) best-effort summarize it onto
+// the CI record itself.
+func TestAnchorDeploymentAttestationUploadsAttachmentAndUpdatesCI(t *testing.T) {
+	var attachPath, attachQuery string
+	var attachBody DeploymentAttestation
+	var updatePath string
+	var updateBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
+			attachPath = r.URL.Path
+			attachQuery = r.URL.RawQuery
+			if err := json.Unmarshal(b, &attachBody); err != nil {
+				t.Errorf("decode attachment body: %v", err)
+			}
+			w.Write([]byte(`{"result":{"sys_id":"att-1","file_name":"fides-deployment-attestation-attest-1.json"}}`))
+		case r.Method == http.MethodPatch:
+			updatePath = r.URL.Path
+			if err := json.Unmarshal(b, &updateBody); err != nil {
+				t.Errorf("decode update body: %v", err)
+			}
+			w.Write([]byte(`{"result":{"sys_id":"ci-1"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := testClient(srv.URL, AuthBasic, srv.Client())
+	att := DeploymentAttestation{
+		CISysID:       "ci-1",
+		ChangeNumber:  "CHG0030192",
+		TrailID:       "trail-1",
+		FlowName:      "payments-api",
+		ImageDigest:   "abc123def456abc123def456abc123def456abc123def456abc123def456ab",
+		Commit:        "deadbeefcafefeed0123456789abcdef0123456",
+		BuildLogRef:   "https://ci.example.com/builds/42",
+		SnapshotRef:   "snap-9",
+		AttestationID: "attest-1",
+		ContentHash:   "hash-1",
+		Compliant:     true,
+	}
+
+	result, err := AnchorDeploymentAttestation(context.Background(), client, att)
+	if err != nil {
+		t.Fatalf("AnchorDeploymentAttestation: %v", err)
+	}
+	if result["sys_id"] != "att-1" {
+		t.Fatalf("expected attachment result, got %+v", result)
+	}
+
+	if attachPath != "/api/now/attachment/file" {
+		t.Fatalf("attachment path = %s", attachPath)
+	}
+	if !strings.Contains(attachQuery, "table_name=cmdb_ci") || !strings.Contains(attachQuery, "table_sys_id=ci-1") {
+		t.Fatalf("attachment query missing table_name/table_sys_id: %s", attachQuery)
+	}
+	if attachBody.ImageDigest != att.ImageDigest || attachBody.Commit != att.Commit ||
+		attachBody.BuildLogRef != att.BuildLogRef || attachBody.SnapshotRef != att.SnapshotRef ||
+		attachBody.AttestationID != att.AttestationID || attachBody.ChangeNumber != att.ChangeNumber {
+		t.Fatalf("attachment body did not carry the full attestation: %+v", attachBody)
+	}
+
+	// The CI update (PATCH) must also carry evidence of the attestation, so it
+	// is visible without opening the attachment.
+	if updatePath != "/api/now/table/cmdb_ci/ci-1" {
+		t.Fatalf("update path = %s", updatePath)
+	}
+	summary, _ := updateBody["comments"].(string)
+	for _, want := range []string{att.ImageDigest[:12], att.Commit[:12], att.ChangeNumber, att.BuildLogRef, att.SnapshotRef} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("CI update comments missing %q: %s", want, summary)
+		}
+	}
+}
+
+func TestAnchorDeploymentAttestationRequiresCISysID(t *testing.T) {
+	client := testClient("https://example.service-now.com", AuthBasic, http.DefaultClient)
+	if _, err := AnchorDeploymentAttestation(context.Background(), client, DeploymentAttestation{}); err == nil {
+		t.Fatal("expected error when ci_sys_id is missing")
+	}
+}
+
+func TestCMDBSinkDeliverAnchorResolvesCIByNameAndAnchors(t *testing.T) {
+	var sawSearch, sawAttach bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/cmdb_ci":
+			sawSearch = true
+			w.Write([]byte(`{"result":[{"sys_id":"ci-42","name":"payments"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
+			sawAttach = true
+			if !strings.Contains(r.URL.RawQuery, "table_sys_id=ci-42") {
+				t.Errorf("expected resolved sys_id ci-42 in attachment query, got %s", r.URL.RawQuery)
+			}
+			w.Write([]byte(`{"result":{"sys_id":"att-2"}}`))
+		case r.Method == http.MethodPatch:
+			w.Write([]byte(`{"result":{}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	sink := NewCMDBSink(fakeLoader{
+		cfg:     Config{InstanceURL: srv.URL, AuthType: AuthBasic, ClientID: "u", Secret: "p"},
+		enabled: true,
+	})
+	sink.newClient = func(cfg Config) (*Client, error) {
+		return testClient(cfg.InstanceURL, cfg.AuthType, srv.Client()), nil
+	}
+
+	payload, _ := json.Marshal(DeploymentAttestation{
+		CI: "payments", TrailID: "trail-1", ImageDigest: "abc", Commit: "def", Compliant: true,
+	})
+	ev := events.Event{ID: uuid.New(), OrgID: uuid.New(), Type: AnchorEventType, Payload: payload}
+	if err := sink.Deliver(context.Background(), ev); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if !sawSearch || !sawAttach {
+		t.Fatalf("expected CI search and attachment upload, got search=%v attach=%v", sawSearch, sawAttach)
+	}
+}
+
+func TestCMDBSinkDeliverAnchorMissingCIErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"result":[]}`))
+	}))
+	defer srv.Close()
+
+	sink := NewCMDBSink(fakeLoader{
+		cfg:     Config{InstanceURL: srv.URL, AuthType: AuthBasic, ClientID: "u", Secret: "p"},
+		enabled: true,
+	})
+	sink.newClient = func(cfg Config) (*Client, error) {
+		return testClient(cfg.InstanceURL, cfg.AuthType, srv.Client()), nil
+	}
+
+	payload, _ := json.Marshal(DeploymentAttestation{CI: "unknown-service", TrailID: "trail-1"})
+	ev := events.Event{ID: uuid.New(), OrgID: uuid.New(), Type: AnchorEventType, Payload: payload}
+	if err := sink.Deliver(context.Background(), ev); err == nil {
+		t.Fatal("expected error when the CI cannot be resolved")
+	}
+}
+
 func TestCMDBSinkSkipsDisabledAndUnrelated(t *testing.T) {
 	var called bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = true }))
@@ -105,6 +256,10 @@ func TestCMDBSinkSkipsDisabledAndUnrelated(t *testing.T) {
 	payload, _ := json.Marshal(reportedPayload{Services: []RunningService{{Service: "x", Digest: "y"}}})
 	if err := disabled.Deliver(context.Background(), events.Event{Type: CMDBEventType, Payload: payload}); err != nil {
 		t.Fatalf("disabled: %v", err)
+	}
+	anchorPayload, _ := json.Marshal(DeploymentAttestation{CISysID: "ci-1", TrailID: "trail-1"})
+	if err := disabled.Deliver(context.Background(), events.Event{Type: AnchorEventType, Payload: anchorPayload}); err != nil {
+		t.Fatalf("disabled anchor: %v", err)
 	}
 
 	other := NewCMDBSink(fakeLoader{enabled: true})

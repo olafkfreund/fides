@@ -1,0 +1,9 @@
+# Keep the Docker build context small. The portal is built in its own Node
+# stage (Dockerfile.server) via `npm ci`, so its node_modules/build artifacts
+# must not be copied from the host.
+portal/node_modules
+portal/out
+portal/.next
+node_modules
+.git
+terraform-provider-fides

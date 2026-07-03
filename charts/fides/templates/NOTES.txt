@@ -1,0 +1,32 @@
+Fides is installing.
+
+1. The pre-install seed Job created the schema, the least-privilege fides_app
+   role{{ if .Values.rls.enabled }}, the RLS policies{{ end }}, and the first organization
+   "{{ .Values.org.name }}". View its output:
+
+     kubectl -n {{ .Release.Namespace }} logs job/{{ include "fides.fullname" . }}-seed
+
+{{- if not .Values.org.id }}
+
+   ⚠ org.id was not set, so a UUID was generated. Copy FIDES_API_ORG_ID from the
+   job log into values (org.id) and run `helm upgrade` so the server is pinned to
+   that tenant.
+{{- end }}
+
+2. Wait for the server:
+
+     kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "fides.fullname" . }}
+
+3. Log in with PORTAL_USERNAME "{{ .Values.portal.username }}" and the portal password.
+
+{{- if .Values.ingress.enabled }}
+
+   URL: http{{ if .Values.ingress.tls }}s{{ end }}://{{ .Values.ingress.host }}
+{{- else }}
+
+   Port-forward to reach it:
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "fides.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- end }}
+
+RLS is {{ if .Values.rls.enabled }}ENABLED{{ else }}DISABLED{{ end }}. With RLS on, the app connects as fides_app and
+tenant isolation is enforced at the database layer.

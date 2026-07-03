@@ -3,20 +3,49 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
+import {
+  Moon, Sun, ShieldCheck, LineChart, GitBranch, Archive, Server, Scale,
+  ListChecks, MessageSquare, Gauge, Settings as SettingsIcon, BookOpen, LogOut, UserCircle2, FileCheck2,
+} from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api";
+import GlobalSearch from "@/components/GlobalSearch";
+import { registerFidesWebMCP } from "@/lib/webmcp";
 
-type NavItem = { href: string; label: string; ready?: boolean };
+type Icon = React.ComponentType<{ className?: string }>;
+type NavItem = { href: string; label: string; icon: Icon };
 
 const NAV: NavItem[] = [
-  { href: "/", label: "Overview", ready: true },
-  { href: "/settings", label: "Settings", ready: true },
-  { href: "/flows", label: "Flows & Trails", ready: true },
-  { href: "/artifacts", label: "Artifacts & SBOM" },
-  { href: "/environments", label: "Environments", ready: true },
-  { href: "/policies", label: "Policies" },
-  { href: "/ai-audits", label: "AI Audits" },
-  { href: "/telemetry", label: "Telemetry" },
+  { href: "/", label: "Overview", icon: LineChart },
+  { href: "/flows", label: "Flows & Trails", icon: GitBranch },
+  { href: "/artifacts", label: "Artifacts & SBOM", icon: Archive },
+  { href: "/attestations", label: "Attestations", icon: FileCheck2 },
+  { href: "/environments", label: "Environments", icon: Server },
+  { href: "/policies", label: "Policies", icon: Scale },
+  { href: "/controls", label: "Controls", icon: ListChecks },
+  { href: "/ai-audits", label: "AI Audits", icon: MessageSquare },
+  { href: "/telemetry", label: "Telemetry", icon: Gauge },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
+  { href: "/help", label: "Help & Docs", icon: BookOpen },
 ];
+
+function ThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- idiomatic next-themes hydration guard
+  useEffect(() => setMounted(true), []);
+  const dark = resolvedTheme === "dark";
+  return (
+    <button
+      onClick={() => setTheme(dark ? "light" : "dark")}
+      className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground"
+      aria-label="Toggle theme"
+    >
+      {mounted && dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+      <span>{mounted ? (dark ? "Light mode" : "Dark mode") : "Theme"}</span>
+    </button>
+  );
+}
 
 export default function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -24,50 +53,65 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Cheap authenticated call to confirm the session.
     apiGet("/api/v1/flows")
       .then(() => setAuthed(true))
       .catch((e) => {
-        if (e instanceof ApiError && e.status === 401) {
-          router.replace("/login");
-        } else {
-          setAuthed(true); // reachable but errored for another reason
-        }
+        if (e instanceof ApiError && e.status === 401) router.replace("/login");
+        else setAuthed(true);
       });
   }, [router]);
 
+  // Expose Fides capabilities to browser AI agents / local assistants via WebMCP
+  // once the session is authenticated (tools call the same-origin API).
+  useEffect(() => { if (authed) registerFidesWebMCP(); }, [authed]);
+
   if (authed === null) {
-    return <div className="m-auto text-neutral-500 text-sm">Loading…</div>;
+    return <div className="m-auto text-muted-foreground text-sm">Loading…</div>;
   }
 
   return (
     <div className="flex min-h-full w-full">
-      <aside className="w-56 shrink-0 border-r border-neutral-800 p-4">
-        <div className="mb-6 font-mono font-semibold tracking-wide">FIDES</div>
-        <nav className="flex flex-col gap-1">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground">
+        <div className="mb-6 flex items-center gap-2 px-1">
+          <ShieldCheck className="size-6 text-primary" />
+          <span className="font-mono text-lg font-bold tracking-wide">FIDES</span>
+        </div>
+        <nav className="flex flex-1 flex-col gap-1">
           {NAV.map((n) => {
             const active = pathname === n.href;
-            const base = "rounded-md px-3 py-2 text-sm";
-            if (!n.ready) {
-              return (
-                <span key={n.href} className={`${base} text-neutral-600 cursor-not-allowed`} title="Coming soon">
-                  {n.label}
-                </span>
-              );
-            }
+            const Ic = n.icon;
             return (
               <Link
                 key={n.href}
                 href={n.href}
-                className={`${base} ${active ? "bg-purple-600/15 text-neutral-100" : "text-neutral-400 hover:text-neutral-100"}`}
+                className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${active ? "bg-primary/15 font-medium text-foreground" : "text-muted-foreground hover:bg-accent hover:text-foreground"}`}
               >
+                <Ic className={`size-4 ${active ? "text-primary" : ""}`} />
                 {n.label}
               </Link>
             );
           })}
         </nav>
+        <div className="mt-2 flex flex-col gap-1 border-t border-sidebar-border pt-2">
+          <ThemeToggle />
+          <div className="flex items-center justify-between px-3 py-2">
+            <div className="flex items-center gap-2">
+              <UserCircle2 className="size-6 text-muted-foreground" />
+              <div className="leading-tight">
+                <div className="text-sm">Admin</div>
+                <div className="text-xs text-muted-foreground">Signed in</div>
+              </div>
+            </div>
+            <a href="/login" title="Sign out" className="text-muted-foreground hover:text-foreground"><LogOut className="size-4" /></a>
+          </div>
+        </div>
       </aside>
-      <main className="flex-1 p-8">{children}</main>
+      <main className="flex flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex items-center justify-end border-b border-border bg-background/80 px-8 py-3 backdrop-blur">
+          <GlobalSearch />
+        </header>
+        <div className="flex-1 p-8">{children}</div>
+      </main>
     </div>
   );
 }

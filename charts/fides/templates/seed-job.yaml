@@ -1,0 +1,53 @@
+{{- if .Values.seed.enabled -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "fides.fullname" . }}-seed
+  labels:
+    {{- include "fides.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "fides.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: {{ .Values.seed.image }}
+          command: ["/bin/sh", "/scripts/seed.sh"]
+          env:
+            - name: PGHOST
+              value: {{ .Values.database.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.database.port | quote }}
+            - name: PGUSER
+              value: {{ .Values.database.ownerUser | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.database.name | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "fides.secretName" . }}
+                  key: postgres-password
+            - name: APP_PASSWORD
+              value: {{ .Values.database.appPassword | quote }}
+            - name: ORG_ID
+              value: {{ .Values.org.id | quote }}
+            - name: ORG_NAME
+              value: {{ .Values.org.name | quote }}
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+            - name: sql
+              mountPath: /scripts
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ include "fides.fullname" . }}-sql
+{{- end }}

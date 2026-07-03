@@ -12,7 +12,7 @@ reads `FIDES_SERVER_URL` and `FIDES_API_TOKEN` from the environment.
 
 ---
 
-## 1. Built-in evidence parsers (JUnit / Snyk / Trivy)
+## 1. Built-in evidence parsers (JUnit / Snyk / Trivy / SBOM)
 
 Instead of hand-building JSON, point Fides at a raw report and it normalizes it
 into a compliant/non-compliant attestation (attaching the original file).
@@ -28,6 +28,18 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
+
+`fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
+persists a row per component (name, version, purl, licenses), linked to the
+artifact — so you can search across every SBOM ever attested:
+
+```bash
+fides attest sbom --file ./sbom.json --artifact-sha $DIGEST   # --trail is optional
+
+# Which artifacts contain a given component (e.g. auditing a CVE)?
+fides search components --purl pkg:npm/lodash@4.17.20
+fides search components --name log4j
+```
 
 ## 2. Tamper-evident attestation chain
 
@@ -126,6 +138,9 @@ fides logical-env state --id $LOGICAL       # unified running services across me
 ```bash
 fides metrics --days 30
 # {"deployments":42,"deployment_frequency_per_day":1.4,"compliance_rate":0.97,"change_failure_rate":0.03,...}
+
+fides metrics deployment-frequency --weeks 12
+# [{"environment":"prod","week":"2026-W27","deployments":7}, ...]  (weekly, per environment)
 ```
 
 ## 11. ServiceNow integration
@@ -157,3 +172,171 @@ fides git-provider config --provider github --host github.com \
 fides webhook config --name audit-sink --url https://example.com/hook --secret-path fides/hook-secret
 fides user set-password --user $USER_ID --password 'S0me-Strong-Pass'
 ```
+
+## 14. Flows, trails & artifacts from the CLI
+
+```bash
+fides flow list                    # all flows
+fides flow trails --flow $FLOW     # the flow's build trails (name, commit, compliance)
+fides flow artifacts --flow $FLOW  # artifacts across the flow's trails (with fingerprints)
+```
+
+## 15. Policies: create, delete & AI-drafted rules
+
+```bash
+# draft rules from plain English via the configured LLM
+fides policy generate --framework SOC2 \
+  --description "block critical CVEs and require passing unit tests plus an SBOM"
+
+# create / delete a named policy
+fides policy create --name production-release-rules --rules-file rules.json
+fides policy delete --id $POLICY_ID
+```
+
+The same wizard (with AI drafting) is available in the portal at **Policies → New Policy**.
+The portal edits rules in a **Monaco code editor** (JSON syntax highlighting,
+bracket matching, line numbers) with two actions:
+
+- **Format** — pretty-prints the rules JSON in place.
+- **Check & fix** — sends the rules to `POST /api/v1/ai/lint-policy`, which reviews
+  them for JSON errors and jq best practices and rewrites them (via the configured
+  LLM; falls back to a deterministic validate-and-format when no LLM is set),
+  showing review notes below the editor.
+
+The editor is resizable (drag the bottom edge) and has an **Expand** toggle for a
+near-fullscreen view.
+
+## 16. AI tools — the Fides MCP server (`fides-mcp`)
+
+Fides ships a Model Context Protocol server so **Claude Code**, Cursor, and Claude
+Desktop can query your compliance data **and read the docs** in-conversation.
+
+```jsonc
+// .mcp.json
+{ "mcpServers": { "fides": {
+  "command": "/path/to/fides-mcp",
+  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<service-account key>" }
+} } }
+```
+
+Tools include `list_flows`/`list_environments`/`list_policies`, `check_compliance`,
+`search_artifacts`, `search_attestations`, `get_controls_coverage`,
+`get_deployment_frequency`, the ServiceNow tools, and provenance recording. It also
+exposes the documentation as MCP **resources** (`fides://docs/*`). Full guide:
+[mcp-server.md](mcp-server.md).
+
+**In-browser WebMCP** — the portal also registers Fides tools with the browser's
+WebMCP surface (the W3C `document.modelContext` API, with the `@mcp-b/global`
+polyfill as a fallback), so a browser-integrated agent or a **local LLM/assistant**
+can drive Fides directly from the page using your session. Exposed tools:
+`fides_list_flows`, `fides_list_environments`, `fides_list_policies`,
+`fides_controls_coverage`, `fides_search_artifacts`, `fides_search_attestations`,
+`fides_deployment_frequency`, `fides_compliance_summary` (read-only), plus the
+safe actions `fides_enforce_control` and `fides_import_framework`. Native WebMCP
+needs Chrome with the origin trial; elsewhere the polyfill bridge is used, and it
+no-ops if the browser has neither.
+
+## 17. Regulated compliance & governance
+
+Adopt a control framework, gather evidence for it, and turn the result into a change decision that flows into ServiceNow.
+
+```bash
+# adopt a framework's control catalog (idempotent); one of
+#   SOC2 | ISO27001 | NIST-800-53 | PCI-DSS | DORA | PSD2 | SOX
+fides control import --framework SOC2
+fides control frameworks          # list catalogs
+fides control coverage            # evidence + environment coverage per control
+
+# enforce control(s) — creates an enabled environment policy requiring the
+# control's evidence types, so coverage reflects it. Idempotent.
+fides control enforce --key SOC2-CC7.1 --env <env-id>
+fides control enforce --all-controls --all-environments   # raise coverage everywhere
+
+# auditor-ready, control-by-control report for a framework
+fides report --framework SOC2
+
+# evidence-backed approve/hold verdict + 0-100 risk score (exits 2 on HOLD)
+fides change-gate --trail <trail-id>
+
+# record a segregation-of-duties approval (human vs machine; four-eyes = 2 humans)
+fides approve --trail <trail-id> --reason "reviewed by platform lead"
+
+# record the deploying identity's approval too, so the change gate can prove
+# committer != approver != deployer
+fides approve --trail <trail-id> --role deployer --reason "prod deploy"
+```
+
+- **Segregation-of-duties attestation**: every `fides change-gate` and `fides
+  approve` call (re-)records a `segregation-of-duties` attestation on the trail,
+  proving the committer (from the trail's `--committer` commit-metadata tag),
+  the approver(s), and the deployer are distinct identities — `compliant: true`
+  only when all three roles are pairwise-distinct. Required by PCI-DSS 4.0 and
+  SOX ITGC change-management controls; the payload is shaped for ServiceNow to
+  read directly.
+
+- **Change gate → ServiceNow**: `POST /api/v1/servicenow/change-gate {trail_id, change_number}`
+  writes the verdict + risk onto the matching Change Request (work note + `risk`
+  field). Fides advises; ServiceNow decides.
+- **Segregation of duties**: the gate will not recommend approval without at least
+  one human approval; a missing sign-off raises the risk score.
+- **Portal**: the **Controls** page opens on an at-a-glance summary (control count,
+  average coverage, fully-covered vs gaps) with coverage **grouped by framework**
+  (least-covered first). **Click a control** to drill into its required evidence
+  types and **per-environment enforcement** — enforce it in one environment or
+  everywhere with a button; the backing environment policy is created and coverage
+  updates immediately. Adopting a framework and adding custom controls live in a
+  collapsible "Add or import controls" section. The **Dashboard** top stat cards are
+  clickable and deep-link to their source (e.g. *Active Alerts* → non-compliant
+  attestations, *Tracked Artifacts* → the artifacts list).
+
+## 18. Tenant isolation, WORM retention & git providers
+
+- **Row-Level Security**: enable database-enforced tenant isolation with
+  `FIDES_RLS_ENABLED=true`. The app connects as a least-privilege `fides_app`
+  role; `schema-rls.sql` policies isolate every tenant table. See
+  [Setup & Seeding](setup.md).
+- **WORM evidence retention**: set `FIDES_OBJECT_LOCK_MODE=GOVERNANCE|COMPLIANCE`
+  and `FIDES_EVIDENCE_RETENTION_DAYS=<n>` to write evidence with an S3 Object Lock
+  retain-until date (the bucket must have Object Lock enabled) — for DORA/SOX.
+- **Git providers**: commit-status checks and signed inbound push webhooks for
+  **GitHub, GitLab, Bitbucket, and Azure DevOps**
+  (`fides git-provider config --provider <github|gitlab|bitbucket|azure-devops> ...`).
+
+## 19. Install & seed
+
+Use the Helm chart (server + a one-step seed job) or the seed script:
+
+```bash
+helm install fides ./charts/fides -n fides --create-namespace \
+  --set database.host=<pg-host> --set database.ownerPassword=<pw> \
+  --set database.appPassword=<pw> --set org.id=$(uuidgen) \
+  --set portal.username=admin --set portal.password=<pw>
+# or, against an existing Postgres:
+ORG_NAME="Acme Corp" ./scripts/setup-db.sh
+```
+
+Full walkthrough (RLS role, secrets, first login, upgrade path): [Setup & Seeding](setup.md).
+
+## 20. Cosign / Sigstore image signature verification
+
+Gate a deploy on a container image's cosign signature — keyless (OIDC
+identity anchored via Fulcio + Rekor) or key-based — and record the verdict
+as a `cosign-verification` attestation on the trail.
+
+```bash
+# Keyless: verify a GitHub Actions-signed image and record the verdict
+fides verify-image --sha256 $DIGEST \
+  --signer "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main" \
+  --issuer "https://token.actions.githubusercontent.com" \
+  --bundle ./cosign-bundle.json --trail $TRAIL
+
+# Key-based
+fides verify-image --sha256 $DIGEST --key ./cosign.pub --bundle ./cosign-bundle.json
+```
+
+Exits non-zero (2) if the signature does not verify, so it can be used as a
+deploy gate the same way as `change-gate`/`verify-chain`/`policy check`. The
+`--bundle` flag points at a Sigstore verification bundle (JSON), e.g. from
+`cosign verify --bundle out.json` or `cosign download signature`; automatic
+registry lookup from a bare `--sha256` digest alone is tracked as follow-up
+work (see the TODO in `pkg/cosignverify`).

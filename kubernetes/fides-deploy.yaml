@@ -233,6 +233,11 @@ spec:
         # above stay as K8s secretKeyRef.
         - name: SECRETS_PROVIDER
           value: aws
+        # Enforce Postgres Row-Level Security tenant isolation. The app connects
+        # as the non-privileged `fides_app` role (db-dsn secret) and pins
+        # app.current_org per request; schema-rls.sql policies do the isolation.
+        - name: FIDES_RLS_ENABLED
+          value: "true"
         - name: FIDES_MCP_ALLOWED_COMMANDS
           value: "echo,/bin/echo,/usr/bin/echo,/usr/local/bin/fides-mcp-sensor"
         # Run the event/outbox dispatcher (ServiceNow CMDB/ITOM, webhook, and

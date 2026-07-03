@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -70,26 +71,47 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/flows", s.handleCreateFlow)
 	mux.HandleFunc("PUT /api/v1/flows", s.handleUpdateFlow)
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
+	mux.HandleFunc("GET /api/v1/flows/{id}/trails", s.handleListFlowTrails)
+	mux.HandleFunc("GET /api/v1/flows/{id}/artifacts", s.handleListFlowArtifacts)
 
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
+	mux.HandleFunc("GET /api/v1/trails/{id}/change-gate", s.handleChangeGate)
+	mux.HandleFunc("GET /api/v1/trails/{id}/approvals", s.handleListApprovals)
+	mux.HandleFunc("POST /api/v1/trails/{id}/approvals", s.handleRecordApproval)
 	mux.HandleFunc("GET /api/v1/trails/{id}/audit-package", s.handleTrailAuditPackage)
+	mux.HandleFunc("GET /api/v1/trails/{id}/deployment-anchors", s.handleListDeploymentAnchors)
 
 	// Search / query + snapshot diff
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
+	mux.HandleFunc("GET /api/v1/search/components", s.handleSearchComponents)
+	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
+
+	// Post-approval drift re-evaluation: diff an environment's snapshots and,
+	// if drift is detected, write an elevated risk note back onto the
+	// ServiceNow change request that approved the prior state (ServiceNow has
+	// no native post-approval re-scoring).
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
 
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
+	mux.HandleFunc("GET /api/v1/metrics/deployment-frequency", s.handleDeploymentFrequency)
+	mux.HandleFunc("GET /api/v1/metrics/compliance-correlation", s.handleComplianceCorrelation)
 
 	// Governance controls + coverage
 	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
 	mux.HandleFunc("POST /api/v1/controls", s.handleCreateControl)
 	mux.HandleFunc("GET /api/v1/controls/coverage", s.handleControlsCoverage)
+	mux.HandleFunc("GET /api/v1/controls/timeline", s.handleControlTimeline)
 	mux.HandleFunc("POST /api/v1/controls/{id}/archive", s.handleArchiveControl)
 	mux.HandleFunc("POST /api/v1/controls/{id}/unarchive", s.handleUnarchiveControl)
+	mux.HandleFunc("POST /api/v1/controls/{key}/enforce", s.handleEnforceControl)
+	mux.HandleFunc("GET /api/v1/frameworks", s.handleListFrameworks)
+	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
+	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)
@@ -115,6 +137,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
 	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
 
+	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
+	// gated by an approval record before an action can be applied (issue #235).
+	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
+	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
+
 	// Artifact API
 	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
@@ -134,6 +165,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
+	mux.HandleFunc("POST /api/v1/policies/create", s.handleCreatePolicyGlobal)
+	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicyGlobal)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
 
 	// Tenant Webhooks (signed outbound delivery)
@@ -143,6 +176,11 @@ func (s *Server) Routes() http.Handler {
 	// Tenant Git Providers (CI/CD commit-status gating)
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
 	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
+
+	// Ingest platform-native attestations (GitHub Artifact Attestations,
+	// GitLab Attestations) for a built artifact, using the tenant's configured
+	// git-provider token, and record them onto the matching trail/artifact.
+	mux.HandleFunc("POST /api/v1/attest/fetch", s.handleAttestFetch)
 
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
@@ -157,9 +195,20 @@ func (s *Server) Routes() http.Handler {
 	// git/webhooks, environments policies/allow-lists, metrics).
 	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
 
+	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
+	// approvals, change-gate verdict, tamper-evidence chain status), built on
+	// existing read APIs. Same public-shell/session-cookie pattern as above.
+	mux.HandleFunc("GET /evidence", s.handleEvidenceVaultPage)
+
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
 	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
+	mux.HandleFunc("POST /api/v1/servicenow/change-gate", s.handleServiceNowChangeGate)
+
+	// Change<->Control linkage (#227): record that a ServiceNow change implemented
+	// a Fides control via a specific attestation, and reference it back on the
+	// change_request.
+	mux.HandleFunc("POST /api/v1/servicenow/link-control", s.handleServiceNowLinkControl)
 
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
@@ -169,6 +218,24 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
 	mux.HandleFunc("POST /api/v1/servicenow/incident", s.handleServiceNowCreateIncident)
 	mux.HandleFunc("GET /api/v1/servicenow/cmdb", s.handleServiceNowSearchCMDB)
+
+	// Deployment provenance anchoring: on change close / deploy, attach the
+	// signed deployment attestation (image digest, commit, build log ref,
+	// runtime snapshot ref) to the relevant CMDB CI.
+	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
+
+	// Now Assist grounding: authoritative control-coverage + evidence for a change.
+	mux.HandleFunc("GET /api/v1/servicenow/grounding", s.handleServiceNowGrounding)
+
+	// Fides as a remote MCP server (Streamable HTTP) for Now Assist / AI clients.
+	mux.HandleFunc("POST /api/v1/mcp", s.handleMCPServer)
+
+	// ServiceNow MCP client: consume ServiceNow's Model Context Protocol server
+	// (discover servers, governed record lookup, list/call tools).
+	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/lookup", s.handleSNMCPLookup)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/tools", s.handleSNMCPTools)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", s.handleSNMCPCall)
 
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
@@ -211,6 +278,7 @@ func (s *Server) Routes() http.Handler {
 
 	// AI Policy Wizard & Chat APIs
 	mux.HandleFunc("POST /api/v1/ai/generate-policy", s.handleAIGeneratePolicy)
+	mux.HandleFunc("POST /api/v1/ai/lint-policy", s.handleAILintPolicy)
 	mux.HandleFunc("POST /api/v1/ai/chat", s.handleAIChat)
 
 	// System Status
@@ -654,6 +722,13 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
 	_, err = s.q(r.Context()).ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
+		// A duplicate trail name for the flow (UNIQUE(flow_id, name)) is a
+		// client error, not a server fault — return 409 rather than 500.
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			http.Error(w, "a trail with this name already exists for the flow", http.StatusConflict)
+			return
+		}
 		internalError(w, err)
 		return
 	}
@@ -926,15 +1001,18 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.Payload = string(decrypted)
 	}
 
-	trailID, err := uuid.Parse(req.TrailID)
-	if err != nil {
-		http.Error(w, "invalid trail_id", http.StatusBadRequest)
-		return
-	}
-
 	var artifactSHA *string
 	if req.ArtifactSHA256 != "" {
 		artifactSHA = &req.ArtifactSHA256
+	}
+
+	// trail_id is normally required, but `fides attest sbom` may omit --trail
+	// and rely on the artifact's own trail (every artifact is reported against
+	// exactly one trail via `fides artifact report`).
+	trailID, err := s.resolveAttestationTrailID(r.Context(), req.TrailID, artifactSHA)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Fetch rules for verification
@@ -990,15 +1068,31 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
 	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
+	orgID, hasOrg := principalOrg(r)
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+		if hasOrg {
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 				"trail_id":    attestation.TrailID.String(),
 				"attestation": attestation.Name,
 				"compliant":   attestation.IsCompliant,
 			}); err != nil {
 				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
 			}
+		}
+	}
+
+	// `fides attest sbom` normalizes the SBOM client-side (see pkg/evidence.
+	// ParseSBOM) and uploads it as a "sbom-cyclonedx" attestation (the evidence
+	// type the built-in control frameworks require); persist its component list
+	// so `fides search components` can answer "which artifacts contain
+	// component X". Best-effort: a parse/insert failure here does not fail the
+	// attestation itself, since it is already durably recorded. Attestations
+	// recorded via the generic `fides attest --type sbom-cyclonedx` path (a raw,
+	// non-normalized CycloneDX payload) are also matched here but simply fail
+	// this best-effort parse (no "components" field in the expected shape).
+	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil && hasOrg {
+		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
+			log.Printf("failed to persist sbom components: %v", err)
 		}
 	}
 
@@ -1029,6 +1123,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
+		llmOrgID, _ := principalOrg(r)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -1038,13 +1133,18 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 				return
 			}
 
-			// Save LLM assessment findings
+			// Save LLM assessment findings. This runs on a detached background
+			// context, so scope the write to the tenant (app.current_org) via a
+			// transaction, otherwise RLS rejects the insert.
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
 			             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-			_, err = s.q(ctx).ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
-			if err != nil {
-				log.Printf("Failed to write LLM assessment to DB: %v", err)
+			werr := db.WithOrgScope(ctx, s.DB, llmOrgID.String(), func(tx *sql.Tx) error {
+				_, e := tx.ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
+				return e
+			})
+			if werr != nil {
+				log.Printf("Failed to write LLM assessment to DB: %v", werr)
 			}
 		}()
 	}
@@ -1052,6 +1152,68 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(attestation)
+}
+
+// resolveAttestationTrailID parses trailIDStr, or — when it is empty — resolves
+// the trail from the reported artifact, so `fides attest sbom` can omit
+// --trail (every artifact already belongs to exactly one trail).
+func (s *Server) resolveAttestationTrailID(ctx context.Context, trailIDStr string, artifactSHA *string) (uuid.UUID, error) {
+	if trailIDStr != "" {
+		id, err := uuid.Parse(trailIDStr)
+		if err != nil {
+			return uuid.UUID{}, fmt.Errorf("invalid trail_id")
+		}
+		return id, nil
+	}
+	if artifactSHA == nil {
+		return uuid.UUID{}, fmt.Errorf("trail_id or artifact_sha256 is required")
+	}
+	var trailID uuid.NullUUID
+	err := s.q(ctx).QueryRowContext(ctx, `SELECT trail_id FROM artifacts WHERE sha256 = $1`, *artifactSHA).Scan(&trailID)
+	if err == sql.ErrNoRows {
+		return uuid.UUID{}, fmt.Errorf("artifact %s not found", *artifactSHA)
+	}
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	if !trailID.Valid {
+		return uuid.UUID{}, fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)
+	}
+	return trailID.UUID, nil
+}
+
+// persistSBOMComponents parses the "components" array out of a normalized SBOM
+// attestation payload (see pkg/evidence.ParseSBOM) and stores each component
+// linked to the artifact, powering `fides search components`.
+func (s *Server) persistSBOMComponents(ctx context.Context, orgID uuid.UUID, artifactSHA string, attestationID uuid.UUID, payload string) error {
+	var parsed struct {
+		Components []struct {
+			Name     string   `json:"name"`
+			Version  string   `json:"version"`
+			PURL     string   `json:"purl"`
+			Licenses []string `json:"licenses"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		return fmt.Errorf("parse sbom payload: %w", err)
+	}
+	for _, c := range parsed.Components {
+		if c.Name == "" {
+			continue
+		}
+		licenses := c.Licenses
+		if licenses == nil {
+			licenses = []string{} // avoid pq.Array(nil) -> SQL NULL against the NOT NULL column
+		}
+		_, err := s.q(ctx).ExecContext(ctx,
+			`INSERT INTO sbom_components (id, org_id, artifact_sha256, attestation_id, name, version, purl, licenses, created_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			uuid.New(), orgID, artifactSHA, attestationID, c.Name, c.Version, c.PURL, pq.Array(licenses), time.Now())
+		if err != nil {
+			return fmt.Errorf("insert sbom component %q: %w", c.Name, err)
+		}
+	}
+	return nil
 }
 
 type reportSnapshotReq struct {
@@ -1070,6 +1232,12 @@ type snapshotReportResponse struct {
 }
 
 func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req reportSnapshotReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -1088,6 +1256,18 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Establish the tenant RLS session context on this transaction, mirroring
+	// handleImportFramework. handleReportSnapshot begins its transaction on the
+	// raw unscoped pool (s.DB), which has no app.current_org GUC set. Without
+	// this, the environment_snapshots RLS WITH CHECK (whose subquery reads
+	// environments under RLS) sees no visible environments and every insert is
+	// rejected with 42501. This is a harmless no-op when FIDES_RLS_ENABLED is
+	// false, since RLS enforcement itself is not configured on the tables then.
+	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	snapshotID := uuid.New()
 	querySnap := `INSERT INTO environment_snapshots (id, environment_id, created_at) VALUES ($1, $2, $3)`
@@ -1169,29 +1349,25 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
 	// failure here must not fail the request.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
-		if orgID, ok := principalOrg(r); ok {
-			payload := map[string]any{
-				"environment_id": envID.String(),
-				"snapshot_id":    snapshotID.String(),
-				"compliant":      isCompliant,
-				"shadows":        shadows,
-				"drifts":         drifts,
-			}
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.noncompliant", payload); err != nil {
-				log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
-			}
+		payload := map[string]any{
+			"environment_id": envID.String(),
+			"snapshot_id":    snapshotID.String(),
+			"compliant":      isCompliant,
+			"shadows":        shadows,
+			"drifts":         drifts,
+		}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
+			log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
 		}
 	}
 
 	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
-		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "snapshot.reported", map[string]any{
-				"environment": envID.String(),
-				"services":    services,
-			}); err != nil {
-				log.Printf("failed to enqueue snapshot.reported event: %v", err)
-			}
+		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
+			"environment": envID.String(),
+			"services":    services,
+		}); err != nil {
+			log.Printf("failed to enqueue snapshot.reported event: %v", err)
 		}
 	}
 
@@ -1292,10 +1468,15 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
+	// Collect all base environments FIRST. Under RLS, s.q(ctx) is a single
+	// pinned connection, so we must drain this cursor before running any
+	// sub-query — otherwise the nested query disrupts the outer cursor and only
+	// the first row is returned.
 	var list []*EnvironmentView
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
+			rows.Close()
 			internalError(w, err)
 			return
 		}
@@ -1303,48 +1484,54 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ev.Running = []RuntimeArtifact{}
 		ev.Drifts = []string{}
 		ev.ShadowChanges = []string{}
+		list = append(list, &ev)
+	}
+	rows.Close()
 
-		// Fetch latest snapshot ID
+	// Enrich each environment now that the outer cursor is closed.
+	for _, ev := range list {
 		var latestSnapID string
 		var snapTime time.Time
 		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-		err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime)
+		if err := s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime); err != nil {
+			continue
+		}
+		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
 
-		if err == nil {
-			ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
+		// Read all running artifacts into memory before the per-artifact queries.
+		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
+		            FROM snapshot_artifacts sa
+		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
+		            WHERE sa.snapshot_id = $1`
+		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
+		if err != nil {
+			continue
+		}
+		var running []RuntimeArtifact
+		for saRows.Next() {
+			var ra RuntimeArtifact
+			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
+				running = append(running, ra)
+			}
+		}
+		saRows.Close()
 
-			// Query running artifacts in snapshot
-			querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-			            FROM snapshot_artifacts sa
-			            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-			            WHERE sa.snapshot_id = $1`
-			saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-			if err == nil {
-				defer saRows.Close()
-				for saRows.Next() {
-					var ra RuntimeArtifact
-					if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-						ev.Running = append(ev.Running, ra)
-
-						if !ra.Registered {
-							ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-						} else {
-							// Check if registered artifact has drift (failing controls)
-							var trailID sql.NullString
-							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
-							if trailID.Valid {
-								var compliantCount, totalCount int
-								s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
-								if totalCount > 0 && compliantCount < totalCount {
-									ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-								}
-							}
-						}
-					}
+		for _, ra := range running {
+			ev.Running = append(ev.Running, ra)
+			if !ra.Registered {
+				ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
+				continue
+			}
+			var trailID sql.NullString
+			s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+			if trailID.Valid {
+				var compliantCount, totalCount int
+				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+				if totalCount > 0 && compliantCount < totalCount {
+					ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 				}
 			}
 		}
-		list = append(list, &ev)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1421,27 +1608,32 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 		            FROM snapshot_artifacts sa
 		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
 		            WHERE sa.snapshot_id = $1`
-		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-		if err == nil {
-			defer saRows.Close()
+		// Read all running artifacts before per-artifact queries — under RLS,
+		// s.q(ctx) is a single pinned connection and nested queries would break
+		// the outer cursor.
+		if saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID); err == nil {
+			var running []RuntimeArtifact
 			for saRows.Next() {
 				var ra RuntimeArtifact
 				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-					ev.Running = append(ev.Running, ra)
+					running = append(running, ra)
+				}
+			}
+			saRows.Close()
 
-					if !ra.Registered {
-						ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-					} else {
-						// Check if registered artifact has drift (failing controls)
-						var trailID sql.NullString
-						s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
-						if trailID.Valid {
-							var compliantCount, totalCount int
-							s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
-							if totalCount > 0 && compliantCount < totalCount {
-								ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-							}
-						}
+			for _, ra := range running {
+				ev.Running = append(ev.Running, ra)
+				if !ra.Registered {
+					ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
+					continue
+				}
+				var trailID sql.NullString
+				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+				if trailID.Valid {
+					var compliantCount, totalCount int
+					s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+					if totalCount > 0 && compliantCount < totalCount {
+						ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 					}
 				}
 			}
@@ -2236,6 +2428,74 @@ func (s *Server) handleAIGeneratePolicy(w http.ResponseWriter, r *http.Request) 
 	w.Write([]byte(rawResponse))
 }
 
+// handleAILintPolicy reviews a policy's jq-rules JSON for syntax errors and best
+// practices and returns a corrected version. With an LLM configured it asks the
+// model to fix and explain; without one it falls back to a deterministic JSON
+// validity check + pretty-print so the button is always useful.
+func (s *Server) handleAILintPolicy(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Rules string `json:"rules"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if strings.TrimSpace(req.Rules) == "" {
+		http.Error(w, "rules are required", http.StatusBadRequest)
+		return
+	}
+
+	// Deterministic baseline used both as the no-LLM fallback and to detect change.
+	var parsed any
+	validJSON := json.Unmarshal([]byte(req.Rules), &parsed) == nil
+
+	if s.LLM == nil {
+		if !validJSON {
+			writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false,
+				"notes": "Invalid JSON, and the AI reviewer is not configured. Fix the syntax (matching braces/brackets, quoted keys) and try again."})
+			return
+		}
+		pretty, _ := json.MarshalIndent(parsed, "", "  ")
+		writeJSON(w, map[string]any{"fixed": string(pretty), "changed": string(pretty) != req.Rules,
+			"notes": "AI reviewer not configured — validated and formatted the JSON. No best-practice rewrite performed."})
+		return
+	}
+
+	prompt := "You are reviewing a Fides compliance policy expressed as JSON containing jq rules. " +
+		"The expected shape is {\"controls\":[{\"name\":\"...\",\"attestation_type\":\"...\",\"jq_expressions\":[\"...\"]}]} " +
+		"(a bare {\"jq\":[...]} form is also valid). Check for JSON syntax errors and jq best practices: " +
+		"valid structure, well-formed jq expressions, no duplicate/redundant rules, sensible names. " +
+		"Respond with ONLY a JSON object, no markdown fences: " +
+		"{\"fixed\": \"<the corrected policy as a JSON string>\", \"notes\": \"<short summary of what you changed, or why it's already fine>\"}.\n\nPolicy:\n" + req.Rules
+
+	resp, err := s.LLM.Chat(r.Context(), nil, prompt)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	// Strip accidental markdown fences, then try to parse the model's {fixed,notes}.
+	clean := strings.TrimSpace(resp)
+	clean = strings.TrimPrefix(clean, "```json")
+	clean = strings.TrimPrefix(clean, "```")
+	clean = strings.TrimSuffix(clean, "```")
+	clean = strings.TrimSpace(clean)
+	var out struct {
+		Fixed string `json:"fixed"`
+		Notes string `json:"notes"`
+	}
+	if json.Unmarshal([]byte(clean), &out) == nil && strings.TrimSpace(out.Fixed) != "" {
+		writeJSON(w, map[string]any{"fixed": out.Fixed, "notes": out.Notes, "changed": out.Fixed != req.Rules})
+		return
+	}
+	// Model didn't return the expected envelope — surface its text as notes and
+	// keep the user's input unchanged.
+	writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false, "notes": strings.TrimSpace(resp)})
+}
+
 type aiChatReq struct {
 	Message string           `json:"message"`
 	History []ai.ChatMessage `json:"history"`
@@ -2289,46 +2549,52 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.LLM != nil {
-		var err error
-		answer, err = s.LLM.Chat(ctx, req.History, userMsg)
+	// Deterministic commands are answered directly (fast, no LLM). Only freeform
+	// questions hit the LLM, and with a timeout so a slow/unreachable model
+	// returns a friendly message instead of hanging until the gateway 504s.
+	lower := strings.ToLower(strings.TrimSpace(userMsg))
+	switch {
+	case flowName != "":
+		answer = fmt.Sprintf("I've created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
+	case lower == "list flows" || lower == "show flows":
+		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
+		defer rows.Close()
+		answer = "Here are the currently configured compliance flows in Fides:\n\n"
+		for rows.Next() {
+			var name, desc string
+			rows.Scan(&name, &desc)
+			answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
+		}
+	case lower == "find failing trails" || lower == "failing builds":
+		query := `SELECT t.name, f.name, att.name, att.type_name
+		          FROM attestations att
+		          JOIN trails t ON att.trail_id = t.id
+		          JOIN flows f ON t.flow_id = f.id
+		          WHERE att.is_compliant = false`
+		rows, _ := s.q(ctx).QueryContext(ctx, query)
+		defer rows.Close()
+		answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
+		found := false
+		for rows.Next() {
+			var tName, fName, attName, typeName string
+			rows.Scan(&tName, &fName, &attName, &typeName)
+			answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
+			found = true
+		}
+		if !found {
+			answer = "Great news! All recorded build trails are fully compliant against current policies."
+		}
+	case s.LLM != nil:
+		lctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		defer cancel()
+		a, err := s.LLM.Chat(lctx, req.History, userMsg)
 		if err != nil {
-			answer = "I processed your request, but I encountered an error communicating with the local LLM. " + err.Error()
-		}
-	} else {
-		if flowName != "" {
-			answer = fmt.Sprintf("I've successfully created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
-		} else if userMsg == "list flows" || userMsg == "show flows" {
-			rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
-			defer rows.Close()
-			answer = "Here are the currently configured compliance flows in Fides:\n\n"
-			for rows.Next() {
-				var name, desc string
-				rows.Scan(&name, &desc)
-				answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
-			}
-		} else if userMsg == "find failing trails" || userMsg == "failing builds" {
-			query := `SELECT t.name, f.name, att.name, att.type_name
-			          FROM attestations att
-			          JOIN trails t ON att.trail_id = t.id
-			          JOIN flows f ON t.flow_id = f.id
-			          WHERE att.is_compliant = false`
-			rows, _ := s.q(ctx).QueryContext(ctx, query)
-			defer rows.Close()
-			answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
-			found := false
-			for rows.Next() {
-				var tName, fName, attName, typeName string
-				rows.Scan(&tName, &fName, &attName, &typeName)
-				answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
-				found = true
-			}
-			if !found {
-				answer = "Great news! All recorded build trails are fully compliant against current policies."
-			}
+			answer = "The assistant model didn't respond in time, or the LLM isn't reachable. You can still use commands like `list flows` or `find failing trails`, or check **Settings → Infrastructure → LLM Configuration**.\n\n_" + err.Error() + "_"
 		} else {
-			answer = "Hello! I am **Fides**, your compliance & audit conversational assistant. I can help you configure flows and trails, search failing builds, audit artifacts, and verify SOC 2 or ISO 27001 readiness.\n\nTry asking me:\n- `create flow frontend-service` (Creates a pipeline flow)\n- `list flows` (Displays registered pipelines)\n- `find failing trails` (Audits failing CI/CD builds)"
+			answer = a
 		}
+	default:
+		answer = "Hello! I am **Fides**, your compliance & audit conversational assistant. I can help you configure flows and trails, search failing builds, audit artifacts, and verify SOC 2 or ISO 27001 readiness.\n\nTry asking me:\n- `create flow frontend-service` (Creates a pipeline flow)\n- `list flows` (Displays registered pipelines)\n- `find failing trails` (Audits failing CI/CD builds)"
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2914,7 +3180,7 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	}
 
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		_ = events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+		_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 			"trail_id": trailID.String(), "attestation": "servicenow-change", "compliant": compliant,
 		})
 	}
@@ -3028,8 +3294,9 @@ func (s *Server) handleSaveGitProvider(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, err)
 		return
 	}
-	if (gp.Provider != "github" && gp.Provider != "gitlab") || gp.Host == "" || gp.APIBase == "" || gp.TokenPath == "" {
-		http.Error(w, "provider (github|gitlab), host, api_base, and token_path are required", http.StatusBadRequest)
+	validGitProvider := map[string]bool{"github": true, "gitlab": true, "bitbucket": true, "azure-devops": true}
+	if !validGitProvider[gp.Provider] || gp.Host == "" || gp.APIBase == "" || gp.TokenPath == "" {
+		http.Error(w, "provider (github|gitlab|bitbucket|azure-devops), host, api_base, and token_path are required", http.StatusBadRequest)
 		return
 	}
 	_, err := s.q(r.Context()).ExecContext(r.Context(),
@@ -3256,7 +3523,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	// webhook/Slack/ServiceNow sinks (opt-in via FIDES_EVENTS_ENABLED).
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		if orgID, ok := principalOrg(r); ok {
-			if err := events.Enqueue(r.Context(), s.DB, orgID, "compliance.evaluated", map[string]any{
+			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
 				"environment_id": req.EnvironmentID,
 				"server_name":    req.ServerName,
 				"tool_name":      req.ToolName,

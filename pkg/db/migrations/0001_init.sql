@@ -359,6 +359,25 @@ CREATE TABLE IF NOT EXISTS controls (
 );
 CREATE INDEX IF NOT EXISTS idx_controls_org ON controls(org_id);
 
+-- 21b. Trail approvals (segregation-of-duties evidence: who signed off a change).
+-- approver_kind is 'session' for a human SSO user or 'service' for machine
+-- automation; four-eyes requires >= 2 distinct human approvers. role separates
+-- reviewer sign-offs ('approver') from the identity that performs the
+-- deployment ('deployer'), feeding the segregation-of-duties attestation
+-- (committer != approver != deployer) recorded by the change gate.
+CREATE TABLE IF NOT EXISTS trail_approvals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    trail_id UUID NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+    approved_by VARCHAR(255) NOT NULL,      -- approver email / service-account name
+    approver_kind VARCHAR(20) NOT NULL,     -- 'session' (human) | 'service'
+    reason TEXT,
+    role VARCHAR(20) NOT NULL DEFAULT 'approver', -- 'approver' | 'deployer'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(trail_id, approved_by)
+);
+CREATE INDEX IF NOT EXISTS idx_trail_approvals_trail ON trail_approvals(trail_id);
+
 -- 22a. Logical environments (aggregate one or more physical environments)
 CREATE TABLE IF NOT EXISTS logical_environments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -451,6 +470,74 @@ CREATE TABLE IF NOT EXISTS tenant_servicenow_settings (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tenant_servicenow_settings_org_id ON tenant_servicenow_settings(org_id);
+
+-- 25. Remediation actions (policy-driven auto-remediation, approval-gated).
+-- Low-risk domains only: environment tags, allowlist entries, drift re-sync.
+-- status: proposed -> approved|rejected -> applied. Applying without an
+-- approved status is rejected at the state-machine level (pkg/remediation).
+CREATE TABLE IF NOT EXISTS remediation_actions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    domain VARCHAR(30) NOT NULL,             -- 'env_tag' | 'allowlist_entry' | 'drift_resync'
+    status VARCHAR(20) NOT NULL DEFAULT 'proposed', -- 'proposed' | 'approved' | 'applied' | 'rejected'
+    environment_id UUID REFERENCES environments(id) ON DELETE CASCADE,
+    policy_id UUID REFERENCES policies(id) ON DELETE SET NULL,
+    reason TEXT,
+    params JSONB NOT NULL DEFAULT '{}'::jsonb, -- action-specific parameters (e.g. tags, sha256)
+    proposed_by VARCHAR(255) NOT NULL,
+    approved_by VARCHAR(255),
+    applied_by VARCHAR(255),
+    rejected_by VARCHAR(255),
+    result_detail TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_org ON remediation_actions(org_id);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_env ON remediation_actions(environment_id);
+CREATE INDEX IF NOT EXISTS idx_remediation_actions_status ON remediation_actions(status);
+
+-- 26. Change <-> Control linkage (#227): records that a ServiceNow change
+-- (CHGxxxx) implemented a Fides control via a specific attestation, so both
+-- Fides and the ServiceNow change_request reference the same evidence.
+CREATE TABLE IF NOT EXISTS change_control_links (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    trail_id UUID NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+    control_id UUID NOT NULL REFERENCES controls(id) ON DELETE CASCADE,
+    attestation_id UUID NOT NULL REFERENCES attestations(id) ON DELETE CASCADE,
+    change_number VARCHAR(100) NOT NULL,      -- ServiceNow change_request number, e.g. CHG0030192
+    change_sys_id VARCHAR(100),               -- change_request sys_id, once resolved via ServiceNow
+    linked_by VARCHAR(255) NOT NULL,          -- principal (email or service-account) that recorded the link
+    servicenow_synced BOOLEAN NOT NULL DEFAULT FALSE, -- whether the change_request write-back succeeded
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(trail_id, control_id, change_number)
+);
+CREATE INDEX IF NOT EXISTS idx_change_control_links_org ON change_control_links(org_id);
+CREATE INDEX IF NOT EXISTS idx_change_control_links_control ON change_control_links(control_id);
+CREATE INDEX IF NOT EXISTS idx_change_control_links_change_number ON change_control_links(change_number);
+
+-- 27. Deployment Anchors (evidence that a signed deployment attestation was
+-- anchored to a ServiceNow CMDB CI on change close / deploy, proving the
+-- deployed artifact — image digest + commit — matched change intent).
+CREATE TABLE IF NOT EXISTS deployment_anchors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    trail_id UUID NOT NULL REFERENCES trails(id) ON DELETE CASCADE,
+    attestation_id UUID REFERENCES attestations(id) ON DELETE SET NULL,
+    ci_sys_id VARCHAR(64) NOT NULL,     -- ServiceNow CMDB CI sys_id the evidence was anchored to
+    ci_name VARCHAR(255),
+    change_number VARCHAR(100),         -- ServiceNow change_request number, if any
+    image_digest VARCHAR(64),
+    commit_sha VARCHAR(40),
+    build_log_ref TEXT,
+    runtime_snapshot_ref VARCHAR(64),   -- environment_snapshots.id proving it's actually running
+    content_hash VARCHAR(64),           -- tamper-evidence chain hash (see pkg/ledger)
+    compliant BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_deployment_anchors_org_id ON deployment_anchors(org_id);
+CREATE INDEX IF NOT EXISTS idx_deployment_anchors_trail_id ON deployment_anchors(trail_id);
 
 
 

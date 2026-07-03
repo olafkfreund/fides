@@ -360,6 +360,28 @@ curl -X POST http://localhost:8191/api/v1/policies \
   }'
 ```
 
+In the **portal** (Policies page) rules are edited in a Monaco code editor with a
+**Format** button and an AI **Check & fix** button (`POST /api/v1/ai/lint-policy`)
+that reviews the JSON/jq for errors and best practices and rewrites it.
+
+### Controls coverage & one-click enforcement
+
+Adopt a framework's control catalog, then **enforce** its controls so each
+environment gates on the right evidence. Enforcing a control creates an enabled
+environment policy that requires the control's evidence types — which is what the
+**Controls** page coverage bars measure.
+
+```bash
+fides control import  --framework SOC2                 # adopt the catalog
+fides control enforce --all-controls --all-environments # gate every env on every control
+fides control coverage                                  # per-control environment coverage
+```
+
+The portal's **Controls** page has a per-control **Enforce** button (choose one
+environment or *All environments*); coverage updates immediately. Under the hood
+this calls `POST /api/v1/controls/{key}/enforce` (`{"environment_id": "…"}` or
+`{"all": true}`).
+
 ---
 
 ## 5. Storage Drivers & Cloud Secret Vaults
@@ -551,3 +573,172 @@ fides verify-chain    --trail $TRAIL
 fides service-account issue-key --account $SA_ID --label github-actions --expires-hours 720
 fides audit --trail $TRAIL --output trail-audit.zip
 ```
+
+---
+
+## 10. Real-life Scenarios
+
+End-to-end, copy-pasteable walkthroughs for the capabilities shipped in recent
+releases. Each combines the CLI, the HTTP API, and the portal so you can pick the
+surface that fits your workflow.
+
+### 10.1 Adopt a framework and enforce its controls
+
+**Goal:** adopt a compliance framework's control catalog, gate every environment on
+the evidence each control needs, then watch coverage light up.
+
+Enforcing a control is not just a label — it **creates an enabled environment
+policy that requires the control's evidence types** (e.g. `junit`, `trivy`,
+`sbom-cyclonedx`, `secret-scan`, `sast-semgrep-scan`, `deployment`). That is
+exactly what the **Controls** page coverage bars measure, so coverage moves the
+moment you enforce.
+
+```bash
+# 1. Discover the available catalogs, then adopt one (idempotent).
+#    SOC2 | ISO27001 | NIST-800-53 | PCI-DSS | DORA | PSD2 | SOX
+fides control frameworks
+fides control import --framework SOC2
+
+# 2. Enforce. Either blanket-enforce, or target one control/environment.
+fides control enforce --all-controls --all-environments      # gate everything
+fides control enforce --key SOC2-CC7.1 --env <environment-id> # or one at a time
+
+# 3. Inspect per-control, per-environment coverage.
+fides control coverage
+```
+
+Under the hood `--all-controls` first lists `GET /api/v1/controls`, then for each
+control key `POST`s to `/api/v1/controls/{key}/enforce`. The request body is
+`{"all": true}` for every environment, or `{"environment_id": "<uuid>"}` for a
+single one:
+
+```bash
+curl -X POST http://localhost:8191/api/v1/controls/SOC2-CC7.1/enforce \
+  -H "Content-Type: application/json" \
+  -d '{"environment_id": "6d1f...c9"}'
+```
+
+**In the portal — Controls page:** a summary bar shows overall coverage, controls
+are grouped per framework, and clicking a control drills into its per-environment
+enforcement status with a one-click **Enforce** button (choose a single
+environment or *All environments*). Coverage updates immediately after enforcing.
+
+### 10.2 Author a policy with the Monaco editor + AI review
+
+**Goal:** write and validate a release policy's `jq` rules without leaving the
+browser, or generate one from the CLI.
+
+**In the portal — Policies page:** rules are edited in a **Monaco JSON editor**
+(resizable, with an **Expand** control for full-screen editing). A **Format**
+button pretty-prints the JSON, and an AI **Check & fix** button reviews the JSON
+and its embedded `jq` rules for errors and best practices, then rewrites them in
+place. Check & fix calls:
+
+```bash
+curl -X POST http://localhost:8191/api/v1/ai/lint-policy \
+  -H "Content-Type: application/json" \
+  -d '{"rules": "{\"attestations\":[{\"type\":\"junit\",\"rules\":[\".failures = 0\"]}]}"}'
+# → returns corrected rules (e.g. fixes ".failures = 0" → ".failures == 0")
+```
+
+Prefer the CLI? Draft rules with the LLM, then persist them:
+
+```bash
+fides policy generate --describe "block release if any critical CVE or failing unit test"
+fides policy create   --name production-release-rules --file policy.json
+```
+
+### 10.3 Inspect an artifact and its SBOM
+
+**Goal:** open an artifact, review its attestations, and read the parsed software
+bill of materials.
+
+**In the portal — Artifacts page:** click an artifact to see its metadata, the
+attestations recorded against it, and the parsed **SBOM**. The viewer understands
+the common shapes — **CycloneDX `components`**, **SPDX `packages`**, and **Syft
+`artifacts`** — and renders each entry as *component / version / license*.
+
+The backing API:
+
+```bash
+# All attestations for one artifact (by SHA).
+curl "http://localhost:8191/api/v1/search/attestations?sha=$DIGEST"
+
+# The full evidence payload for one attestation, plus signing / tamper metadata
+# (signed_by, signature_algorithm, content_hash, manifestation_reason).
+curl "http://localhost:8191/api/v1/attestations/<attestation-id>"
+```
+
+The Artifacts SBOM panel only has real components to show if the pipeline attests
+an actual SBOM document. `fides attest` parses `junit`, `snyk`, `trivy`, and
+`sbom` reports as first-class subcommands. `fides attest sbom` auto-detects
+CycloneDX vs SPDX JSON, normalizes every component (name, version, purl,
+licenses), and persists them linked to the artifact — powering
+`fides search components` ("which artifacts contain component X?"). It records
+the attestation named `sbom` and typed `sbom-cyclonedx` (so it satisfies the
+SBOM control's evidence requirement, regardless of the source format):
+
+```bash
+# Produce a real CycloneDX SBOM from the image, then attest it.
+syft myorg/auth-service:1.4.2 -o cyclonedx-json > sbom.json
+
+fides attest sbom \
+  --artifact-sha $DIGEST \
+  --file sbom.json
+  # --trail is optional here — it is resolved from the artifact.
+
+# Which artifacts (across every trail) bundle a vulnerable lodash version?
+fides search components --purl pkg:npm/lodash@4.17.20
+```
+
+Older pipelines that attested SBOMs via the generic form still work unchanged:
+
+```bash
+fides attest \
+  --trail $TRAIL \
+  --artifact-sha $DIGEST \
+  --name sbom \
+  --type sbom-cyclonedx \
+  --payload sbom.json
+```
+
+### 10.4 Drive Fides from a local AI assistant via WebMCP
+
+**Goal:** let a browser-integrated agent or a local LLM operate Fides directly from
+the portal page, using your existing session.
+
+The portal registers Fides tools on the browser's **WebMCP** surface — the native
+W3C `document.modelContext` API when available, falling back to the `@mcp-b/global`
+polyfill. Native WebMCP needs Chrome with the origin trial enabled; elsewhere the
+polyfill bridges the tools, and it no-ops if the browser supports neither.
+
+Exposed tools:
+
+* **Read-only:** `fides_list_flows`, `fides_list_environments`,
+  `fides_list_policies`, `fides_controls_coverage`, `fides_search_artifacts`,
+  `fides_search_attestations`, `fides_deployment_frequency`,
+  `fides_compliance_summary`.
+* **Safe actions:** `fides_enforce_control`, `fides_import_framework`.
+
+Because the tools run in the page, they inherit your logged-in session — no extra
+token wiring. For editor-based agents (Claude Code, Cursor, Claude Desktop) use the
+out-of-browser **`fides-mcp`** server instead (see Section 9); it ships in the
+image at `/usr/local/bin/fides-mcp` and also exposes the docs as MCP resources
+(`fides://docs/*`).
+
+### 10.5 Talk to the Fides Assistant
+
+**Goal:** ask compliance questions conversationally, hands-free.
+
+The in-portal assistant popout (the "Fides Copilot" widget, bottom-right) supports
+**voice input** via the microphone button and **spoken replies** via a toggle, in
+addition to typed chat. It is backed by:
+
+```bash
+curl -X POST http://localhost:8191/api/v1/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages": [{"role": "user", "content": "Which environments are missing SOC2-CC7.1 evidence?"}]}'
+```
+
+When the WebMCP plug toggle is on, the assistant can also invoke the WebMCP tools
+from Section 10.4 to answer with live data or perform the safe actions.

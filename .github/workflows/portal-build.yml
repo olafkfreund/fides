@@ -1,0 +1,35 @@
+name: Portal Build
+
+# Builds the Next.js portal (portal/) to a static export so breakage is caught
+# in CI. Does NOT deploy — the existing portal stays live until an explicit
+# cutover (copy portal/out -> web/) once the rebuild is verified at parity.
+on:
+  push:
+    branches: [main]
+    paths: ["portal/**", ".github/workflows/portal-build.yml"]
+  # Runs on every PR (no path filter) so the `build` check always reports and can
+  # be a reliable required status check on the protected main branch. The build is
+  # a fast static export; on non-portal PRs it's a cheap no-op-ish pass.
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Confirm static export
+        run: test -f out/index.html && test -f out/settings/index.html

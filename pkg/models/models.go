@@ -81,6 +81,27 @@ type EvidenceAttachment struct {
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 }
 
+// DeploymentAnchor records that a signed deployment attestation (image
+// digest, commit, build log ref, runtime snapshot ref) was anchored to a
+// ServiceNow CMDB CI on change close / deploy, proving the deployed artifact
+// matched change intent. See pkg/servicenow.AnchorDeploymentAttestation.
+type DeploymentAnchor struct {
+	ID                 uuid.UUID  `json:"id" db:"id"`
+	OrgID              uuid.UUID  `json:"org_id" db:"org_id"`
+	TrailID            uuid.UUID  `json:"trail_id" db:"trail_id"`
+	AttestationID      *uuid.UUID `json:"attestation_id" db:"attestation_id"`
+	CISysID            string     `json:"ci_sys_id" db:"ci_sys_id"`
+	CIName             string     `json:"ci_name" db:"ci_name"`
+	ChangeNumber       string     `json:"change_number" db:"change_number"`
+	ImageDigest        string     `json:"image_digest" db:"image_digest"`
+	CommitSHA          string     `json:"commit_sha" db:"commit_sha"`
+	BuildLogRef        string     `json:"build_log_ref" db:"build_log_ref"`
+	RuntimeSnapshotRef string     `json:"runtime_snapshot_ref" db:"runtime_snapshot_ref"`
+	ContentHash        string     `json:"content_hash" db:"content_hash"`
+	Compliant          bool       `json:"compliant" db:"compliant"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+}
+
 type LLMAssessment struct {
 	ID                    uuid.UUID `json:"id" db:"id"`
 	AttestationID         uuid.UUID `json:"attestation_id" db:"attestation_id"`
@@ -253,6 +274,28 @@ type TenantGitProvider struct {
 	Enabled           bool      `json:"enabled" db:"enabled"`
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// RemediationAction is a policy-driven auto-remediation proposal, gated by an
+// approval record before it can be applied. Domain is restricted to low-risk
+// targets: "env_tag", "allowlist_entry", "drift_resync" (pkg/remediation).
+// Status flows proposed -> approved|rejected -> applied.
+type RemediationAction struct {
+	ID            uuid.UUID  `json:"id" db:"id"`
+	OrgID         uuid.UUID  `json:"org_id" db:"org_id"`
+	Domain        string     `json:"domain" db:"domain"`
+	Status        string     `json:"status" db:"status"`
+	EnvironmentID *uuid.UUID `json:"environment_id,omitempty" db:"environment_id"`
+	PolicyID      *uuid.UUID `json:"policy_id,omitempty" db:"policy_id"`
+	Reason        string     `json:"reason" db:"reason"`
+	Params        string     `json:"params" db:"params"` // JSON string, action-specific
+	ProposedBy    string     `json:"proposed_by" db:"proposed_by"`
+	ApprovedBy    string     `json:"approved_by,omitempty" db:"approved_by"`
+	AppliedBy     string     `json:"applied_by,omitempty" db:"applied_by"`
+	RejectedBy    string     `json:"rejected_by,omitempty" db:"rejected_by"`
+	ResultDetail  string     `json:"result_detail,omitempty" db:"result_detail"`
+	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type TenantServiceNowSettings struct {

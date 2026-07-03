@@ -26,6 +26,24 @@ func TestEmbeddedSchemaMatchesRoot(t *testing.T) {
 	}
 }
 
+// The Helm chart bundles copies of schema.sql and schema-rls.sql (its seed Job
+// is self-contained). They must match the repo-root canonical files.
+func TestHelmChartSQLMatchesRoot(t *testing.T) {
+	for _, f := range []string{"schema.sql", "schema-rls.sql"} {
+		root, err := os.ReadFile("../../" + f)
+		if err != nil {
+			t.Fatalf("read root %s: %v", f, err)
+		}
+		chart, err := os.ReadFile("../../charts/fides/files/" + f)
+		if err != nil {
+			t.Fatalf("read chart %s: %v", f, err)
+		}
+		if string(root) != string(chart) {
+			t.Fatalf("charts/fides/files/%s has diverged from root %s — copy the root file into the chart", f, f)
+		}
+	}
+}
+
 // Postgres-backed: Migrate creates the schema, is idempotent, and records
 // versions. Skipped unless FIDES_TEST_DB_DSN is set.
 func TestMigrateIntegration(t *testing.T) {
@@ -56,6 +74,7 @@ func TestMigrateIntegration(t *testing.T) {
 		"users.password_hash":                 "SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='password_hash'",
 		"tenant_git_providers.inbound_secret": "SELECT 1 FROM information_schema.columns WHERE table_name='tenant_git_providers' AND column_name='inbound_secret_path'",
 		"tenant_servicenow_settings":          "SELECT 1 FROM information_schema.tables WHERE table_name='tenant_servicenow_settings'",
+		"deployment_anchors":                  "SELECT 1 FROM information_schema.tables WHERE table_name='deployment_anchors'",
 	}
 	for name, q := range checks {
 		var ok int

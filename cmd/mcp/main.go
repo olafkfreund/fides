@@ -46,7 +46,8 @@ type InitializeResult struct {
 }
 
 type ServerCapabilities struct {
-	Tools struct{} `json:"tools"`
+	Tools     struct{} `json:"tools"`
+	Resources struct{} `json:"resources"`
 }
 
 type ServerInfo struct {
@@ -135,6 +136,29 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 	case "notifications/initialized":
 		// No-op for initialized notification
 
+	case "resources/list":
+		// Expose the Fides documentation so AI tools (Claude Code, Cursor, …) can
+		// read it directly.
+		sendResponse(req.Id, map[string]interface{}{"resources": docResources()})
+
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		if req.Params != nil {
+			_ = json.Unmarshal(*req.Params, &p)
+		}
+		text, err := readDocResource(p.URI, serverURL)
+		if err != nil {
+			sendError(req.Id, -32602, "resource not found: "+p.URI, nil)
+			return
+		}
+		sendResponse(req.Id, map[string]interface{}{
+			"contents": []map[string]interface{}{
+				{"uri": p.URI, "mimeType": "text/markdown", "text": text},
+			},
+		})
+
 	case "tools/list":
 		var list ToolsListResult
 		list.Tools = []Tool{
@@ -200,6 +224,46 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 					},
 					Required: []string{"name"},
 				},
+			},
+			{
+				Name:        "search_artifacts",
+				Description: "Search build artifacts by name, SHA256 prefix, or git commit",
+				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+					"name":   {Type: "string", Description: "artifact name (partial match)"},
+					"sha":    {Type: "string", Description: "SHA256 prefix"},
+					"commit": {Type: "string", Description: "git commit"},
+				}},
+			},
+			{
+				Name:        "search_attestations",
+				Description: "Search compliance attestations by evidence type and/or compliance status",
+				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+					"type":      {Type: "string", Description: "evidence type (junit, snyk, trivy, sbom-cyclonedx…)"},
+					"compliant": {Type: "string", Description: "'true' or 'false'"},
+				}},
+			},
+			{
+				Name:        "get_controls_coverage",
+				Description: "Get governance controls and how many environments enforce each (coverage report)",
+				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
+			},
+			{
+				Name:        "ground_change",
+				Description: "Ground Now Assist for a ServiceNow change: return Fides's authoritative control-coverage + evidence + change-gate risk for a change number, with a natural-language grounding_summary to quote verbatim (Fides advises; ServiceNow decides).",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]SchemaProp{
+						"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
+					},
+					Required: []string{"change_number"},
+				},
+			},
+			{
+				Name:        "get_deployment_frequency",
+				Description: "Weekly deployment frequency per environment over the last N weeks",
+				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+					"weeks": {Type: "string", Description: "number of weeks (default 12)"},
+				}},
 			},
 			{
 				Name:        "create_flow",
@@ -362,6 +426,75 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 			result.Content = []TextContent{{Type: "text", Text: string(body)}}
 		}
 
+	case "get_controls_coverage":
+		body, err := makeGetRequest(serverURL + "/api/v1/controls/coverage")
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching coverage: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "ground_change":
+		num, ok := args["change_number"].(string)
+		if !ok || num == "" {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: "Missing change_number parameter"}}
+			break
+		}
+		q := neturl.Values{}
+		q.Set("change", num)
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/servicenow/grounding?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error grounding change: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "get_deployment_frequency":
+		weeks := "12"
+		if v, ok := args["weeks"].(string); ok && v != "" {
+			weeks = v
+		}
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/metrics/deployment-frequency?weeks=%s", serverURL, weeks))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "search_artifacts":
+		q := neturl.Values{}
+		for _, k := range []string{"name", "sha", "commit"} {
+			if v, ok := args[k].(string); ok && v != "" {
+				q.Set(k, v)
+			}
+		}
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/artifacts?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "search_attestations":
+		q := neturl.Values{}
+		for _, k := range []string{"type", "compliant"} {
+			if v, ok := args[k].(string); ok && v != "" {
+				q.Set(k, v)
+			}
+		}
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/attestations?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
 	case "list_policies":
 		url := fmt.Sprintf("%s/api/v1/policies", serverURL)
 		body, err := makeGetRequest(url)
@@ -510,6 +643,51 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 
 // setAuthHeaders applies the API token and organization scope from the
 // environment. Identity must never be hardcoded in the binary.
+// docCatalog maps a documentation slug (also the served web/<slug>.md file) to a
+// human title + description. Exposed as MCP resources for AI tools.
+var docCatalog = []struct{ Slug, Name, Desc string }{
+	{"getting_started", "Getting Started", "Self-hosting architecture, setup, and bootstrapping your first compliance flow"},
+	{"features", "Features", "Full feature overview: flows, trails, artifacts, attestations, environments, policies, controls"},
+	{"cli-reference", "CLI Reference", "The fides CLI: every command and flag with examples"},
+	{"environment-mcp-compliance", "Environment MCP Compliance", "How Fides queries live environments via MCP sensors to verify runtime compliance"},
+	{"servicenow-integration", "ServiceNow Integration", "CMDB, ITOM, ITSM, and MCP integration with ServiceNow"},
+	{"aws-secrets-manager", "AWS Secrets Manager", "Secrets management via AWS Secrets Manager and IRSA"},
+	{"architecture_proposal", "Architecture", "System architecture, data model, and integrations"},
+	{"mcp-server", "MCP Server", "Using the Fides MCP server (this server) from Claude Code and other AI tools"},
+}
+
+func docResources() []map[string]interface{} {
+	out := []map[string]interface{}{}
+	for _, d := range docCatalog {
+		out = append(out, map[string]interface{}{
+			"uri":         "fides://docs/" + d.Slug,
+			"name":        d.Name,
+			"description": d.Desc,
+			"mimeType":    "text/markdown",
+		})
+	}
+	return out
+}
+
+// readDocResource fetches a documentation resource. The docs are served by the
+// Fides server at /<slug>.md, so the content is always current.
+func readDocResource(uri, serverURL string) (string, error) {
+	slug := strings.TrimPrefix(uri, "fides://docs/")
+	if slug == "" || slug == uri {
+		return "", fmt.Errorf("invalid resource uri")
+	}
+	for _, d := range docCatalog {
+		if d.Slug == slug {
+			body, err := makeGetRequest(serverURL + "/" + slug + ".md")
+			if err != nil {
+				return "", err
+			}
+			return string(body), nil
+		}
+	}
+	return "", fmt.Errorf("unknown resource")
+}
+
 func setAuthHeaders(req *http.Request) {
 	if token := os.Getenv("FIDES_API_TOKEN"); token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

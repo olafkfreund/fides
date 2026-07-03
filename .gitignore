@@ -1,12 +1,21 @@
-# Binaries
-fides-server
-fides
-fides-cli
-fides-mcp
+# Binaries (root-anchored so they don't match the charts/fides directory
+# or the cmd/cli, cmd/server source packages)
+/fides-server
+/fides
+/fides-cli
+/fides-mcp
+/cli
+/server
+/mcp
+/mcp-sensor
 fides.exe
 fides-cli.exe
 fides-mcp.exe
 fides-server.exe
+
+# Nix build output
+/result
+/result-*
 
 
 # Local storage data directories

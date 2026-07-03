@@ -2,6 +2,7 @@ package servicenow
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 )
 
@@ -86,6 +87,42 @@ func (c *Client) CreateRecord(ctx context.Context, table string, fields map[stri
 		Result map[string]any `json:"result"`
 	}
 	if err := c.doJSON(ctx, "POST", "/api/now/table/"+url.PathEscape(table), fields, &out); err != nil {
+		return nil, err
+	}
+	return out.Result, nil
+}
+
+// UpdateRecord PATCHes a record by sys_id (e.g. to add a work note to a change).
+func (c *Client) UpdateRecord(ctx context.Context, table, sysID string, fields map[string]any) (map[string]any, error) {
+	var out struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := c.doJSON(ctx, "PATCH", "/api/now/table/"+url.PathEscape(table)+"/"+url.PathEscape(sysID), fields, &out); err != nil {
+		return nil, err
+	}
+	return out.Result, nil
+}
+
+// ----- Attachment API -----
+
+// AttachFile uploads a file to any record via the Attachment API. This is the
+// ServiceNow-native way to evidence a record (e.g. a CMDB CI) — it works
+// regardless of whether the target table has custom fields for the evidence,
+// and shows up in the record's Attachments/Activity timeline.
+func (c *Client) AttachFile(ctx context.Context, table, sysID, fileName, contentType string, data []byte) (map[string]any, error) {
+	if table == "" || sysID == "" || fileName == "" {
+		return nil, fmt.Errorf("servicenow: table, sysID and fileName are required")
+	}
+	q := url.Values{}
+	q.Set("table_name", table)
+	q.Set("table_sys_id", sysID)
+	q.Set("file_name", fileName)
+	path := "/api/now/attachment/file?" + q.Encode()
+
+	var out struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := c.doRaw(ctx, "POST", path, contentType, data, &out); err != nil {
 		return nil, err
 	}
 	return out.Result, nil
