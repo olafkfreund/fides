@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Fides x ServiceNow — bidirectional governed evidence, verified live.">
+<title>Fides × ServiceNow — bidirectional governed evidence</title>
+<style>
+  :root{
+    --ink:#0c1c1f; --panel:#12292d; --panel-2:#173238; --line:#25454b;
+    --paper:#f3f6f5; --paper-2:#e9efee; --card:#ffffff;
+    --text:#1a2c2f; --muted:#5f7377; --faint:#8aa0a2;
+    --accent:#1fb28c; --accent-deep:#0f8f70;
+    --hold:#c98a1f; --hold-bg:#fbf1dc; --verified-bg:#e2f4ec; --crit:#c2453a;
+    --serif:"Charter","Iowan Old Style","Palatino Linotype",Georgia,serif;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--text);font-family:var(--sans);
+    font-size:17px;line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:920px;margin:0 auto;padding:0 24px}
+  h1,h2,h3{font-family:var(--serif);text-wrap:balance;font-weight:600;letter-spacing:-.01em}
+  a{color:var(--accent-deep)}
+  .eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 18px}
+  code,.mono{font-family:var(--mono)}
+
+  /* hero */
+  .hero{background:
+      radial-gradient(120% 90% at 88% -10%, rgba(31,178,140,.16), transparent 60%),
+      linear-gradient(180deg,#0b1a1d,#0c1c1f);
+    color:#dfeae9;border-bottom:1px solid var(--line)}
+  .hero .wrap{padding-top:66px;padding-bottom:58px}
+  .hero h1{color:#f4faf9;font-size:clamp(30px,5.4vw,50px);line-height:1.08;margin:0 0 20px}
+  .hero h1 em{font-style:normal;color:var(--accent);border-bottom:2px solid rgba(31,178,140,.4)}
+  .lede{font-size:19px;color:#bccdcc;max-width:60ch;margin:0}
+  .status{margin-top:30px;display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center;
+    font-family:var(--mono);font-size:13px;color:#9fb6b5;border-top:1px solid var(--line);padding-top:20px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);
+    margin-right:8px;box-shadow:0 0 0 3px rgba(31,178,140,.22)}
+
+  section{padding:56px 0}
+  section + section{border-top:1px solid var(--paper-2)}
+  .kicker{font-family:var(--mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+  h2{font-size:clamp(22px,3.4vw,30px);margin:0 0 8px}
+  .sub{color:var(--muted);margin:0 0 30px;max-width:62ch}
+
+  /* loop cards */
+  .card{background:var(--card);border:1px solid var(--paper-2);border-radius:10px;
+    padding:24px 24px 22px;margin:0 0 18px;box-shadow:0 1px 0 rgba(12,28,31,.03)}
+  .card-head{display:flex;align-items:baseline;gap:14px;margin:0 0 4px}
+  .idx{font-family:var(--mono);font-size:13px;color:var(--accent-deep);font-weight:600;
+    border:1px solid var(--verified-bg);background:var(--verified-bg);border-radius:6px;padding:2px 8px;white-space:nowrap}
+  .card h3{font-size:19.5px;margin:0}
+  .flow{font-family:var(--mono);font-size:12.5px;color:var(--faint);margin:2px 0 16px}
+  .card p{margin:0 0 16px;color:#39504f}
+  .out{background:#0d1e21;border-radius:8px;border:1px solid #16323700;overflow-x:auto}
+  .out .bar{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;
+    color:#7fa39d;padding:9px 14px;border-bottom:1px solid #1c3b40;background:#0b1a1d;border-radius:8px 8px 0 0}
+  .out pre{margin:0;padding:14px 16px;font-family:var(--mono);font-size:13px;line-height:1.55;
+    color:#cfe3e0;white-space:pre;min-width:min-content}
+  .out .k{color:#7bd7bd}.out .v{color:#e9f3f0}.out .hold{color:#f0c063}.out .ok{color:#5fd39f}.out .mut{color:#6f8a89}
+
+  .pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;
+    font-weight:600;padding:3px 9px;border-radius:999px;letter-spacing:.02em}
+  .pill.ok{background:var(--verified-bg);color:var(--accent-deep)}
+  .pill.hold{background:var(--hold-bg);color:var(--hold)}
+  .pills{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+
+  /* better grid */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:640px){.grid{grid-template-columns:1fr}}
+  .why{border:1px solid var(--paper-2);border-left:3px solid var(--accent);border-radius:8px;
+    background:#fff;padding:18px 20px}
+  .why h3{font-family:var(--sans);font-size:15.5px;font-weight:650;margin:0 0 6px;letter-spacing:0}
+  .why p{margin:0;font-size:15px;color:#41585700;color:#42595800;color:#425958}
+
+  .quiet{background:var(--panel);color:#cddad9;border-radius:10px;padding:24px}
+  .quiet .eyebrow{color:var(--accent)}
+  .quiet pre{font-family:var(--mono);font-size:13px;color:#bfd4d1;overflow-x:auto;margin:12px 0 0;line-height:1.6}
+  .quiet .cmt{color:#6f8a89}
+
+  .advisory{font-family:var(--serif);font-size:clamp(20px,3vw,25px);line-height:1.4;color:var(--ink);
+    max-width:24ch;margin:0}
+  .advisory b{color:var(--accent-deep)}
+  footer{padding:34px 0 60px;color:var(--muted);font-size:13px;font-family:var(--mono)}
+  footer .wrap{border-top:1px solid var(--paper-2);padding-top:24px}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Fides × ServiceNow · DevGovOps spoke</p>
+    <h1>Turn ServiceNow's auto-approval into <em>cryptographically-verified evidence</em>.</h1>
+    <p class="lede">ServiceNow decides. Fides advises — with a tamper-evident evidence chain,
+      control-coverage, and a 0–100 risk score, read and written through ServiceNow's own
+      governed MCP surface. No rip-and-replace; ServiceNow stays the system of record.</p>
+    <div class="status">
+      <span><span class="dot"></span>Verified live</span>
+      <span>instance&nbsp;·&nbsp;calitiiltddemo3.service-now.com</span>
+      <span>change&nbsp;·&nbsp;CHG0032508</span>
+      <span>2026-07-03</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">The loop, both directions</p>
+    <h2>One change, three governed exchanges — all live</h2>
+    <p class="sub">Every panel below is real output captured against the running Fides deployment and
+      the ServiceNow demo instance. Nothing is mocked.</p>
+
+    <div class="card">
+      <div class="card-head"><span class="idx">01</span><h3>Fides reads ServiceNow — governed</h3></div>
+      <p class="flow">Fides → ServiceNow · MCP client · <code>fides servicenow mcp lookup</code></p>
+      <p>Fides consumes ServiceNow's native MCP server, so change / CMDB / GRC reads pass through
+        ServiceNow's own governance and ACLs — not a bot scraping the Table API.</p>
+      <div class="out">
+        <div class="bar">POST /api/v1/servicenow/mcp/lookup&nbsp;&nbsp;{ "table": "change_request", "limit": 3 }</div>
+<pre><span class="mut">{</span> <span class="k">"records"</span>: [
+    { <span class="k">"number"</span>: <span class="v">"CHG0030277"</span> },
+    { <span class="k">"number"</span>: <span class="v">"CHG0031000"</span> },
+    { <span class="k">"number"</span>: <span class="v">"CHG0032343"</span> }
+  ], <span class="k">"count"</span>: <span class="v">3</span>, <span class="k">"table"</span>: <span class="v">"change_request"</span> <span class="mut">}</span></pre>
+      </div>
+      <div class="pills"><span class="pill ok">3 MCP servers discovered</span><span class="pill ok">governed read</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="idx">02</span><h3>The change record carries Fides evidence</h3></div>
+      <p class="flow">Fides → ServiceNow · signed write-back · <code>link-control</code> + <code>change-gate</code></p>
+      <p>Fides links a build trail and control to the change and posts its verdict — a work note plus
+        the change's <b>risk field set to Moderate</b>. Auditors trace change → control → evidence in one hop.</p>
+      <div class="out">
+        <div class="bar">change_request CHG0032508 · work note + risk</div>
+<pre><span class="k">work_note</span> <span class="mut">›</span> <span class="v">Fides: this change implements control SOC2-CC8.1</span>
+            <span class="v">(Changes are covered by passing tests), attested</span>
+            <span class="v">2026-07-03T10:14:14Z via attestation 567a8977…</span>
+<span class="k">risk</span>      <span class="mut">›</span> <span class="hold">3 — Moderate</span>  <span class="mut">(set by the Fides change gate)</span></pre>
+      </div>
+      <div class="pills"><span class="pill ok">servicenow_written: true</span><span class="pill ok">tamper-evident chain</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><span class="idx">03</span><h3>ServiceNow reads Fides — Now Assist grounding</h3></div>
+      <p class="flow">ServiceNow → Fides · <code>GET /servicenow/grounding?change=CHG0032508</code></p>
+      <p>The authoritative pack Now Assist quotes instead of guessing. Structured fields plus a
+        ready-to-read summary — and an explicit “UNVERIFIED” when no evidence is linked.</p>
+      <div class="out">
+        <div class="bar">grounding_summary</div>
+<pre>Change <span class="v">CHG0032508</span> is linked to 1 Fides control: <span class="v">SOC2-CC8.1</span>.
+Coverage: <span class="ok">37 of 37</span> required controls have current compliant
+evidence (0 failing, 0 missing). Change-gate risk:
+<span class="hold">40/100 (medium)</span>; recommendation: <span class="hold">HOLD</span>. Evidence: 19
+attestations; <span class="ok">tamper-evidence chain intact</span>.
+Source: Fides <span class="mut">(advisory — ServiceNow decides)</span>.</pre>
+      </div>
+      <div class="pills"><span class="pill ok">grounded: true</span><span class="pill hold">HOLD · awaiting human sign-off (SoD)</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">Why it makes ServiceNow better</p>
+    <h2>The gaps ServiceNow leaves open — closed with tamper-evidence</h2>
+    <p class="sub">ServiceNow's DevOps Change Velocity auto-approves on pipeline metrics alone: no
+      cryptographic evidence, no build-vs-deploy distinction, GRC evidence uploaded by hand.
+      Every one of those is a Fides strength.</p>
+    <div class="grid">
+      <div class="why"><h3>Evidence-driven CAB & Now Assist</h3><p>Signed evidence bundle + 0–100 risk + control-coverage land on the exact record the CAB reviews — votes stop being guesses.</p></div>
+      <div class="why"><h3>Governed, not scraping</h3><p>Reads flow through ServiceNow's MCP layer, so its ACLs still apply. Fides can't see what the identity isn't entitled to.</p></div>
+      <div class="why"><h3>Kills the GRC silo</h3><p>change_request and sn_compliance_control reference the same Fides attestation — change → control → audit in one hop.</p></div>
+      <div class="why"><h3>Two things rivals can't copy fast</h3><p>An AI-native (MCP) control plane and a self-hostable, tamper-evident chain — neither Kosli (SaaS-only) nor JFrog AppTrust has both.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">How it's wired</p>
+    <h2>Two commands and a scripted call</h2>
+    <p class="sub">The MCP client and grounding endpoint ship in Fides. ServiceNow needs one service
+      account (governed read + change write-back) and one Scripted REST resource to feed Now Assist.</p>
+    <div class="quiet">
+      <p class="eyebrow">Fides side · connect once</p>
+<pre><span class="cmt"># point Fides at the instance (secret is a reference, never inline)</span>
+fides servicenow config --instance-url https://acme.service-now.com \
+    --auth-type oauth2 --client-id &lt;id&gt; --secret-path SN_OAUTH_SECRET
+
+<span class="cmt"># prove it, both directions</span>
+fides servicenow mcp lookup --table change_request --limit 3
+fides servicenow grounding --change CHG0032508</pre>
+    </div>
+    <div style="height:26px"></div>
+    <div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap">
+      <p class="advisory">“Fides advises;<br><b>ServiceNow decides.</b>”</p>
+      <p style="margin:0;color:var(--muted);max-width:34ch;font-size:15px">Reproduce the whole loop with
+        <code style="font-size:13px">scripts/servicenow-demo.sh</code>. Now Assist wiring — the Scripted
+        REST resource — is in <code style="font-size:13px">docs/servicenow-now-assist-grounding.md</code>.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">Fides · compliance, provenance &amp; evidence tracking · verified live on calitiiltddemo3 · 2026-07-03 · <a href="/">Fides docs home</a></div>
+</footer>
+</body>
+</html>

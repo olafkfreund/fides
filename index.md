@@ -8,6 +8,12 @@ Fides is a self-hosted, multi-cloud compatible compliance tracking system. It re
 > walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits,
 > read the **[Fides Integration & Setup Guide](/guide.html)**.
 
+> [!NOTE]
+> **New — [Fides × ServiceNow showcase](/servicenow-showcase.html)**: the bidirectional,
+> governed DevGovOps spoke, verified live. Fides consumes ServiceNow's MCP server,
+> writes signed evidence + risk onto Change Requests, and grounds Now Assist —
+> *"Fides advises; ServiceNow decides."*
+
 ---
 
 ## 1. Architectural Blueprint & Overview
