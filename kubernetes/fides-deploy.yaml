@@ -246,6 +246,11 @@ spec:
           value: "true"
         - name: FIDES_PUBLIC_URL
           value: "https://fides.13.134.88.9.nip.io"
+        # Enable secure on-behalf-of approval delegation (SARC #436). The feature
+        # is default-deny in code (pkg/api/approvals.go) and only active when this
+        # flag is exactly "true".
+        - name: FIDES_DELEGATED_APPROVAL_ENABLED
+          value: "true"
 ---
 apiVersion: v1
 kind: Service

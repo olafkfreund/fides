@@ -373,6 +373,7 @@ CREATE TABLE IF NOT EXISTS trail_approvals (
     approver_kind VARCHAR(20) NOT NULL,     -- 'session' (human) | 'service'
     reason TEXT,
     role VARCHAR(20) NOT NULL DEFAULT 'approver', -- 'approver' | 'deployer'
+    delegated_by VARCHAR(255),              -- delegating service principal when recorded on-behalf-of a human
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(trail_id, approved_by)
 );
