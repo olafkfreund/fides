@@ -23,6 +23,18 @@ func isEvidenceFormat(name string) bool {
 	return false
 }
 
+// evidenceTypeName maps a parse format to the canonical attestation type_name
+// that framework controls require. Most formats map 1:1, but SLSA provenance
+// is recorded as "slsa-provenance" so that both `fides attest slsa` (local
+// report) and `fides attest fetch` (platform-native) land under one type_name
+// the change gate and control catalogs recognize.
+func evidenceTypeName(format string) string {
+	if format == "slsa" {
+		return "slsa-provenance"
+	}
+	return format
+}
+
 // handleAttestEvidence parses a CI/security report (JUnit/Snyk/Trivy) into a
 // normalized attestation payload and records it (attaching the raw report).
 func handleAttestEvidence(config CLIConfig, format string, args []string) {
@@ -43,7 +55,7 @@ func handleAttestEvidence(config CLIConfig, format string, args []string) {
 	fail(err, "parse "+format+" report")
 	payload, _ := json.Marshal(result)
 
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, format, string(payload), []string{*file}, false)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, evidenceTypeName(format), string(payload), []string{*file}, false)
 	fail(err, "record attestation")
 	fmt.Printf("Recorded %s attestation (compliant=%v): %s\n", format, result.Compliant, respBody)
 }
@@ -376,7 +388,7 @@ func handleControl(config CLIConfig, args []string) {
 		name := cmd.String("name", "", "control name")
 		desc := cmd.String("description", "", "description")
 		framework := cmd.String("framework", "", "SOC2 | ISO27001 | FDA-21CFR11")
-		require := cmd.String("require", "", "comma-separated attestation types")
+		require := cmd.String("require", "", "comma-separated attestation types (e.g. junit,trivy,sbom-cyclonedx,slsa-provenance,cosign-verification)")
 		cmd.Parse(args[1:])
 		if *key == "" || *name == "" {
 			fmt.Println("Error: --key and --name are required")
@@ -628,7 +640,7 @@ func handlePolicy(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("policy "+args[0], flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
 	name := cmd.String("name", "", "policy name")
-	require := cmd.String("require", "", "comma-separated required attestation types")
+	require := cmd.String("require", "", "comma-separated required attestation types (e.g. junit,trivy,sbom-cyclonedx,slsa-provenance,cosign-verification)")
 	ifTag := cmd.String("if-tag", "", "only enforce when flow tag == value")
 	ifValue := cmd.String("if-value", "", "tag value")
 	trail := cmd.String("trail", "", "trail UUID (for check)")

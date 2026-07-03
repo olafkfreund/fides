@@ -19,12 +19,17 @@ type controlTemplate struct {
 // frameworkCatalogs seeds ready-made control catalogs per regulated framework,
 // so an org can adopt a framework in one click (parity with Chainloop's built-in
 // frameworks). Controls map to our evidence types: junit, snyk, trivy,
-// sbom-cyclonedx, secret-scan, iac-scan-terraform, sast-semgrep-scan, deployment.
+// sbom-cyclonedx, secret-scan, iac-scan-terraform, sast-semgrep-scan, deployment,
+// and the supply-chain provenance types cosign-verification (Sigstore/cosign
+// signature verification, from `fides verify-image`) and slsa-provenance (SLSA
+// in-toto build provenance, from `fides attest slsa|fetch`). Any type listed
+// here contributes to control coverage and the change-gate risk score.
 var frameworkCatalogs = map[string][]controlTemplate{
 	"SOC2": {
 		{"SOC2-CC6.1", "Secrets are not committed", []string{"secret-scan"}},
 		{"SOC2-CC7.1", "Artifacts pass vulnerability scanning", []string{"trivy", "snyk"}},
 		{"SOC2-CC7.2", "Software bill of materials produced", []string{"sbom-cyclonedx"}},
+		{"SOC2-CC7.3", "Build provenance (SLSA in-toto)", []string{"slsa-provenance"}},
 		{"SOC2-CC8.1", "Changes are covered by passing tests", []string{"junit"}},
 	},
 	"ISO27001": {
@@ -38,6 +43,8 @@ var frameworkCatalogs = map[string][]controlTemplate{
 		{"NIST-SA-11", "Developer security testing", []string{"junit", "sast-semgrep-scan"}},
 		{"NIST-CM-3", "Configuration change control", []string{"deployment", "iac-scan-terraform"}},
 		{"NIST-SR-4", "Provenance (SBOM)", []string{"sbom-cyclonedx"}},
+		{"NIST-SR-3", "Supply chain — build provenance", []string{"slsa-provenance"}},
+		{"NIST-SR-11", "Component authenticity (signature verification)", []string{"cosign-verification"}},
 	},
 	"PCI-DSS": {
 		{"PCI-6.2", "Patch / vulnerability management", []string{"snyk", "trivy"}},
@@ -60,6 +67,15 @@ var frameworkCatalogs = map[string][]controlTemplate{
 		{"SOX-ITGC-CHANGE", "IT general controls — change management", []string{"deployment", "junit"}},
 		{"SOX-VULN", "Vulnerability remediation", []string{"snyk", "trivy"}},
 		{"SOX-SEGREGATION", "Segregation of duties on deploys", []string{"deployment"}},
+	},
+	// SLSA is a dedicated supply-chain integrity catalog (EU CRA / NIST SSDF
+	// aligned): build provenance, artifact signature verification, and an SBOM.
+	// Each control maps to one recognized supply-chain evidence type so the
+	// change gate can require SLSA/cosign/SBOM as first-class gate evidence.
+	"SLSA": {
+		{"SLSA-BUILD-PROV", "Build provenance (SLSA in-toto)", []string{"slsa-provenance"}},
+		{"SLSA-SIG-VERIFY", "Artifact signature verified (cosign/Sigstore)", []string{"cosign-verification"}},
+		{"SLSA-SBOM", "Software bill of materials", []string{"sbom-cyclonedx"}},
 	},
 }
 
