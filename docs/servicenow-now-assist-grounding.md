@@ -87,6 +87,27 @@ curl -s -X POST https://<fides-host>/api/v1/mcp \
        "params":{"name":"ground_change","arguments":{"change_number":"CHG0032508"}}}'
 ```
 
+#### Register it in ServiceNow (admin runbook)
+
+Do this in the ServiceNow UI (Connections & Credentials + the MCP Server list) so the
+connection validates — the records below are intricate and are best created there,
+not via the Table API.
+
+1. **Credential** — *Connections & Credentials → Credentials → New → API key / Bearer*
+   (`token_auth_credential`). Store the Fides API token. Name it e.g. `Fides API token`.
+2. **Connection** (`http_connection`) — *→ Connections → New*: Connection URL
+   `https://<fides-host>/api/v1/mcp`, HTTP method `POST`, attach the credential above so
+   requests carry `Authorization: Bearer <token>`. This creates a **Connection alias**
+   (`sys_alias`, type *connection*, `http_connection`).
+3. **MCP server** (`sn_mcp_server`) — open **`/now/sn-mcp-server/list` → New**: set
+   `name` = `Fides MCP server` and `connection_alias` = the alias from step 2.
+4. **Now Assist** — in *AI Agent Studio*, add the Fides MCP server's tools (`ground_change`,
+   `get_controls_coverage`) to your change-summarization / change-approval agent, and
+   instruct it to base compliance statements only on the returned `grounding_summary`.
+
+Once registered, Now Assist calls `ground_change` directly — the grounding pack is a tool
+result, not a scripted fetch. (Fides side needs no further change: `/api/v1/mcp` is live.)
+
 > This is the mirror image of [servicenow-mcp.md](servicenow-mcp.md) (Fides consuming
 > ServiceNow's MCP server): here ServiceNow consumes Fides's.
 
