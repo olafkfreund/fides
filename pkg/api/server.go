@@ -223,6 +223,13 @@ func (s *Server) Routes() http.Handler {
 	// runtime snapshot ref) to the relevant CMDB CI.
 	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
 
+	// ServiceNow MCP client: consume ServiceNow's Model Context Protocol server
+	// (discover servers, governed record lookup, list/call tools).
+	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/lookup", s.handleSNMCPLookup)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/tools", s.handleSNMCPTools)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", s.handleSNMCPCall)
+
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
 	mux.HandleFunc("POST /api/v1/admission/validate", s.handleAdmissionValidate)
