@@ -42,6 +42,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX>` | Adopt a regulated framework's control catalog (idempotent) |
 | `fides control frameworks` | List the available framework catalogs |
 | `fides control coverage` | Show each control's evidence + environment coverage |
+| `fides control timeline [--key <key>] [--days N]` | Continuous control-test evidence feed: each control's evidence events over time (default 90d) + latest derived status (passed/failed/missing), from the immutable attestation chain |
 | `fides control enforce --key <key> --env <id>` / `--all-controls --all-environments` | Enforce control(s) — create enabled environment policies requiring their evidence types, raising coverage (idempotent) |
 | `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
 | `fides report --framework <name> [--format oscal]` | Auditor-ready per-framework report (control-by-control evidence + coverage); `--format oscal` emits a NIST OSCAL 1.x assessment-results JSON document instead (e.g. for FedRAMP 20x submission) |

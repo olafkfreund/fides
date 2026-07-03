@@ -8,6 +8,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"fides/pkg/evidence"
@@ -366,7 +367,7 @@ func handleChangeGate(config CLIConfig, args []string) {
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides control <add|list|coverage|frameworks|import|enforce|archive|unarchive> [flags]")
+		fmt.Println("Usage: fides control <add|list|coverage|timeline|frameworks|import|enforce|archive|unarchive> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -401,6 +402,18 @@ func handleControl(config CLIConfig, args []string) {
 	case "coverage":
 		body, err := getRequest(config, "/api/v1/controls/coverage")
 		fail(err, "controls coverage")
+		fmt.Println(body)
+	case "timeline":
+		cmd := flag.NewFlagSet("control timeline", flag.ExitOnError)
+		key := cmd.String("key", "", "scope to a single control key (optional)")
+		days := cmd.Int("days", 90, "look-back window in days")
+		cmd.Parse(args[1:])
+		p := "/api/v1/controls/timeline?days=" + strconv.Itoa(*days)
+		if *key != "" {
+			p += "&key=" + neturl.QueryEscape(*key)
+		}
+		body, err := getRequest(config, p)
+		fail(err, "control timeline")
 		fmt.Println(body)
 	case "frameworks":
 		body, err := getRequest(config, "/api/v1/frameworks")

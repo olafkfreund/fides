@@ -104,6 +104,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/controls", s.handleListControls)
 	mux.HandleFunc("POST /api/v1/controls", s.handleCreateControl)
 	mux.HandleFunc("GET /api/v1/controls/coverage", s.handleControlsCoverage)
+	mux.HandleFunc("GET /api/v1/controls/timeline", s.handleControlTimeline)
 	mux.HandleFunc("POST /api/v1/controls/{id}/archive", s.handleArchiveControl)
 	mux.HandleFunc("POST /api/v1/controls/{id}/unarchive", s.handleUnarchiveControl)
 	mux.HandleFunc("POST /api/v1/controls/{key}/enforce", s.handleEnforceControl)
