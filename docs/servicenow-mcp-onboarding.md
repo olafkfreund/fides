@@ -164,7 +164,9 @@ Credential is set.
 Tool **discovery** works after Step 6; **invocation** needs the tools *synced* into the
 tool registry — which AI Agent Studio does when you attach the server to an agent:
 
-1. Open **AI Agent Studio** (`/now/aia/studio` or search "AI Agent Studio").
+1. Open **AI Agent Studio** — the reliable way is the **All** menu (top‑left) → type
+   `AI Agent Studio` → open it. (There's no stable direct URL; it's a UXF app shell.
+   The Now Assist **Skill Kit** at `/now/now-assist-skillkit/` is the adjacent surface.)
 2. Create/open a **change‑management agent** → **Add tools → From MCP server → Fides MCP server**.
    Selecting it **syncs the tools** and exposes **`ground_change`** to the agent.
 3. Instruct the agent to call `ground_change` with the change number and base every
