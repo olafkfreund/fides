@@ -227,6 +227,9 @@ func (s *Server) Routes() http.Handler {
 	// Now Assist grounding: authoritative control-coverage + evidence for a change.
 	mux.HandleFunc("GET /api/v1/servicenow/grounding", s.handleServiceNowGrounding)
 
+	// Fides as a remote MCP server (Streamable HTTP) for Now Assist / AI clients.
+	mux.HandleFunc("POST /api/v1/mcp", s.handleMCPServer)
+
 	// ServiceNow MCP client: consume ServiceNow's Model Context Protocol server
 	// (discover servers, governed record lookup, list/call tools).
 	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)

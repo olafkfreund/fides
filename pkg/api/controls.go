@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -113,14 +114,25 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var totalEnvs int
-	if err := s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT count(*) FROM environments WHERE org_id = $1`, orgID).Scan(&totalEnvs); err != nil {
+	totalEnvs, out, err := s.controlsCoverageData(r.Context(), orgID)
+	if err != nil {
 		internalError(w, err)
 		return
 	}
+	writeJSON(w, map[string]any{"total_environments": totalEnvs, "controls": out})
+}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+// controlsCoverageData returns each active control with the environments that
+// enforce it and a coverage fraction. Shared by the HTTP endpoint and the MCP
+// `get_controls_coverage` tool.
+func (s *Server) controlsCoverageData(ctx context.Context, orgID uuid.UUID) (int, []map[string]any, error) {
+	var totalEnvs int
+	if err := s.q(ctx).QueryRowContext(ctx,
+		`SELECT count(*) FROM environments WHERE org_id = $1`, orgID).Scan(&totalEnvs); err != nil {
+		return 0, nil, err
+	}
+
+	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT c.key, c.name, COALESCE(c.framework,''), e.name
 		 FROM controls c
 		 LEFT JOIN environments e ON e.org_id = c.org_id AND EXISTS (
@@ -130,8 +142,7 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 		 WHERE c.org_id = $1 AND NOT c.archived
 		 ORDER BY c.key, e.name`, orgID)
 	if err != nil {
-		internalError(w, err)
-		return
+		return 0, nil, err
 	}
 	defer rows.Close()
 
@@ -145,8 +156,7 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 		var key, name, framework string
 		var env *string
 		if err := rows.Scan(&key, &name, &framework, &env); err != nil {
-			internalError(w, err)
-			return
+			return 0, nil, err
 		}
 		c := byKey[key]
 		if c == nil {
@@ -168,7 +178,7 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 		out = append(out, map[string]any{"control": c.Key, "name": c.Name, "framework": c.Framework,
 			"enforced_in": c.Enforced, "coverage": pct})
 	}
-	writeJSON(w, map[string]any{"total_environments": totalEnvs, "controls": out})
+	return totalEnvs, out, nil
 }
 
 // handleEnforceControl enforces a control in one environment (or all of the org's

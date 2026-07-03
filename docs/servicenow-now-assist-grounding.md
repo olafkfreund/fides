@@ -66,16 +66,26 @@ call it directly.
 Result: Now Assist's change summary and approval guidance are backed by Fides's
 signed evidence and risk score.
 
-### Option B — Register `fides-mcp` as an MCP server (symmetric with #167)
+### Option B — Register Fides as an MCP server (symmetric with #167)
 
-ServiceNow can consume external MCP servers (`sn_mcp_server` / MCP client
-integration). Register Fides's MCP server so Now Assist agents call `ground_change`,
-`get_controls_coverage`, and `search_attestations` as governed tools.
+Fides exposes a **remote MCP server over HTTP** (Streamable transport) at:
 
-`fides-mcp` speaks stdio today; expose it to ServiceNow via a thin MCP-over-HTTP
-bridge (or run it behind the Fides API host) and register that endpoint + the Fides
-service-account OAuth in ServiceNow's MCP server registry. Once registered, Now
-Assist grounding is a tool call rather than a scripted fetch.
+```
+POST https://<fides-host>/api/v1/mcp        # Authorization: Bearer <fides-token>
+```
+
+It speaks MCP JSON-RPC (`initialize` / `tools/list` / `tools/call`) and exposes
+`ground_change` and `get_controls_coverage`. Register it in ServiceNow's MCP server
+registry (`sn_mcp_server`) with a connection + credential alias holding the Fides
+bearer token, and Now Assist agents can call `ground_change` as a governed tool —
+no scripted fetch. Verify from any MCP client:
+
+```sh
+curl -s -X POST https://<fides-host>/api/v1/mcp \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"ground_change","arguments":{"change_number":"CHG0032508"}}}'
+```
 
 > This is the mirror image of [servicenow-mcp.md](servicenow-mcp.md) (Fides consuming
 > ServiceNow's MCP server): here ServiceNow consumes Fides's.
