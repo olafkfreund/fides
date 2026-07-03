@@ -80,6 +80,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides servicenow config\|get\|change-check [...]` | ServiceNow connection + change gate |
 | `fides servicenow link-control --trail <id> --change <CHGxxxx> --control <key> [--attestation <id>]` | Record that a ServiceNow change implemented a Fides control via a specific attestation (writes the reference back onto the change_request) |
 | `fides servicenow mcp servers\|lookup\|tools\|call [...]` | Consume ServiceNow's MCP server: discover servers, governed record lookup (CMDB/change/GRC), list/call governed tools. See [servicenow-mcp.md](servicenow-mcp.md) |
+| `fides servicenow grounding --change <CHGxxxx>` | Authoritative grounding pack (control-coverage + evidence + risk + a natural-language summary) for a change, to ground ServiceNow Now Assist. See [servicenow-now-assist-grounding.md](servicenow-now-assist-grounding.md) |
 | `fides slack config --secret-path <ref> [--disable]` | Slack notifications |
 | `fides git-provider config --provider <github\|gitlab\|bitbucket\|azure-devops> --host --api-base --token-path [--inbound-secret-path]` | Git provider (commit status + inbound webhooks) |
 | `fides webhook config --name --url --secret-path [--events] [--disable]` | Outbound signed webhook |

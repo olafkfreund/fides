@@ -248,6 +248,17 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
 			},
 			{
+				Name:        "ground_change",
+				Description: "Ground Now Assist for a ServiceNow change: return Fides's authoritative control-coverage + evidence + change-gate risk for a change number, with a natural-language grounding_summary to quote verbatim (Fides advises; ServiceNow decides).",
+				InputSchema: InputSchema{
+					Type: "object",
+					Properties: map[string]SchemaProp{
+						"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
+					},
+					Required: []string{"change_number"},
+				},
+			},
+			{
 				Name:        "get_deployment_frequency",
 				Description: "Weekly deployment frequency per environment over the last N weeks",
 				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
@@ -420,6 +431,23 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching coverage: %v", err)}}
+		} else {
+			result.Content = []TextContent{{Type: "text", Text: string(body)}}
+		}
+
+	case "ground_change":
+		num, ok := args["change_number"].(string)
+		if !ok || num == "" {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: "Missing change_number parameter"}}
+			break
+		}
+		q := neturl.Values{}
+		q.Set("change", num)
+		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/servicenow/grounding?%s", serverURL, q.Encode()))
+		if err != nil {
+			result.IsError = true
+			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error grounding change: %v", err)}}
 		} else {
 			result.Content = []TextContent{{Type: "text", Text: string(body)}}
 		}
