@@ -1,0 +1,93 @@
+# Grounding ServiceNow Now Assist with Fides evidence
+
+> Status: implemented (#216, last child of the ServiceNow DevGovOps spoke).
+> "Fides advises; ServiceNow decides."
+
+## The problem
+
+When a change manager or CAB member asks **Now Assist** *"is change CHG0030192 safe to
+approve?"* or *"what evidence backs this change?"*, a generic LLM will **guess**.
+Grounding replaces the guess with Fides's **deterministic, tamper-evident**
+control-coverage and evidence, so Now Assist answers from the system of record for
+software-delivery evidence instead of hallucinating.
+
+## What Fides provides
+
+A single authoritative **grounding pack** per change request:
+
+**`GET /api/v1/servicenow/grounding?change=CHG0030192`**
+
+```json
+{
+  "change_number": "CHG0030192",
+  "grounded": true,
+  "trails": ["<uuid>"],
+  "controls_linked": [{"control": "SOC2-CC7.1", "name": "...", "attestation_id": "..."}],
+  "coverage": { "total_required": 10, "satisfied": 8, "failed": 1, "missing": 1, "passed": ["..."] },
+  "risk": { "score": 25, "level": "medium", "recommendation": "hold", "approved": false },
+  "evidence": { "attestations_total": 12, "non_compliant": 0, "by_type": {...}, "tamper_evident": true },
+  "grounding_summary": "Change CHG0030192 is linked to 1 Fides control(s): SOC2-CC7.1. Coverage: 8 of 10 required controls have current compliant evidence (1 failing, 1 missing). Change-gate risk: 25/100 (medium); recommendation: HOLD. Evidence: 12 attestation(s), 0 non-compliant; tamper-evidence chain intact. Source: Fides (advisory — ServiceNow decides)."
+}
+```
+
+- The change → evidence link comes from `change_control_links` (see
+  [servicenow-integration.md](servicenow-integration.md), `fides servicenow link-control`).
+- `grounding_summary` is a ready-to-quote natural-language statement — the single
+  most useful field for grounding.
+- A change with **no** linked Fides evidence returns **404** with a `grounding_summary`
+  that explicitly says compliance is **UNVERIFIED** (so Now Assist never implies
+  evidence exists when it doesn't).
+
+Also exposed via CLI and the Fides MCP server:
+
+```bash
+fides servicenow grounding --change CHG0030192
+```
+
+`fides-mcp` tool **`ground_change`** (`{ "change_number": "CHG0030192" }`) returns the
+same pack — so an AI agent (Claude, Cursor, or ServiceNow's Now Assist via MCP) can
+call it directly.
+
+## Wiring it into Now Assist — two options
+
+### Option A — Now Assist Skill calls the grounding API (simplest)
+
+1. Create a **Scripted REST** action or an **IntegrationHub** HTTP step that GETs
+   `${fides_base}/api/v1/servicenow/grounding?change=${current.number}` with the
+   Fides service-account bearer token (store it in a ServiceNow credential/alias —
+   never inline).
+2. In your **Now Assist Skill** (Skill Kit) for change summarization/approval,
+   add the step's `grounding_summary` (and the structured fields) to the skill's
+   **prompt context / grounding input**.
+3. Instruct the skill to **only** state compliance conclusions that appear in the
+   Fides grounding pack, and to say "compliance unverified by Fides" when the API
+   returns `grounded: false`.
+
+Result: Now Assist's change summary and approval guidance are backed by Fides's
+signed evidence and risk score.
+
+### Option B — Register `fides-mcp` as an MCP server (symmetric with #167)
+
+ServiceNow can consume external MCP servers (`sn_mcp_server` / MCP client
+integration). Register Fides's MCP server so Now Assist agents call `ground_change`,
+`get_controls_coverage`, and `search_attestations` as governed tools.
+
+`fides-mcp` speaks stdio today; expose it to ServiceNow via a thin MCP-over-HTTP
+bridge (or run it behind the Fides API host) and register that endpoint + the Fides
+service-account OAuth in ServiceNow's MCP server registry. Once registered, Now
+Assist grounding is a tool call rather than a scripted fetch.
+
+> This is the mirror image of [servicenow-mcp.md](servicenow-mcp.md) (Fides consuming
+> ServiceNow's MCP server): here ServiceNow consumes Fides's.
+
+## Security
+
+- The grounding endpoint is authenticated with the tenant Fides token and scoped to
+  the caller's org (`principalOrg`); it only returns evidence the org owns.
+- Store the Fides token in a ServiceNow credential alias, not inline in a script.
+- Grounding is **read-only and advisory** — it never changes a change_request.
+  ServiceNow remains the decision system of record.
+
+## Related
+- [servicenow-integration.md](servicenow-integration.md) — write-back (change gate, control linkage, CMDB anchor).
+- [servicenow-mcp.md](servicenow-mcp.md) — Fides consuming ServiceNow's MCP server (#167).

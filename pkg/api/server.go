@@ -224,6 +224,9 @@ func (s *Server) Routes() http.Handler {
 	// runtime snapshot ref) to the relevant CMDB CI.
 	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
 
+	// Now Assist grounding: authoritative control-coverage + evidence for a change.
+	mux.HandleFunc("GET /api/v1/servicenow/grounding", s.handleServiceNowGrounding)
+
 	// ServiceNow MCP client: consume ServiceNow's Model Context Protocol server
 	// (discover servers, governed record lookup, list/call tools).
 	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)

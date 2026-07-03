@@ -105,7 +105,7 @@ func getRequest(config CLIConfig, path string) (string, error) {
 // fides servicenow config|get|change-check|link-control
 func handleServiceNow(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|grounding|mcp> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -170,10 +170,21 @@ func handleServiceNow(config CLIConfig, args []string) {
 		post(config, "/api/v1/servicenow/deployment-anchor", map[string]any{
 			"trail_id": *trail, "change_number": *change, "ci": *ci, "build_log_ref": *buildLog,
 		}, "")
+	case "grounding":
+		cmd := flag.NewFlagSet("servicenow grounding", flag.ExitOnError)
+		change := cmd.String("change", "", "change number, e.g. CHG0030192")
+		cmd.Parse(args[1:])
+		if *change == "" {
+			fmt.Println("Error: --change is required")
+			os.Exit(1)
+		}
+		body, err := getRequest(config, "/api/v1/servicenow/grounding?change="+neturl.QueryEscape(*change))
+		fail(err, "grounding")
+		fmt.Println(body)
 	case "mcp":
 		handleServiceNowMCP(config, args[1:])
 	default:
-		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|mcp> [flags]")
+		fmt.Println("Usage: fides servicenow <config|get|change-check|link-control|anchor-deployment|grounding|mcp> [flags]")
 		os.Exit(1)
 	}
 }
