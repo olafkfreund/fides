@@ -56,6 +56,36 @@ to reach the server. The sensor additionally uses `MCP_SENSOR_RESPONSE`
 | `SECRETS_PROVIDER` | Secret backend for `--secret-path` references. `aws` = AWS Secrets Manager (via IRSA); otherwise env-var lookup |
 | `FIDES_ENCRYPTION_KEY` | Server-side key to decrypt encrypted attestation payloads |
 
+## Server — approvals / segregation of duties
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `FIDES_DELEGATED_APPROVAL_ENABLED` | Allow `POST /api/v1/trails/{id}/approvals` to honor an `on_behalf_of` human identity when the caller is a shared service token (the SARC portal case). Default-deny | `false` |
+
+On-behalf-of delegation is honored ONLY when all hold: the flag is `true`, the
+authenticated principal is a **service token with the Admin role** (the static
+`FIDES_API_TOKEN` principal, or an Admin service-account key), the `on_behalf_of`
+value is a syntactically-valid bare email, and it matches a known user in the
+caller's org. When honored the approval is recorded with `approver_kind=session`
+(so it counts toward four-eyes segregation of duties) and the delegating service
+principal is captured in the `delegated_by` column and emitted to the audit log.
+Otherwise `on_behalf_of` is ignored and the approval is attributed to the token
+principal (`approver_kind=service`) exactly as before — a service token is never
+silently upgraded to a human session.
+
+Request contract:
+
+```
+POST /api/v1/trails/{id}/approvals
+{ "reason": "reviewed by platform lead", "role": "approver", "on_behalf_of": "user@example.com" }
+
+# honored -> 201
+{ "status": "approved", "approved_by": "user@example.com", "kind": "session",
+  "role": "approver", "delegated_by": "portal-service@fides" }
+
+# invalid/unknown on_behalf_of while honored -> 400
+```
+
 ## Server — AI / LLM gateway (`Fides-AI`)
 
 Powers `policy generate`, the portal "Check & fix" linter (`POST /api/v1/ai/lint-policy`),

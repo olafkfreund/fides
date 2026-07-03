@@ -279,6 +279,15 @@ fides approve --trail <trail-id> --role deployer --reason "prod deploy"
   field). Fides advises; ServiceNow decides.
 - **Segregation of duties**: the gate will not recommend approval without at least
   one human approval; a missing sign-off raises the risk score.
+- **On-behalf-of approval delegation**: `POST /api/v1/trails/{id}/approvals` accepts
+  an optional `on_behalf_of` (human email) so a shared service token — e.g. the SARC
+  portal — can record a real human approval that counts toward four-eyes. Default-deny:
+  honored only when `FIDES_DELEGATED_APPROVAL_ENABLED=true`, the caller is an Admin
+  service token, and `on_behalf_of` is a valid email matching a known org user. When
+  honored the approval is recorded with `approver_kind=session` and the delegating
+  service principal is captured in `delegated_by` (and the audit log); otherwise
+  `on_behalf_of` is ignored and the approval is attributed to the token. See
+  `FIDES_DELEGATED_APPROVAL_ENABLED` in the configuration reference.
 - **Portal**: the **Controls** page opens on an at-a-glance summary (control count,
   average coverage, fully-covered vs gaps) with coverage **grouped by framework**
   (least-covered first). **Click a control** to drill into its required evidence
