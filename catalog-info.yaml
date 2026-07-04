@@ -8,6 +8,7 @@ metadata:
   title: fides
   description: "Fides: Trust, Provenance & Evidence Tracking System"
   annotations:
+    backstage.io/techdocs-ref: dir:.
     github.com/project-slug: olafkfreund/fides
   tags: []
 spec:
