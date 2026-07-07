@@ -86,6 +86,49 @@
   .advisory b{color:var(--accent-deep)}
   footer{padding:34px 0 60px;color:var(--muted);font-size:13px;font-family:var(--mono)}
   footer .wrap{border-top:1px solid var(--paper-2);padding-top:24px}
+
+  /* two-plane handshake (ITOM + ITSM) */
+  .sn-diagram{display:grid;grid-template-columns:1fr auto 1fr;border:1px solid var(--paper-2);
+    border-radius:12px;overflow:hidden;background:#fff;box-shadow:0 1px 0 rgba(12,28,31,.03)}
+  .sn-node{padding:22px 20px;display:flex;flex-direction:column;gap:6px;justify-content:center}
+  .sn-node.fides{border-right:3px solid var(--accent)}
+  .sn-node.snow{border-left:3px solid var(--hold)}
+  .sn-role{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+  .sn-name{font-family:var(--serif);font-size:22px;font-weight:600}
+  .sn-node.fides .sn-name{color:var(--accent-deep)}
+  .sn-node.snow .sn-name{color:var(--hold)}
+  .sn-node .sn-desc{font-size:14px;color:var(--muted);line-height:1.5}
+  .sn-lanes{display:flex;flex-direction:column;justify-content:center;gap:12px;padding:20px 14px;
+    background:var(--paper-2);min-width:min(340px,44vw)}
+  .sn-lane{display:flex;flex-direction:column;gap:3px}
+  .sn-lane-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase}
+  .sn-lane.itom .sn-lane-label{color:var(--accent-deep)}
+  .sn-lane.itsm .sn-lane-label{color:var(--hold)}
+  .sn-flow{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12.5px;color:var(--text)}
+  .sn-arrow{font-weight:700}
+  .sn-arrow.tosn{color:var(--accent-deep)}
+  .sn-arrow.tofides{color:var(--hold)}
+  .sn-band{grid-column:1/-1;border-top:1px solid var(--paper-2);background:#f8fbfa;
+    padding:13px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .sn-tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);border:1px solid var(--paper-2);border-radius:6px;padding:3px 8px;white-space:nowrap}
+  .sn-band-txt{font-size:14px;color:var(--muted)}
+  .sn-band-txt b{color:var(--text)}
+  @media(max-width:640px){
+    .sn-diagram{grid-template-columns:1fr}
+    .sn-node.fides{border-right:none;border-bottom:3px solid var(--accent)}
+    .sn-node.snow{border-left:none;border-top:3px solid var(--hold)}
+    .sn-lanes{min-width:0}
+  }
+  .sn-matrix-wrap{overflow-x:auto;border:1px solid var(--paper-2);border-radius:10px;background:#fff}
+  .sn-matrix{width:100%;min-width:600px;border-collapse:collapse;font-size:14.5px}
+  .sn-matrix th,.sn-matrix td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--paper-2);vertical-align:top}
+  .sn-matrix tbody tr:last-child td{border-bottom:none}
+  .sn-matrix thead th{font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  .sn-matrix td.plane{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+  .sn-plane-itom{color:var(--accent-deep)}
+  .sn-plane-itsm{color:var(--hold)}
+  .sn-plane-both{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -104,6 +147,60 @@
     </div>
   </div>
 </header>
+
+<section>
+  <div class="wrap">
+    <p class="kicker">ITOM + ITSM</p>
+    <h2>Two planes, one system of record</h2>
+    <p class="sub">Every build in Fides feeds ServiceNow on two planes at once — operational
+      telemetry into <b>ITOM</b>, and evidence-backed risk verdicts into <b>ITSM</b> — over a
+      governed, bidirectional MCP link. ServiceNow stays the system of record; Fides supplies the proof.</p>
+
+    <div class="sn-diagram">
+      <div class="sn-node fides">
+        <span class="sn-role">Evidence &amp; provenance engine</span>
+        <span class="sn-name">Fides</span>
+        <span class="sn-desc">Records trails, artifacts &amp; attestations; scores change risk against control coverage.</span>
+      </div>
+      <div class="sn-lanes">
+        <div class="sn-lane itom">
+          <span class="sn-lane-label">ITOM · operations</span>
+          <div class="sn-flow"><span>Build &amp; scan events</span><span class="sn-arrow tosn">&rarr;</span><span>Event Management</span></div>
+          <div class="sn-flow"><span>Service CI create / update</span><span class="sn-arrow tosn">&rarr;</span><span>CMDB</span></div>
+        </div>
+        <div class="sn-lane itsm">
+          <span class="sn-lane-label">ITSM · governance</span>
+          <div class="sn-flow"><span>Change-gate verdict + risk</span><span class="sn-arrow tosn">&rarr;</span><span>Change Request</span></div>
+          <div class="sn-flow"><span>Now Assist grounding</span><span class="sn-arrow tofides">&larr;</span><span>on Fides evidence</span></div>
+        </div>
+      </div>
+      <div class="sn-node snow">
+        <span class="sn-role">System of record</span>
+        <span class="sn-name">ServiceNow</span>
+        <span class="sn-desc">Event Management, CMDB, Change &amp; GRC — the decision and approval authority.</span>
+      </div>
+      <div class="sn-band">
+        <span class="sn-tag">Governed MCP &#8646;</span>
+        <span class="sn-band-txt"><b>Bidirectional &amp; governed.</b> Fides reads CMDB CIs, change requests &amp; GRC
+          controls <em>through</em> ServiceNow's native MCP server over OAuth — no backdoor. Now Assist reads
+          back through Fides' grounding endpoint. Neither side bypasses the other's governance.</span>
+      </div>
+    </div>
+
+    <div style="height:26px"></div>
+    <div class="sn-matrix-wrap">
+      <table class="sn-matrix">
+        <thead><tr><th>Plane</th><th>Capability</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td class="plane sn-plane-itom">ITOM</td><td>Event Management + CMDB sink</td><td>Delivery events and CI state flow into operations automatically — no manual updates.</td></tr>
+          <tr><td class="plane sn-plane-itsm">ITSM</td><td>Change-gate write-back + SoD approval</td><td>Every Change Request carries an evidence-based risk verdict and a two-person sign-off.</td></tr>
+          <tr><td class="plane sn-plane-itsm">ITSM</td><td>Now Assist grounding</td><td>AI-assisted approvals grounded on real evidence, inside ServiceNow's own workflow.</td></tr>
+          <tr><td class="plane sn-plane-both">Both</td><td>Bidirectional governed MCP</td><td>Two-way integration with no shadow access — ServiceNow remains the system of record.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
 
 <section>
   <div class="wrap">
