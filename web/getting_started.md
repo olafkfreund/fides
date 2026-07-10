@@ -339,4 +339,4 @@ policies with tags, search & snapshot diff, audit packages, ECS/Lambda
 snapshots, logical environments, DORA metrics, Slack notifications, and a
 ServiceNow admin page at `/servicenow`.
 
-See **[features.md](features.md)** for real examples and **[cli-reference.md](cli-reference.md)** for the full command list.
+See **[features.md](features.md)** for real examples, **[cli-reference.md](cli-reference.md)** for the full command list, and **[segregation-of-duties.md](segregation-of-duties.md)** for supplying the committer / approver / deployer identities end-to-end.

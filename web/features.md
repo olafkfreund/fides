@@ -272,7 +272,9 @@ fides approve --trail <trail-id> --role deployer --reason "prod deploy"
   the approver(s), and the deployer are distinct identities — `compliant: true`
   only when all three roles are pairwise-distinct. Required by PCI-DSS 4.0 and
   SOX ITGC change-management controls; the payload is shaped for ServiceNow to
-  read directly.
+  read directly. **See the [Segregation of duties guide](segregation-of-duties.md)**
+  for how each identity is supplied (CLI + API) with a worked `compliant: true`
+  example — note identities register under `/api/v1/tenant/users`, not `/api/v1/users`.
 
 - **Change gate → ServiceNow**: `POST /api/v1/servicenow/change-gate {trail_id, change_number}`
   writes the verdict + risk onto the matching Change Request (work note + `risk`

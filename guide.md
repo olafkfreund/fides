@@ -553,6 +553,7 @@ references:
 
 * **[Feature guide with real examples](docs/features.md)** — evidence parsers, tamper-evidence chain, service accounts, allow-lists, environment policies, search/diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics, Slack.
 * **[Full CLI reference](docs/cli-reference.md)** — every `fides` command and flag.
+* **[Segregation of duties](docs/segregation-of-duties.md)** — how the committer, approver, and deployer identities are supplied (CLI + API), with a worked `compliant: true` example. Note: identities register under `/api/v1/tenant/users`, not `/api/v1/users`.
 * **[ServiceNow integration](docs/servicenow-integration.md)** — CMDB / ITOM / ITSM / MCP, plus the Go-served admin page at `/servicenow`.
 * **[AWS Secrets Manager](docs/aws-secrets-manager.md)** — IRSA-based secret resolution.
 * **[Environment MCP compliance](docs/environment-mcp-compliance.md)** — live runtime verification via a real MCP server.
