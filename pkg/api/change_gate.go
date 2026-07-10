@@ -75,15 +75,22 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		}
 	}
 
-	// Segregation of duties: count distinct human (session) approvers.
+	// Segregation of duties: separate approver-role from deployer-role sign-offs
+	// so the gate output mirrors the SoD attestation (a deployer is not an
+	// approver). humanApprovers counts any human (session) sign-off, either role.
 	approverList := []string{}
+	deployerList := []string{}
 	humanApprovers := 0
 	if arows, aerr := s.q(ctx).QueryContext(ctx,
-		`SELECT approved_by, approver_kind FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
+		`SELECT approved_by, approver_kind, COALESCE(NULLIF(role, ''), 'approver') FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
 		for arows.Next() {
-			var by, kind string
-			if arows.Scan(&by, &kind) == nil {
-				approverList = append(approverList, by)
+			var by, kind, role string
+			if arows.Scan(&by, &kind, &role) == nil {
+				if role == "deployer" {
+					deployerList = append(deployerList, by)
+				} else {
+					approverList = append(approverList, by)
+				}
 				if kind == "session" {
 					humanApprovers++
 				}
@@ -131,10 +138,11 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		"missing_evidence": missing,
 		"attestations":     map[string]int{"total": totalAtt, "non_compliant": nonCompliant},
 		"approvals": map[string]any{
-			"count":           len(approverList),
+			"count":           len(approverList) + len(deployerList),
 			"human_approvers": humanApprovers,
 			"four_eyes":       humanApprovers >= 2,
 			"approvers":       approverList,
+			"deployers":       deployerList,
 		},
 		"summary": summary,
 	}, nil

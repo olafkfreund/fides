@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,6 +126,22 @@ func TestAuthMiddlewareSessionCookieScopesTenant(t *testing.T) {
 	// The session's org must win — not the service token's org.
 	if rec.Body.String() != sessionOrg.String() {
 		t.Fatalf("session principal org mismatch: got %s want %s", rec.Body.String(), sessionOrg)
+	}
+}
+
+// TestSaveUserRequiresAdmin asserts the identity-registration endpoint is
+// admin-only: a non-Admin principal is rejected with 403 before any DB write,
+// so a Writer cannot seed on_behalf_of-eligible identities for SoD approvals.
+func TestSaveUserRequiresAdmin(t *testing.T) {
+	s := newTestServer()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/tenant/users",
+		strings.NewReader(`{"name":"X","email":"x@example.com","role":"Writer"}`))
+	req = req.WithContext(auth.WithPrincipal(context.Background(),
+		&auth.Principal{OrgID: uuid.New(), Role: auth.RoleWriter, Kind: "session"}))
+	rec := httptest.NewRecorder()
+	s.handleSaveUser(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin handleSaveUser = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
 }
 

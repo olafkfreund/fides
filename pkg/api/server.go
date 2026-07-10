@@ -2680,18 +2680,25 @@ func (s *Server) handleSetUserPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSaveUser(w http.ResponseWriter, r *http.Request) {
+	principal, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	// Registering/upserting an org identity is an admin-only directory operation
+	// (same gate as setting a user's password) — otherwise any Writer could seed
+	// on_behalf_of-eligible identities for segregation-of-duties approvals.
+	if principal.Role != auth.RoleAdmin {
+		http.Error(w, "only Admins can register users", http.StatusForbidden)
+		return
+	}
+
 	var u models.User
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
 		badRequest(w, err)
 		return
 	}
-
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	u.OrgID = orgID
+	u.OrgID = principal.OrgID
 
 	query := `INSERT INTO users (org_id, name, email, role, groups) 
 	          VALUES ($1, $2, $3, $4, $5) 

@@ -415,5 +415,6 @@ and Slack notifications — see:
 * **[Installation guide](/installation.html)** — release binaries, Nix flake, NixOS module
 * **[Feature guide with real examples](/docs/features.md)**
 * **[Full CLI reference](/docs/cli-reference.md)**
+* **[Segregation of duties — supplying the three identities](/docs/segregation-of-duties.md)** (committer / approver / deployer, worked end-to-end)
 * **[ServiceNow integration](/docs/servicenow-integration.md)** (admin page at `/servicenow`)
 * **[Fides × ServiceNow — why they're better together](/servicenow-pitch.html)** (sales & partner pitch)

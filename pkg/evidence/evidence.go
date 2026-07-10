@@ -1,7 +1,7 @@
 // Package evidence parses common CI/security report formats (JUnit, Snyk,
-// Trivy) into a normalized attestation payload with a deterministic compliance
-// verdict, so Fides can ingest first-class evidence instead of only generic
-// JSON (closing the gap with Kosli's built-in attestation types).
+// Trivy, SARIF) into a normalized attestation payload with a deterministic
+// compliance verdict, so Fides can ingest first-class evidence instead of only
+// generic JSON (closing the gap with Kosli's built-in attestation types).
 package evidence
 
 import (
@@ -23,7 +23,7 @@ type Result struct {
 }
 
 // SupportedFormats lists the formats Parse understands.
-var SupportedFormats = []string{"junit", "snyk", "trivy", "slsa", "sbom"}
+var SupportedFormats = []string{"junit", "snyk", "trivy", "sarif", "slsa", "sbom"}
 
 // Parse dispatches to the format-specific parser.
 func Parse(format string, data []byte) (Result, error) {
@@ -34,6 +34,8 @@ func Parse(format string, data []byte) (Result, error) {
 		return ParseSnyk(data)
 	case "trivy":
 		return ParseTrivy(data)
+	case "sarif":
+		return ParseSARIF(data)
 	case "slsa":
 		return ParseSLSA(data)
 	case "sbom":
@@ -184,6 +186,69 @@ func ParseTrivy(data []byte) (Result, error) {
 		Compliant: counts["critical"] == 0 && counts["high"] == 0,
 		Summary: map[string]any{"total": total,
 			"critical": counts["critical"], "high": counts["high"], "medium": counts["medium"], "low": counts["low"]},
+		Findings: findings,
+	}, nil
+}
+
+// ----- SARIF (Static Analysis Results Interchange Format) -----
+
+type sarifReport struct {
+	Runs []struct {
+		Tool struct {
+			Driver struct {
+				Name string `json:"name"`
+			} `json:"driver"`
+		} `json:"tool"`
+		Results []struct {
+			RuleID  string `json:"ruleId"`
+			Level   string `json:"level"`
+			Message struct {
+				Text string `json:"text"`
+			} `json:"message"`
+		} `json:"results"`
+	} `json:"runs"`
+}
+
+// ParseSARIF summarizes a SARIF 2.1.0 report (runs[].results[] with level,
+// ruleId and message.text), as emitted by CodeQL, Semgrep, Trivy, Grype and
+// most SAST tools. Result levels are error/warning/note/none; a result with no
+// level defaults to "warning" per the SARIF spec. Compliant when there are no
+// error-level results; each error is reported as a finding.
+func ParseSARIF(data []byte) (Result, error) {
+	var r sarifReport
+	if err := json.Unmarshal(data, &r); err != nil {
+		return Result{}, fmt.Errorf("evidence: parse sarif: %w", err)
+	}
+	counts := map[string]int{"error": 0, "warning": 0, "note": 0, "none": 0}
+	var findings []string
+	total := 0
+	for _, run := range r.Runs {
+		for _, res := range run.Results {
+			total++
+			level := strings.ToLower(res.Level)
+			if level == "" {
+				level = "warning"
+			}
+			counts[level]++
+			if level == "error" {
+				rule := res.RuleID
+				if rule == "" {
+					rule = "(no rule id)"
+				}
+				if res.Message.Text != "" {
+					findings = append(findings, fmt.Sprintf("ERROR: %s (%s)", rule, res.Message.Text))
+				} else {
+					findings = append(findings, fmt.Sprintf("ERROR: %s", rule))
+				}
+			}
+		}
+	}
+	sort.Strings(findings)
+	return Result{
+		Format:    "sarif",
+		Compliant: counts["error"] == 0,
+		Summary: map[string]any{"total": total,
+			"error": counts["error"], "warning": counts["warning"], "note": counts["note"], "none": counts["none"]},
 		Findings: findings,
 	}, nil
 }

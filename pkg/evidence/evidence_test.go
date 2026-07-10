@@ -56,6 +56,80 @@ func TestParseTrivy(t *testing.T) {
 	}
 }
 
+func TestParseSARIF(t *testing.T) {
+	// One error, one warning, one note, plus a level-less result (defaults to warning).
+	report := []byte(`{
+		"version": "2.1.0",
+		"runs": [{
+			"tool": {"driver": {"name": "CodeQL"}},
+			"results": [
+				{"ruleId": "js/sql-injection", "level": "error", "message": {"text": "SQL injection"}},
+				{"ruleId": "js/unused-var", "level": "warning", "message": {"text": "unused"}},
+				{"ruleId": "js/style", "level": "note", "message": {"text": "style"}},
+				{"ruleId": "js/no-level", "message": {"text": "defaults to warning"}}
+			]
+		}]
+	}`)
+	r, err := ParseSARIF(report)
+	if err != nil {
+		t.Fatalf("ParseSARIF: %v", err)
+	}
+	if r.Compliant {
+		t.Fatalf("an error-level result must fail")
+	}
+	if r.Summary["total"] != 4 || r.Summary["error"] != 1 || r.Summary["warning"] != 2 || r.Summary["note"] != 1 {
+		t.Fatalf("sarif summary wrong: %+v", r.Summary)
+	}
+	if len(r.Findings) != 1 || r.Findings[0] != "ERROR: js/sql-injection (SQL injection)" {
+		t.Fatalf("sarif findings wrong: %+v", r.Findings)
+	}
+}
+
+func TestParseSARIFClean(t *testing.T) {
+	// Warnings and notes only, spanning multiple runs -> compliant.
+	report := []byte(`{
+		"runs": [
+			{"tool": {"driver": {"name": "Semgrep"}}, "results": [{"ruleId": "a", "level": "warning", "message": {"text": "w"}}]},
+			{"tool": {"driver": {"name": "Grype"}}, "results": [{"ruleId": "b", "level": "note", "message": {"text": "n"}}]}
+		]
+	}`)
+	r, err := Parse("sarif", report)
+	if err != nil {
+		t.Fatalf("ParseSARIF: %v", err)
+	}
+	if !r.Compliant || r.Format != "sarif" {
+		t.Fatalf("expected compliant sarif result: %+v", r)
+	}
+	if r.Summary["total"] != 2 || r.Summary["warning"] != 1 || r.Summary["note"] != 1 || len(r.Findings) != 0 {
+		t.Fatalf("sarif summary/findings wrong: %+v findings=%+v", r.Summary, r.Findings)
+	}
+}
+
+func TestParseSARIFEmptyAndInvalid(t *testing.T) {
+	// No runs/results -> compliant with zero counts.
+	r, err := ParseSARIF([]byte(`{"version":"2.1.0","runs":[]}`))
+	if err != nil {
+		t.Fatalf("ParseSARIF: %v", err)
+	}
+	if !r.Compliant || r.Summary["total"] != 0 {
+		t.Fatalf("empty sarif must be compliant with total 0: %+v", r)
+	}
+	if _, err := Parse("sarif", []byte("not json")); err == nil {
+		t.Fatalf("invalid json must error")
+	}
+}
+
+func TestParseSARIFErrorNoRuleID(t *testing.T) {
+	report := []byte(`{"runs":[{"results":[{"level":"error","message":{}}]}]}`)
+	r, err := ParseSARIF(report)
+	if err != nil {
+		t.Fatalf("ParseSARIF: %v", err)
+	}
+	if r.Compliant || len(r.Findings) != 1 || r.Findings[0] != "ERROR: (no rule id)" {
+		t.Fatalf("expected one ruleless error finding: %+v", r.Findings)
+	}
+}
+
 func TestParseSBOMCycloneDX(t *testing.T) {
 	doc := []byte(`{
 		"bomFormat": "CycloneDX",
