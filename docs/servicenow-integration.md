@@ -163,7 +163,7 @@ it's what the change actually authorized), or by name via `--ci`/`ci`. Fides:
 
 ServiceNow-side packaging artifacts — a signature-verifying Scripted REST API, an
 IntegrationHub spoke / Flow Designer action spec, and a Now Assist grounding
-guide — live under [`servicenow/`](servicenow/) (epic #216):
+guide — live under [`servicenow/`](servicenow/README.md) (epic #216):
 
 - [`servicenow/hmac-webhook-verification.md`](servicenow/hmac-webhook-verification.md)
   — verify the Fides `X-Fides-Signature` HMAC on inbound webhooks (#229).
