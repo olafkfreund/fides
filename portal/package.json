@@ -29,6 +29,10 @@
     "zod": "^4.4.3",
     "zod-to-json-schema": "^3.25.2"
   },
+  "overrides": {
+    "dompurify": "^3.4.11",
+    "postcss": "^8.5.16"
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.2",
     "@types/node": "^20",

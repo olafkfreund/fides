@@ -184,7 +184,7 @@ async function api(method, path, body) {
   try { return JSON.parse(t); } catch { return t; }
 }
 function msg(id,t,ok){ const e=$(id); e.textContent=t; e.className='msg '+(ok?'ok':'err'); }
-function esc(s){ return String(s==null?'':s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
+function esc(s){ return String(s==null?'':s).replace(/[<>&"']/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // tabs
 document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>{
