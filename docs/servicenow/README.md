@@ -4,7 +4,7 @@ ServiceNow-side packaging artifacts and integration docs for the Fides ⇄
 ServiceNow spoke — epic [#216](https://github.com/olafkfreund/fides/issues/216)
 ("Fides advises; ServiceNow decides"). These are ServiceNow platform artifacts
 (scripts, update-set, action specs) and docs; the Fides-side Go endpoints they
-call already exist in [`pkg/api/server.go`](../../pkg/api/server.go).
+call already exist in [`pkg/api/server.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/server.go).
 
 For the Fides-side configuration (service account, credential storage, ITOM/CMDB
 sinks, the ITSM change-check gate) start at

@@ -7,7 +7,7 @@ Package the Fides → ServiceNow integrations as an **IntegrationHub spoke** so
 ServiceNow admins adopt them with no code: drag Fides actions into any flow. This
 spec defines the three headline actions, their inputs/outputs, and the exact
 Fides REST steps each one runs. All endpoints below **already exist** in
-[`pkg/api/server.go`](../../pkg/api/server.go); the signed-bundle enrichments they
+[`pkg/api/server.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/server.go); the signed-bundle enrichments they
 carry land via sibling PRs #226 (evidence bundle + risk), #227 (change↔control
 linkage), and #228 (CMDB provenance).
 
@@ -59,7 +59,7 @@ ServiceNow decides.
 { "trail_id": "{{inputs.trail_id}}", "change_number": "{{inputs.change_number}}" }
 ```
 
-This endpoint ([`servicenow_change_gate.go`](../../pkg/api/servicenow_change_gate.go))
+This endpoint ([`servicenow_change_gate.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/servicenow_change_gate.go))
 computes the gate, then updates `change_request` — mapping Fides risk to the
 ServiceNow `risk` field (`high→2`, `medium→3`, `low→4`) and posting a work note —
 in one call. Map the JSON response fields straight to the action outputs. The
@@ -92,7 +92,7 @@ without passing controls, evidence, and a human sign-off (segregation of duties)
 
 **REST step** — `GET {{base}}/api/v1/trails/{{inputs.trail_id}}/change-gate`
 
-Response ([`change_gate.go`](../../pkg/api/change_gate.go), `computeChangeGate`):
+Response ([`change_gate.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/change_gate.go), `computeChangeGate`):
 
 ```json
 {
@@ -139,10 +139,10 @@ proving what was deployed matched the change intent.
 **REST steps**
 
 1. **Locate the CI** — `GET {{base}}/api/v1/servicenow/cmdb?name={{inputs.ci_name}}`
-   ([`handleServiceNowSearchCMDB`](../../pkg/api/server.go)) returns matching
+   ([`handleServiceNowSearchCMDB`](https://github.com/olafkfreund/fides/blob/main/pkg/api/server.go)) returns matching
    configuration items; take the `sys_id`.
 2. **Fetch the evidence** — `GET {{base}}/api/v1/trails/{{inputs.trail_id}}/audit-package`
-   ([`audit.go`](../../pkg/api/audit.go)) streams the tamper-evident ZIP
+   ([`audit.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/audit.go)) streams the tamper-evident ZIP
    (metadata, artifacts, attestations, chain verdict).
 3. **Anchor it** — attach the audit package / write the signed attestation summary
    onto the CI. Today the CMDB write path is the event-driven `CMDBSink`

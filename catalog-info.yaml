@@ -8,7 +8,10 @@ metadata:
   title: fides
   description: "Fides: Trust, Provenance & Evidence Tracking System"
   annotations:
+    # A Synechron Backstage instance registering synechron/Fides may want this
+    # slug set to synechron/Fides instead.
     github.com/project-slug: olafkfreund/fides
+    backstage.io/techdocs-ref: dir:.
   tags: []
 spec:
   type: service

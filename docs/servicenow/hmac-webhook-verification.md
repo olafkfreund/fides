@@ -12,7 +12,7 @@ compare it, in a length-independent scan, to the signature header.
 
 ## 1. How Fides signs (the contract you must match)
 
-Implemented in [`pkg/webhooks/webhook.go`](../../pkg/webhooks/webhook.go) (`Sign`)
+Implemented in [`pkg/webhooks/webhook.go`](https://github.com/olafkfreund/fides/blob/main/pkg/webhooks/webhook.go) (`Sign`)
 and delivered by the tenant webhook sink:
 
 ```

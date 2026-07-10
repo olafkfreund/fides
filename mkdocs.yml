@@ -1,0 +1,31 @@
+site_name: fides
+site_description: "Fides: Trust, Provenance & Evidence Tracking System"
+docs_dir: docs
+
+plugins:
+  - techdocs-core
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Setup & Seeding: setup.md
+  - Reference:
+      - CLI Reference: cli-reference.md
+      - MCP Server: mcp-server.md
+      - Features & Examples: features.md
+  - Compliance:
+      - Segregation of Duties: segregation-of-duties.md
+      - Environment MCP Compliance: environment-mcp-compliance.md
+  - ServiceNow:
+      - Integration Overview: servicenow-integration.md
+      - Consuming ServiceNow's MCP: servicenow-mcp.md
+      - Onboarding Fides as an MCP Server: servicenow-mcp-onboarding.md
+      - Grounding Now Assist: servicenow-now-assist-grounding.md
+      - DevGovOps Spoke: servicenow/README.md
+      - Flow Designer Actions: servicenow/flow-designer-actions.md
+      - HMAC Webhook Verification: servicenow/hmac-webhook-verification.md
+      - Now Assist Grounding (spoke): servicenow/now-assist-grounding.md
+  - Product:
+      - Pricing & Open-Core: pricing.md
+      - Market Analysis 2026: market-analysis-2026.md
+      - AWS Secrets Manager: aws-secrets-manager.md

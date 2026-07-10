@@ -18,8 +18,8 @@ evidence-backed** — "Fides advises; ServiceNow (and its AI) decide."
 | Attestations (signed evidence) | `GET /api/v1/search/attestations` | The concrete, tamper-evident proofs behind the verdict |
 | Tamper-evidence chain verdict | `GET /api/v1/trails/{id}/verify-chain` | Proof the evidence was not altered after the fact |
 
-All are in [`pkg/api/server.go`](../../pkg/api/server.go). The change-gate response
-([`change_gate.go`](../../pkg/api/change_gate.go)) already breaks risk down into
+All are in [`pkg/api/server.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/server.go). The change-gate response
+([`change_gate.go`](https://github.com/olafkfreund/fides/blob/main/pkg/api/change_gate.go)) already breaks risk down into
 `passed`, `failed`, `missing_evidence`, and `approvals` — ready-made explanation
 text.
 
