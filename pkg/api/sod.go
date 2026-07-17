@@ -26,6 +26,13 @@ type sodAttestation struct {
 	Deployers  []string `json:"deployers"`
 	Compliant  bool     `json:"compliant"`
 	Violations []string `json:"violations,omitempty"`
+
+	// incomplete: a role identity is simply not recorded (yet). Not a
+	// violation — the evidence cannot be evaluated. Unexported: never
+	// serialized into the attestation payload.
+	incomplete bool
+	// collision: two roles share an identity — an actual SoD violation.
+	collision bool
 }
 
 // identityFromTags resolves the committer identity from a trail's free-form
@@ -55,14 +62,17 @@ func evaluateSegregationOfDuties(committer string, approvers, deployers []string
 
 	if committer == "" {
 		res.Compliant = false
+		res.incomplete = true
 		res.Violations = append(res.Violations, "committer identity unknown")
 	}
 	if len(approvers) == 0 {
 		res.Compliant = false
+		res.incomplete = true
 		res.Violations = append(res.Violations, "no approver recorded")
 	}
 	if len(deployers) == 0 {
 		res.Compliant = false
+		res.incomplete = true
 		res.Violations = append(res.Violations, "no deployer recorded")
 	}
 
@@ -70,12 +80,14 @@ func evaluateSegregationOfDuties(committer string, approvers, deployers []string
 		for _, a := range approvers {
 			if a == committer {
 				res.Compliant = false
+				res.collision = true
 				res.Violations = append(res.Violations, "committer "+committer+" is also an approver")
 			}
 		}
 		for _, d := range deployers {
 			if d == committer {
 				res.Compliant = false
+				res.collision = true
 				res.Violations = append(res.Violations, "committer "+committer+" is also the deployer")
 			}
 		}
@@ -84,6 +96,7 @@ func evaluateSegregationOfDuties(committer string, approvers, deployers []string
 		for _, a := range approvers {
 			if d == a {
 				res.Compliant = false
+				res.collision = true
 				res.Violations = append(res.Violations, "deployer "+d+" is also an approver")
 			}
 		}
@@ -127,6 +140,18 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 	rows.Close()
 
 	result := evaluateSegregationOfDuties(committer, approvers, deployers)
+
+	// Incomplete evidence (a role not yet recorded) is not a violation: skip
+	// recording so the attestation stays MISSING — still gate-blocking — rather
+	// than chaining an irreversible false verdict into the append-only ledger.
+	// This evaluation runs on every approval POST, so the first (deployer)
+	// approval of each deploy used to poison the trail with "no approver
+	// recorded" milliseconds before the approver sign-off landed. An actual
+	// identity collision is still recorded immediately.
+	if result.incomplete && !result.collision {
+		log.Printf("segregation-of-duties: trail %s: evidence incomplete (%v) — not recording a verdict yet", trailID, result.Violations)
+		return result, nil
+	}
 
 	payload, err := json.Marshal(result)
 	if err != nil {
