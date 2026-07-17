@@ -130,3 +130,55 @@ func TestIdentityFromTags(t *testing.T) {
 		})
 	}
 }
+
+// The recorder skips chaining a verdict when evidence is merely incomplete
+// (a role not yet recorded) and only records when the evidence is complete or
+// an actual identity collision exists. These flags drive that decision.
+func TestEvaluateSegregationOfDutiesRecordingFlags(t *testing.T) {
+	tests := []struct {
+		name           string
+		committer      string
+		approvers      []string
+		deployers      []string
+		wantIncomplete bool
+		wantCollision  bool
+	}{
+		{
+			name:      "complete and distinct: record (compliant)",
+			committer: "dev@example.com", approvers: []string{"reviewer@example.com"}, deployers: []string{"ops@example.com"},
+			wantIncomplete: false, wantCollision: false,
+		},
+		{
+			name:      "approver not yet recorded: incomplete, no collision -> skip recording",
+			committer: "dev@example.com", approvers: nil, deployers: []string{"ops@example.com"},
+			wantIncomplete: true, wantCollision: false,
+		},
+		{
+			name:      "deployer not yet recorded: incomplete, no collision -> skip recording",
+			committer: "dev@example.com", approvers: []string{"reviewer@example.com"}, deployers: nil,
+			wantIncomplete: true, wantCollision: false,
+		},
+		{
+			name:      "incomplete but committer self-deploys: collision -> record violation",
+			committer: "dev@example.com", approvers: nil, deployers: []string{"dev@example.com"},
+			wantIncomplete: true, wantCollision: true,
+		},
+		{
+			name:      "complete but deployer approved own deploy: collision -> record violation",
+			committer: "dev@example.com", approvers: []string{"ops@example.com"}, deployers: []string{"ops@example.com"},
+			wantIncomplete: false, wantCollision: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evaluateSegregationOfDuties(tt.committer, tt.approvers, tt.deployers)
+			if got.incomplete != tt.wantIncomplete {
+				t.Fatalf("incomplete = %v, want %v (violations: %v)", got.incomplete, tt.wantIncomplete, got.Violations)
+			}
+			if got.collision != tt.wantCollision {
+				t.Fatalf("collision = %v, want %v (violations: %v)", got.collision, tt.wantCollision, got.Violations)
+			}
+		})
+	}
+}
