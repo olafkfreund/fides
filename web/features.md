@@ -395,3 +395,19 @@ FIDES_DB_SESSIONS=true fides-server   # requires migration 0020
 
 Expired session rows are purged automatically by an hourly background sweep, in
 addition to lazy eviction on lookup.
+
+## 26. Feature-flag change governance
+
+Fides is the system-of-record for feature-flag *changes* (not a flag-evaluation
+engine). A flag change is recorded as a `flag.changed` attestation on a
+per-change trail, chained into the tamper-evidence ledger and emitted as a
+`flag.changed` event — so flag flips are auditable and governable like deploys.
+
+```bash
+fides flag record --flag-key checkout-v2 --env prod --from off --to on \
+  --actor olaf@acme.com --source unleash
+```
+
+Require it as a control (`fides control add --key FLAG-GOVERNANCE --require
+flag.changed`) to hold a deploy until flag changes are evidenced; flag tools feed
+this via their outbound webhooks.

@@ -230,6 +230,9 @@ func (s *Server) Routes() http.Handler {
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
 	mux.HandleFunc("POST /api/v1/webhooks/{provider}", s.handleInboundWebhook)
+	// Feature-flag change governance: record a flag change as a flag.changed
+	// attestation on a trail (epic #286 / #287).
+	mux.HandleFunc("POST /api/v1/flags/changed", s.handleRecordFlagChange)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
