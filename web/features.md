@@ -416,3 +416,7 @@ Register JQ rules on the `flag.changed` attestation type to govern changes — a
 violating change is recorded non-compliant and fails the change gate (e.g.
 `.actor != ""` requires every flip to name who made it, or
 `.environment != "prod" or .actor != ""` requires it only in prod).
+
+Point your flag tool's outbound webhook at `POST /api/v1/flags/webhook/unleash`
+or `…/flagsmith` (authenticated with a Fides service-account key) and Fides
+normalizes it into a `flag.changed` attestation automatically.

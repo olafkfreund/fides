@@ -151,6 +151,59 @@ func TestFlagChangePolicyCompliance(t *testing.T) {
 	}
 }
 
+// TestFlagWebhookRecordsChange checks the provider webhook adapter (#290): an
+// Unleash webhook is normalized and recorded as a flag.changed attestation.
+func TestFlagWebhookRecordsChange(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the flag-webhook test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	org := uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "service"})
+
+	body := `{"type":"feature-environment-enabled","createdBy":"olaf@acme.com","featureName":"checkout-v2","environment":"production"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/flags/webhook/unleash", strings.NewReader(body)).WithContext(ctx)
+	req.SetPathValue("provider", "unleash")
+	w := httptest.NewRecorder()
+	s.handleFlagWebhook(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("webhook: %d %s", w.Code, w.Body.String())
+	}
+	var out map[string]any
+	json.Unmarshal(w.Body.Bytes(), &out)
+
+	// The normalized flag change is recorded as a flag.changed attestation.
+	var payload string
+	if err := pool.QueryRow(`SELECT payload::text FROM attestations WHERE trail_id=$1 AND type_name=$2`,
+		uuid.MustParse(out["trail_id"].(string)), FlagChangedAttestationType).Scan(&payload); err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	var p struct {
+		FlagKey     string `json:"flag_key"`
+		Environment string `json:"environment"`
+		NewState    string `json:"new_state"`
+		Actor       string `json:"actor"`
+		Source      string `json:"source"`
+	}
+	json.Unmarshal([]byte(ledger.CanonicalJSON(payload)), &p)
+	if p.FlagKey != "checkout-v2" || p.Environment != "production" || p.NewState != "on" || p.Actor != "olaf@acme.com" || p.Source != "unleash" {
+		t.Fatalf("recorded payload = %+v, want checkout-v2/production/on/olaf/unleash", p)
+	}
+}
+
 // TestFlagChangeFourEyes checks that a flag change is attributed to its actor as
 // the trail committer, so segregation-of-duties applies (#289): the actor cannot
 // approve their own flip (collision), while a distinct approver + deployer make

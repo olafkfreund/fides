@@ -233,6 +233,8 @@ func (s *Server) Routes() http.Handler {
 	// Feature-flag change governance: record a flag change as a flag.changed
 	// attestation on a trail (epic #286 / #287).
 	mux.HandleFunc("POST /api/v1/flags/changed", s.handleRecordFlagChange)
+	// Provider webhook adapters (Unleash/Flagsmith) -> flag.changed (#290).
+	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", s.handleFlagWebhook)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)

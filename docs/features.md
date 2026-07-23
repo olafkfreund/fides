@@ -522,3 +522,34 @@ fides approve --trail $FLAG_TRAIL --role approver   --reason "reviewed"    # by 
 fides approve --trail $FLAG_TRAIL --role deployer   --reason "released"    # a third identity
 fides change-gate --trail $FLAG_TRAIL               # green only when committer != approver != deployer
 ```
+
+**Feeding it from your flag tool.** Point the provider's outbound webhook at
+`POST /api/v1/flags/webhook/{provider}` (`unleash` or `flagsmith`) and configure
+it to send a Fides service-account key as the `Authorization` header — Fides
+normalizes the payload and records the `flag.changed` attestation:
+
+```
+Unleash:   Addon → Webhook → URL https://fides.example.com/api/v1/flags/webhook/unleash
+Flagsmith: Integrations → Webhooks → URL …/api/v1/flags/webhook/flagsmith
+           (Authorization: Bearer fides_<service-account-key>)
+```
+
+**OpenFeature (SDK-side, optional).** For sampled runtime evidence, an
+OpenFeature *finally* hook can post evaluations for critical flags — the spec's
+designated seam for "publishing records in other services":
+
+```js
+import { OpenFeature, Hook } from "@openfeature/server-sdk";
+
+const fidesHook /* : Hook */ = {
+  finally: (ctx, details) => {
+    if (!CRITICAL_FLAGS.has(ctx.flagKey)) return;         // sample: critical flags only
+    fetch(`${FIDES}/api/v1/flags/changed`, {               // the direct recording endpoint
+      method: "POST",
+      headers: { Authorization: `Bearer ${FIDES_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ flag_key: ctx.flagKey, new_state: String(details.value), source: "openfeature" }),
+    }).catch(() => {});                                    // never block evaluation
+  },
+};
+OpenFeature.addHooks(fidesHook);
+```

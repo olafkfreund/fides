@@ -64,21 +64,29 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 		badRequest(w, err)
 		return
 	}
+	trailID, attID, err := s.writeFlagChange(r.Context(), orgID, flowID, req)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
 
-	// One trail per flag change (unique name), carrying the flag.changed evidence.
-	// The actor is recorded as the trail's `committer` tag so the existing
-	// segregation-of-duties evaluation attributes the change to them: an approval
-	// of a high-risk flip by the same person is then a committer==approver
-	// collision (you can't sign off your own flag change — four-eyes) (#289).
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, map[string]any{"trail_id": trailID, "attestation_id": attID, "flag_key": req.FlagKey})
+}
+
+// writeFlagChange records a validated flag change under flowID: one trail per
+// change (actor as committer, for SoD), a policy-evaluated flag.changed
+// attestation chained into the ledger, and a flag.changed event. Shared by the
+// direct endpoint and the provider webhook adapters.
+func (s *Server) writeFlagChange(ctx context.Context, orgID, flowID uuid.UUID, req flagChangedReq) (uuid.UUID, uuid.UUID, error) {
 	trailID := uuid.New()
 	trailName := req.FlagKey + ":" + req.Environment + ":" + trailID.String()[:8]
 	msg := "flag " + req.FlagKey + " [" + req.Environment + "] " + req.OldState + " -> " + req.NewState
-	if _, err := s.q(r.Context()).ExecContext(r.Context(),
+	if _, err := s.q(ctx).ExecContext(ctx,
 		`INSERT INTO trails (id, flow_id, name, git_message, tags, created_at)
 		 VALUES ($1,$2,$3,$4,$5, now())`,
 		trailID, flowID, trailName, msg, marshalJSONB(map[string]string{"committer": req.Actor, "source": req.Source})); err != nil {
-		internalError(w, err)
-		return
+		return uuid.UUID{}, uuid.UUID{}, err
 	}
 
 	payload, _ := json.Marshal(map[string]any{
@@ -87,38 +95,30 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 		"actor": req.Actor, "source": req.Source, "targeting": req.Targeting,
 	})
 
-	// Compliance is policy-driven: any JQ rules registered for the flag.changed
-	// attestation type govern the change (e.g. "prod flips must name an actor" or
-	// "a >50% rollout must be approved"). A non-compliant flag.changed then fails
-	// the change gate on this trail (#288). No rules registered => compliant.
-	compliant, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, FlagChangedAttestationType, string(payload))
+	// Compliance is policy-driven: JQ rules registered for the flag.changed type
+	// govern the change; a non-compliant flag.changed fails the change gate (#288).
+	compliant, err := s.evaluateAttestationTypeCompliance(ctx, orgID, FlagChangedAttestationType, string(payload))
 	if err != nil {
-		internalError(w, err)
-		return
+		return uuid.UUID{}, uuid.UUID{}, err
 	}
-
-	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant)
+	contentHash, prevHash, err := s.attestationChain(ctx, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant)
 	if err != nil {
-		internalError(w, err)
-		return
+		return uuid.UUID{}, uuid.UUID{}, err
 	}
 	attID := uuid.New()
-	if _, err := s.q(r.Context()).ExecContext(r.Context(),
+	if _, err := s.q(ctx).ExecContext(ctx,
 		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())`,
 		attID, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant, contentHash, prevHash); err != nil {
-		internalError(w, err)
-		return
+		return uuid.UUID{}, uuid.UUID{}, err
 	}
 
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "flag.changed", json.RawMessage(payload)); err != nil {
+		if err := events.Enqueue(ctx, s.q(ctx), orgID, "flag.changed", json.RawMessage(payload)); err != nil {
 			log.Printf("enqueue flag.changed: %v", err)
 		}
 	}
-
-	w.WriteHeader(http.StatusCreated)
-	writeJSON(w, map[string]any{"trail_id": trailID, "attestation_id": attID, "flag_key": req.FlagKey})
+	return trailID, attID, nil
 }
 
 // resolveFlagFlow returns the flow to record flag changes under: the caller's
