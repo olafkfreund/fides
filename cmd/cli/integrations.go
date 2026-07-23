@@ -133,9 +133,14 @@ func gitOutput(args ...string) (string, error) {
 func handleImpact(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("impact", flag.ExitOnError)
 	cve := cmd.String("cve", "", "CVE identifier, e.g. CVE-2021-44228")
+	backfill := cmd.Bool("backfill", false, "re-extract CVEs from existing scan attestations into the impact index (admin; idempotent)")
 	cmd.Parse(args)
+	if *backfill {
+		post(config, "/api/v1/vulnerabilities/backfill", map[string]any{}, "")
+		return
+	}
 	if *cve == "" {
-		fmt.Println("Usage: fides impact --cve <CVE-ID>")
+		fmt.Println("Usage: fides impact --cve <CVE-ID>  |  fides impact --backfill")
 		os.Exit(1)
 	}
 	body, err := getRequest(config, "/api/v1/impact?cve="+neturl.QueryEscape(*cve))

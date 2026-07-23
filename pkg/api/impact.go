@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -213,4 +214,74 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// handleBackfillVulnerabilities re-extracts CVE IDs from the org's existing
+// vulnerability-scan attestations (trivy/snyk/sarif) into artifact_vulnerabilities,
+// so `fides impact` and the CRA report reflect scans recorded before CVE
+// extraction shipped (#294/#303). Idempotent — persistVulnerabilities uses
+// ON CONFLICT DO NOTHING, so re-running is safe. Admin-scoped.
+// POST /api/v1/vulnerabilities/backfill
+func (s *Server) handleBackfillVulnerabilities(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+
+	var before int
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT count(*) FROM artifact_vulnerabilities WHERE org_id = $1`, p.OrgID).Scan(&before); err != nil {
+		internalError(w, err)
+		return
+	}
+
+	// Collect the scan attestations first, then insert — don't run INSERTs while
+	// the SELECT's rows are still open on the same connection.
+	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+		`SELECT a.id, a.artifact_sha256, a.type_name, a.payload::text
+		 FROM attestations a
+		 JOIN trails tr ON tr.id = a.trail_id
+		 JOIN flows f ON f.id = tr.flow_id
+		 WHERE f.org_id = $1 AND a.type_name IN ('trivy','snyk','sarif') AND a.artifact_sha256 IS NOT NULL`, p.OrgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	type att struct {
+		id             uuid.UUID
+		sha, typ, body string
+	}
+	var atts []att
+	for rows.Next() {
+		var a att
+		if err := rows.Scan(&a.id, &a.sha, &a.typ, &a.body); err != nil {
+			rows.Close()
+			internalError(w, err)
+			return
+		}
+		atts = append(atts, a)
+	}
+	rows.Close()
+
+	scanned := 0
+	for _, a := range atts {
+		if err := s.persistVulnerabilities(r.Context(), p.OrgID, a.sha, a.id, a.typ, a.body); err != nil {
+			log.Printf("backfill: persistVulnerabilities for attestation %s: %v", a.id, err)
+			continue
+		}
+		scanned++
+	}
+
+	var after int
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT count(*) FROM artifact_vulnerabilities WHERE org_id = $1`, p.OrgID).Scan(&after); err != nil {
+		internalError(w, err)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"attestations_scanned":  scanned,
+		"vulnerabilities_added": after - before,
+		"vulnerabilities_total": after,
+	})
 }

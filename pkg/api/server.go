@@ -100,6 +100,8 @@ func (s *Server) Routes() http.Handler {
 	// CVE -> artifact -> environment impact index + VEX suppression (issue #294).
 	mux.HandleFunc("GET /api/v1/impact", s.handleImpact)
 	mux.HandleFunc("POST /api/v1/vex", s.handleRecordVEX)
+	// Backfill the CVE index from pre-existing scan attestations (#315).
+	mux.HandleFunc("POST /api/v1/vulnerabilities/backfill", s.handleBackfillVulnerabilities)
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 

@@ -376,6 +376,9 @@ fides impact --cve CVE-2021-44228
 # Mark a CVE not-exploitable (org-wide, or scope to one artifact sha256)
 fides vex --cve CVE-2021-44228 --status not_affected \
   --justification "vulnerable class never loaded"
+
+# Index scans recorded before CVE extraction shipped (idempotent, admin):
+fides impact --backfill
 ```
 
 ## 22. AI-authored-code provenance (`code.authorship`)
