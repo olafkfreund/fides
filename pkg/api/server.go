@@ -125,6 +125,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/frameworks", s.handleListFrameworks)
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
+	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
+	mux.HandleFunc("GET /api/v1/reports/cra-incidents", s.handleCRAIncidents)
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)

@@ -392,6 +392,11 @@ like any other framework — including OSCAL export.
 ```bash
 fides control import --framework CRA
 fides report --framework CRA               # add --format oscal for a machine-readable report
+
+# CRA Art. 14 — the 24-hour exploited-vulnerability / incident reporting set:
+# exploitable vulnerabilities (VEX not_affected excluded) found in the window,
+# with their affected artifacts and the environments running them.
+fides report --cra-incidents --hours 24
 ```
 
 ## 24. External RFC3161 timestamp anchoring

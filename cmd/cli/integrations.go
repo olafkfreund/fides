@@ -494,9 +494,19 @@ func handleReport(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("report", flag.ExitOnError)
 	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX, SLSA, CRA)")
 	format := cmd.String("format", "", "output format: default (human-readable JSON) or oscal")
+	craIncidents := cmd.Bool("cra-incidents", false, "EU CRA 24h exploited-vulnerability / incident reporting set")
+	hours := cmd.Int("hours", 24, "window in hours for --cra-incidents")
 	cmd.Parse(args)
+	// EU CRA 24h reporting: exploitable vulnerabilities (VEX not_affected excluded)
+	// discovered in the window, with affected artifacts + running environments.
+	if *craIncidents {
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/reports/cra-incidents?hours=%d", *hours))
+		fail(err, "cra incident report")
+		fmt.Println(body)
+		return
+	}
 	if *framework == "" {
-		fmt.Println("Usage: fides report --framework <name> [--format oscal]")
+		fmt.Println("Usage: fides report --framework <name> [--format oscal]  |  fides report --cra-incidents [--hours N]")
 		os.Exit(1)
 	}
 	path := "/api/v1/reports/framework/" + neturl.PathEscape(*framework)
