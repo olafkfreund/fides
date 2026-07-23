@@ -37,6 +37,19 @@ func TestFrameworkCatalogsRecognizeSupplyChainEvidence(t *testing.T) {
 	requireTypeInFramework(t, "SOC2", "slsa-provenance")
 }
 
+// The EU Cyber Resilience Act catalog must exist and require the CRA
+// load-bearing evidence: a machine-readable SBOM and vulnerability handling,
+// plus artifact integrity. Guards the exact evidence type_name strings so an
+// org importing CRA gets reportable control coverage (#293).
+func TestCRAFrameworkCatalog(t *testing.T) {
+	if _, ok := frameworkCatalogs["CRA"]; !ok {
+		t.Fatal("CRA framework catalog is missing")
+	}
+	requireTypeInFramework(t, "CRA", "sbom-cyclonedx")
+	requireTypeInFramework(t, "CRA", "trivy")
+	requireTypeInFramework(t, "CRA", "cosign-verification")
+}
+
 func requireTypeInFramework(t *testing.T, framework, typeName string) {
 	t.Helper()
 	for _, c := range frameworkCatalogs[framework] {

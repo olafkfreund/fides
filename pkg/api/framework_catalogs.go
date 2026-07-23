@@ -77,6 +77,20 @@ var frameworkCatalogs = map[string][]controlTemplate{
 		{"SLSA-SIG-VERIFY", "Artifact signature verified (cosign/Sigstore)", []string{"cosign-verification"}},
 		{"SLSA-SBOM", "Software bill of materials", []string{"sbom-cyclonedx"}},
 	},
+	// EU Cyber Resilience Act (Regulation (EU) 2024/2847). Maps the Annex I
+	// essential cybersecurity requirements Fides can evidence to existing evidence
+	// types. SBOM readiness and vulnerability handling are the load-bearing CRA
+	// obligations — a machine-readable SBOM is mandatory, and exploited-vulnerability
+	// reporting begins 2026-09-11. The 24h incident-reporting workflow is tracked
+	// separately (needs exploitability/VEX data); this catalog makes a trail's CRA
+	// control coverage reportable today via /api/v1/reports/framework/CRA + OSCAL.
+	"CRA": {
+		{"CRA-VULN-HANDLING", "Vulnerability handling — no known exploitable vulnerabilities (Annex I.II)", []string{"trivy", "snyk"}},
+		{"CRA-SBOM", "Machine-readable software bill of materials (Annex I.II.1)", []string{"sbom-cyclonedx"}},
+		{"CRA-SECURE-DEV", "Secure development — SAST + no committed secrets (Annex I.I)", []string{"sast-semgrep-scan", "secret-scan"}},
+		{"CRA-INTEGRITY", "Integrity & authenticity — signed artifacts + build provenance (Annex I.I)", []string{"cosign-verification", "slsa-provenance"}},
+		{"CRA-CHANGE-MGMT", "Security updates & change management (Annex I.II)", []string{"deployment"}},
+	},
 }
 
 // handleListFrameworks returns the available framework catalogs (name + controls).
