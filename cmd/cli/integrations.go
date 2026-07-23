@@ -154,7 +154,7 @@ func handleVEX(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("vex", flag.ExitOnError)
 	cve := cmd.String("cve", "", "CVE identifier (required)")
 	status := cmd.String("status", "", "not_affected | affected | fixed | under_investigation (required)")
-	product := cmd.String("product", "", "artifact sha256 to scope to, or empty for org-wide")
+	product := cmd.String("product", "", "scope: empty=org-wide, an artifact sha256, or a component purl (suppresses the CVE for every artifact containing that component)")
 	justification := cmd.String("justification", "", "reason (optional)")
 	cmd.Parse(args)
 	if *cve == "" || *status == "" {
