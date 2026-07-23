@@ -66,13 +66,17 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// One trail per flag change (unique name), carrying the flag.changed evidence.
+	// The actor is recorded as the trail's `committer` tag so the existing
+	// segregation-of-duties evaluation attributes the change to them: an approval
+	// of a high-risk flip by the same person is then a committer==approver
+	// collision (you can't sign off your own flag change — four-eyes) (#289).
 	trailID := uuid.New()
 	trailName := req.FlagKey + ":" + req.Environment + ":" + trailID.String()[:8]
 	msg := "flag " + req.FlagKey + " [" + req.Environment + "] " + req.OldState + " -> " + req.NewState
 	if _, err := s.q(r.Context()).ExecContext(r.Context(),
 		`INSERT INTO trails (id, flow_id, name, git_message, tags, created_at)
 		 VALUES ($1,$2,$3,$4,$5, now())`,
-		trailID, flowID, trailName, msg, marshalJSONB(map[string]string{"actor": req.Actor, "source": req.Source})); err != nil {
+		trailID, flowID, trailName, msg, marshalJSONB(map[string]string{"committer": req.Actor, "source": req.Source})); err != nil {
 		internalError(w, err)
 		return
 	}
