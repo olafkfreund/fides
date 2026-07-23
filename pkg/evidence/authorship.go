@@ -76,9 +76,19 @@ func coAuthorName(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// Compliant reports whether the change satisfies the AI-authorship control:
-// human-authored changes always pass; AI-authored changes require a human
-// reviewer.
+// Compliant reports whether the change satisfies the AI-authorship control.
+// It is an allow-list and fails closed: a human-authored change passes, an
+// AI-authored change passes only with a human reviewer, and anything else — an
+// unknown or missing author_kind (e.g. a hand-crafted payload posted straight to
+// the attestation endpoint) — is treated as non-compliant so it cannot bypass
+// the gate.
 func (a Authorship) Compliant() bool {
-	return a.AuthorKind != "ai_agent" || a.HumanReviewer != ""
+	switch a.AuthorKind {
+	case "human":
+		return true
+	case "ai_agent":
+		return a.HumanReviewer != ""
+	default:
+		return false
+	}
 }

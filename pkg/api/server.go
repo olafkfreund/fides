@@ -1045,7 +1045,12 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// already marked it non-compliant (registered rules take precedence).
 	if req.TypeName == "code.authorship" && isCompliant {
 		var a evidence.Authorship
-		if err := json.Unmarshal([]byte(req.Payload), &a); err == nil {
+		if err := json.Unmarshal([]byte(req.Payload), &a); err != nil {
+			// Fail closed: an unparseable authorship payload cannot be trusted to
+			// pass the gate.
+			isCompliant = false
+			log.Printf("code.authorship payload unparseable, marking non-compliant: %v", err)
+		} else {
 			isCompliant = a.Compliant()
 		}
 	}

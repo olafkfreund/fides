@@ -58,6 +58,22 @@ Claude-Session: https://claude.ai/code/session_01AhR4abvf8YbtMhf7XwPcrZ`
 		})
 	}
 
+	// Compliant() is an allow-list and fails closed: an unknown or missing
+	// author_kind (e.g. a hand-crafted payload posted straight to the endpoint)
+	// must not be treated as compliant.
+	for _, kind := range []string{"", "unknown", "AI_AGENT", "robot"} {
+		if (Authorship{AuthorKind: kind}).Compliant() {
+			t.Errorf("Compliant() = true for author_kind=%q, want false (fail closed)", kind)
+		}
+	}
+	// ai_agent with a reviewer still passes; human still passes.
+	if !(Authorship{AuthorKind: "ai_agent", HumanReviewer: "Olaf"}).Compliant() {
+		t.Error("ai_agent with reviewer should be compliant")
+	}
+	if !(Authorship{AuthorKind: "human"}).Compliant() {
+		t.Error("human should be compliant")
+	}
+
 	// The AI commit's model and session are captured for the attestation payload.
 	a := ParseAuthorship(aiCommit)
 	if a.Model != "Claude Opus 4.8" {
