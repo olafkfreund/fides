@@ -34,9 +34,11 @@ func TestCVEImpactIndexWithVEX(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	migration, _ := os.ReadFile(filepath.Join("..", "db", "migrations", "0018_vulnerabilities_vex.sql"))
-	if _, err := pool.Exec(string(migration)); err != nil {
-		t.Fatalf("migration 0018: %v", err)
+	for _, m := range []string{"0012_sbom_components.sql", "0018_vulnerabilities_vex.sql"} {
+		mig, _ := os.ReadFile(filepath.Join("..", "db", "migrations", m))
+		if _, err := pool.Exec(string(mig)); err != nil {
+			t.Fatalf("migration %s: %v", m, err)
+		}
 	}
 
 	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
@@ -109,6 +111,59 @@ type impactResp struct {
 			Environment string `json:"environment"`
 		} `json:"environments"`
 	} `json:"affected_artifacts"`
+}
+
+// TestImpactPurlVEXSuppression checks that a not_affected VEX scoped to a
+// component purl suppresses the CVE for an artifact whose SBOM contains that
+// component (#310).
+func TestImpactPurlVEXSuppression(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the purl VEX test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	for _, m := range []string{"0012_sbom_components.sql", "0018_vulnerabilities_vex.sql"} {
+		mig, _ := os.ReadFile(filepath.Join("..", "db", "migrations", m))
+		if _, err := pool.Exec(string(mig)); err != nil {
+			t.Fatalf("migration %s: %v", m, err)
+		}
+	}
+
+	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
+	sha := "beadfeed1234"
+	purl := "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1"
+	cve := "CVE-2021-44228"
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
+	mustExec(t, pool, `INSERT INTO flows (id,org_id,name,description) VALUES ($1,$2,'f','')`, flow, org)
+	mustExec(t, pool, `INSERT INTO trails (id,flow_id,name,git_commit) VALUES ($1,$2,'t','abc')`, trail, flow)
+	mustExec(t, pool, `INSERT INTO artifacts (sha256,org_id,trail_id,name,type) VALUES ($1,$2,$3,'app','docker')`, sha, org, trail)
+	// The artifact's SBOM contains the vulnerable component.
+	mustExec(t, pool, `INSERT INTO sbom_components (id,org_id,artifact_sha256,name,version,purl) VALUES ($1,$2,$3,'log4j-core','2.14.1',$4)`, uuid.New(), org, sha, purl)
+	mustExec(t, pool, `INSERT INTO artifact_vulnerabilities (id,org_id,artifact_sha256,cve_id,severity,source) VALUES ($1,$2,$3,$4,'CRITICAL','trivy')`, uuid.New(), org, sha, cve)
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"})
+
+	// Before VEX: the artifact is affected.
+	if got := impact(t, s, ctx, cve); got.AffectedCount != 1 {
+		t.Fatalf("pre-VEX affected = %d, want 1", got.AffectedCount)
+	}
+
+	// A purl-scoped not_affected VEX suppresses it (the artifact isn't named).
+	mustExec(t, pool, `INSERT INTO vex_statements (id,org_id,cve_id,product,status,justification) VALUES ($1,$2,$3,$4,'not_affected','lookup disabled')`, uuid.New(), org, cve, purl)
+	got := impact(t, s, ctx, cve)
+	if got.AffectedCount != 0 || got.Suppressed != 1 {
+		t.Fatalf("post-purl-VEX impact = %+v, want affected=0 suppressed=1", got)
+	}
 }
 
 func impact(t *testing.T, s *Server, ctx context.Context, cve string) impactResp {

@@ -378,9 +378,10 @@ to chain to a trusted root (root pinning); otherwise only its signature is check
 
 ## 24. SIEM streaming (Splunk HEC / OTLP)
 
-Stream governance events to a SIEM via the Splunk HTTP Event Collector. Opt in on
-the server with `FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, and
-`FIDES_SIEM_HEC_TOKEN`.
+Stream governance events to a SIEM via the Splunk HTTP Event Collector
+(`FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, `FIDES_SIEM_HEC_TOKEN`), or as
+OpenTelemetry logs to any OTLP/HTTP collector (`FIDES_SIEM_OTLP_ENDPOINT`,
+optional `FIDES_SIEM_OTLP_TOKEN`).
 
 ## 25. Persistent sessions (horizontal scale)
 

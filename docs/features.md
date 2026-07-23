@@ -373,9 +373,12 @@ the environments actually running each affected artifact. VEX statements
 # Which artifacts + running environments are affected by a CVE?
 fides impact --cve CVE-2021-44228
 
-# Mark a CVE not-exploitable (org-wide, or scope to one artifact sha256)
+# Mark a CVE not-exploitable. Scope with --product: empty = org-wide, an artifact
+# sha256, or a component purl (suppresses it for every artifact containing that
+# component).
 fides vex --cve CVE-2021-44228 --status not_affected \
-  --justification "vulnerable class never loaded"
+  --product "pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1" \
+  --justification "vulnerable lookup disabled"
 
 # Index scans recorded before CVE extraction shipped (idempotent, admin):
 fides impact --backfill
@@ -438,6 +441,16 @@ expect. Opt in on the server:
 FIDES_EVENTS_ENABLED=true \
 FIDES_SIEM_HEC_URL=https://splunk.example.com:8088/services/collector/event \
 FIDES_SIEM_HEC_TOKEN=<hec-token> \
+  fides-server
+```
+
+Or forward the same events as OpenTelemetry logs (OTLP/HTTP) to a collector — a
+vendor-neutral alternative that works with any OTLP-compatible SIEM:
+
+```bash
+FIDES_EVENTS_ENABLED=true \
+FIDES_SIEM_OTLP_ENDPOINT=http://otel-collector:4318/v1/logs \
+FIDES_SIEM_OTLP_TOKEN=<optional-bearer> \
   fides-server
 ```
 

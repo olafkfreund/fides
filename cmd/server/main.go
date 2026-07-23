@@ -178,6 +178,11 @@ func main() {
 				log.Printf("FIDES_SIEM_HEC_URL set but FIDES_SIEM_HEC_TOKEN empty; SIEM sink disabled")
 			}
 		}
+		// Optional SIEM forwarding via OpenTelemetry logs (OTLP/HTTP).
+		if otlpURL := os.Getenv("FIDES_SIEM_OTLP_ENDPOINT"); otlpURL != "" {
+			sinks = append(sinks, siem.NewOTLPSink(otlpURL, os.Getenv("FIDES_SIEM_OTLP_TOKEN")))
+			log.Printf("SIEM sink enabled (OTLP logs)")
+		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
 		log.Printf("Event dispatcher enabled (webhook, git-commit-status, ServiceNow ITOM + CMDB sinks)")
 	}

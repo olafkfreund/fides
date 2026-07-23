@@ -68,7 +68,10 @@ func (s *Server) handleCRAIncidents(w http.ResponseWriter, r *http.Request) {
 		     SELECT 1 FROM vex_statements vx
 		     WHERE vx.org_id = av.org_id AND vx.cve_id = av.cve_id
 		       AND vx.status = 'not_affected'
-		       AND (vx.product = '' OR vx.product = av.artifact_sha256))
+		       AND (vx.product = '' OR vx.product = av.artifact_sha256
+		         OR EXISTS (SELECT 1 FROM sbom_components sc
+		                    WHERE sc.org_id = av.org_id AND sc.artifact_sha256 = av.artifact_sha256
+		                      AND sc.purl <> '' AND sc.purl = vx.product)))
 		 ORDER BY av.cve_id`, orgID, hours)
 	if err != nil {
 		internalError(w, err)
@@ -134,7 +137,10 @@ func (s *Server) handleCRAIncidents(w http.ResponseWriter, r *http.Request) {
 		     SELECT 1 FROM vex_statements vx
 		     WHERE vx.org_id = av.org_id AND vx.cve_id = av.cve_id
 		       AND vx.status = 'not_affected'
-		       AND (vx.product = '' OR vx.product = av.artifact_sha256))`, orgID, hours).Scan(&suppressed); err != nil {
+		       AND (vx.product = '' OR vx.product = av.artifact_sha256
+		         OR EXISTS (SELECT 1 FROM sbom_components sc
+		                    WHERE sc.org_id = av.org_id AND sc.artifact_sha256 = av.artifact_sha256
+		                      AND sc.purl <> '' AND sc.purl = vx.product)))`, orgID, hours).Scan(&suppressed); err != nil {
 		internalError(w, err)
 		return
 	}
