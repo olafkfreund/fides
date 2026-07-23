@@ -63,6 +63,21 @@ func (s *Server) handleVerifyTrailChain(w http.ResponseWriter, r *http.Request) 
 		entries = append(entries, e)
 	}
 
+	verdict := ledger.Verify(entries)
+
+	// The current chain head is the last entry's content_hash; compare it against
+	// any external RFC3161 anchor to prove the head existed at a point in time.
+	head := ""
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].ContentHash != "" {
+			head = entries[i].ContentHash
+			break
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(ledger.Verify(entries))
+	json.NewEncoder(w).Encode(chainVerifyResp{
+		Verdict:        verdict,
+		ExternalAnchor: s.externalAnchorStatus(r.Context(), trailID, head),
+	})
 }

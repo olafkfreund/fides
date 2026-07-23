@@ -72,6 +72,8 @@ func main() {
 		handleUser(config, os.Args[2:])
 	case "verify-chain":
 		handleVerifyChain(config, os.Args[2:])
+	case "anchor":
+		handleAnchor(config, os.Args[2:])
 	case "service-account":
 		handleServiceAccount(config, os.Args[2:])
 	case "allowlist":
@@ -142,7 +144,8 @@ func printUsage() {
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
 	fmt.Println("  user             Manage users (set-password)")
-	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain")
+	fmt.Println("  verify-chain     Verify a trail's tamper-evidence attestation chain (incl. external RFC3161 anchor)")
+	fmt.Println("  anchor           Anchor a trail's chain head to an external RFC3161 timestamp authority (--trail [--tsa])")
 	fmt.Println("  service-account  Manage service accounts & API keys (create|list|issue-key|revoke-key)")
 	fmt.Println("  allowlist        Approve artifacts for an environment (add|list|check|remove)")
 	fmt.Println("  remediation      Policy-driven auto-remediation (propose|list|get|approve|reject|apply)")

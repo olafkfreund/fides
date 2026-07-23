@@ -78,6 +78,8 @@ func (s *Server) Routes() http.Handler {
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
+	// Anchor a trail's chain head to an external RFC3161 timestamp authority (#297).
+	mux.HandleFunc("POST /api/v1/trails/{id}/anchor", s.handleCreateTrailAnchor)
 	mux.HandleFunc("GET /api/v1/trails/{id}/change-gate", s.handleChangeGate)
 	mux.HandleFunc("GET /api/v1/trails/{id}/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/v1/trails/{id}/approvals", s.handleRecordApproval)
