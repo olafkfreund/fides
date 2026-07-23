@@ -553,3 +553,9 @@ const fidesHook /* : Hook */ = {
 };
 OpenFeature.addHooks(fidesHook);
 ```
+
+**Audit & history.** Every flag change is its own trail, so
+`fides audit --trail <flag-trail>` exports it (flag.changed attestation + chain
+verdict) in the auditor ZIP. List recent changes with `fides flag list` /
+`GET /api/v1/flags/history`, or browse them in the **Feature Flags** tab of the
+Go-served `/admin` console (flag, environment, state change, actor, compliance).

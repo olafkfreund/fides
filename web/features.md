@@ -420,3 +420,6 @@ violating change is recorded non-compliant and fails the change gate (e.g.
 Point your flag tool's outbound webhook at `POST /api/v1/flags/webhook/unleash`
 or `…/flagsmith` (authenticated with a Fides service-account key) and Fides
 normalizes it into a `flag.changed` attestation automatically.
+
+Browse recent changes with `fides flag list` / the **Feature Flags** tab in the
+`/admin` console, and export any change (its own trail) with `fides audit`.

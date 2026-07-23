@@ -151,6 +151,71 @@ func TestFlagChangePolicyCompliance(t *testing.T) {
 	}
 }
 
+// TestFlagHistory checks the flag-change history endpoint (#291): recorded flag
+// changes are listed for the org, most recent first.
+func TestFlagHistory(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the flag-history test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	org := uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"})
+	record := func(key, from, to string) {
+		body, _ := json.Marshal(map[string]any{"flag_key": key, "environment": "prod", "old_state": from, "new_state": to, "actor": "olaf@acme.com"})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/flags/changed", strings.NewReader(string(body))).WithContext(ctx)
+		w := httptest.NewRecorder()
+		s.handleRecordFlagChange(w, r)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("record: %d %s", w.Code, w.Body.String())
+		}
+	}
+	record("checkout-v2", "off", "on")
+	record("new-pricing", "on", "off")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/flags/history?limit=50", nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	s.handleFlagHistory(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("history: %d %s", w.Code, w.Body.String())
+	}
+	var rows []struct {
+		FlagKey   string `json:"flag_key"`
+		NewState  string `json:"new_state"`
+		Actor     string `json:"actor"`
+		Compliant bool   `json:"compliant"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("history rows = %d, want 2", len(rows))
+	}
+	// Both changes present, with actor and compliance surfaced.
+	keys := map[string]bool{}
+	for _, r := range rows {
+		keys[r.FlagKey] = true
+		if r.Actor != "olaf@acme.com" || !r.Compliant {
+			t.Fatalf("row = %+v, want actor set + compliant", r)
+		}
+	}
+	if !keys["checkout-v2"] || !keys["new-pricing"] {
+		t.Fatalf("missing flags in history: %v", keys)
+	}
+}
+
 // TestFlagWebhookRecordsChange checks the provider webhook adapter (#290): an
 // Unleash webhook is normalized and recorded as a flag.changed attestation.
 func TestFlagWebhookRecordsChange(t *testing.T) {

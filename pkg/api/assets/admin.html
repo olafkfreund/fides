@@ -46,6 +46,7 @@
   <button data-tab="git">Git &amp; Webhooks</button>
   <button data-tab="envs">Environments</button>
   <button data-tab="metrics">Metrics</button>
+  <button data-tab="flags">Feature Flags</button>
   <button data-tab="verify">MCP Verify</button>
 </nav>
 <main>
@@ -152,6 +153,14 @@
     </div>
   </section>
 
+  <section class="tab" id="tab-flags">
+    <div class="panel">
+      <h2>Feature-flag change history</h2>
+      <div class="btnrow"><label style="margin:0">Limit</label><input id="fl_limit" value="100" style="width:90px"/><button class="ghost" onclick="loadFlags()">Load</button></div>
+      <div id="fl_list" style="margin-top:12px"></div>
+    </div>
+  </section>
+
   <!-- MCP Verify -->
   <section class="tab" id="tab-verify">
     <div class="panel">
@@ -237,6 +246,8 @@ async function addAllow(){ const id=curEnv(); try{ await api('POST','/api/v1/env
 
 // Metrics
 async function loadMetrics(){ try{ const m=await api('GET','/api/v1/metrics/dora?days='+(parseInt($('m_days').value||'30',10))); const p=$('m_out'); p.style.display='block'; p.textContent=JSON.stringify(m,null,2);}catch(e){const p=$('m_out');p.style.display='block';p.textContent=e.message;} }
+
+async function loadFlags(){ try{ const rows=await api('GET','/api/v1/flags/history?limit='+(parseInt($('fl_limit').value||'100',10))); $('fl_list').innerHTML = rows.length ? ('<table><thead><tr><th>Flag</th><th>Env</th><th>Change</th><th>Actor</th><th>Source</th><th>Compliant</th><th>When</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${esc(r.flag_key)}</td><td>${esc(r.environment)}</td><td>${esc(r.old_state)} &rarr; ${esc(r.new_state)}</td><td>${esc(r.actor)}</td><td>${esc(r.source)}</td><td>${r.compliant?'✓':'✗'}</td><td>${esc(r.recorded_at)}</td></tr>`).join('')+'</tbody></table>') : '<p>No flag changes recorded yet.</p>'; }catch(e){ $('fl_list').textContent=e.message; } }
 
 // MCP Verify
 async function loadVerifyEnvs(){ try{ const envs=await api('GET','/api/v1/environments'); var sel=$('v_env'); sel.innerHTML=envs.map(function(e){return '<option value="'+e.id+'">'+esc(e.name)+'</option>';}).join(''); if(envs.length) loadVerifyConns(); }catch(e){ setMsg('v_verdict', e.message, false); } }

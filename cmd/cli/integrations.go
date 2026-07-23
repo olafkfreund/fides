@@ -131,8 +131,17 @@ func gitOutput(args ...string) (string, error) {
 // handleFlagChange records a feature-flag change as a flag.changed attestation
 // (POST /api/v1/flags/changed), making the change governed evidence.
 func handleFlagChange(config CLIConfig, args []string) {
+	if len(args) >= 1 && args[0] == "list" {
+		cmd := flag.NewFlagSet("flag list", flag.ExitOnError)
+		limit := cmd.Int("limit", 100, "max flag changes to list")
+		cmd.Parse(args[1:])
+		body, err := getRequest(config, fmt.Sprintf("/api/v1/flags/history?limit=%d", *limit))
+		fail(err, "list flag changes")
+		fmt.Println(body)
+		return
+	}
 	if len(args) < 1 || args[0] != "record" {
-		fmt.Println("Usage: fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor <a>] [--source unleash|flagsmith|manual] [--flow <id>]")
+		fmt.Println("Usage: fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor <a>] [--source unleash|flagsmith|manual] [--flow <id>]\n       fides flag list [--limit N]")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("flag record", flag.ExitOnError)
