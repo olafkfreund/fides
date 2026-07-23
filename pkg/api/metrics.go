@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"net/http"
 	"strconv"
 )
@@ -42,6 +43,40 @@ func (s *Server) handleDoraMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Lead time for changes: median time from a trail's creation (the change
+	// entering the pipeline, carrying its git commit) to its deployment anchor.
+	// This is pipeline lead time — the honest proxy from data Fides stores; there
+	// is no separate git author-commit timestamp column.
+	var leadSecs sql.NullFloat64
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (da.created_at - tr.created_at)))
+		 FROM deployment_anchors da JOIN trails tr ON tr.id = da.trail_id
+		 WHERE da.org_id = $1 AND da.created_at > now() - make_interval(days => $2)
+		   AND da.created_at >= tr.created_at`, orgID, days).Scan(&leadSecs); err != nil {
+		internalError(w, err)
+		return
+	}
+
+	// MTTR / time-to-restore: median time from a non-compliant deployment to the
+	// next compliant deployment of the same service (deployment_anchors.ci_name).
+	// deployment_anchors.compliant is the failure signal Fides already records.
+	var mttrSecs sql.NullFloat64
+	var restored int
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`WITH gaps AS (
+		     SELECT compliant, EXTRACT(EPOCH FROM (
+		         min(created_at) FILTER (WHERE compliant) OVER (
+		             PARTITION BY ci_name ORDER BY created_at
+		             ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) - created_at)) AS restore_secs
+		     FROM deployment_anchors
+		     WHERE org_id = $1 AND ci_name IS NOT NULL
+		       AND created_at > now() - make_interval(days => $2))
+		 SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY restore_secs), count(*)
+		 FROM gaps WHERE NOT compliant AND restore_secs IS NOT NULL`, orgID, days).Scan(&mttrSecs, &restored); err != nil {
+		internalError(w, err)
+		return
+	}
+
 	complianceRate := 1.0
 	if total > 0 {
 		complianceRate = float64(compliant) / float64(total)
@@ -54,7 +89,20 @@ func (s *Server) handleDoraMetrics(w http.ResponseWriter, r *http.Request) {
 		"attestations":                 total,
 		"compliance_rate":              complianceRate,
 		"change_failure_rate":          1 - complianceRate,
+		"lead_time_hours":              nullHours(leadSecs),
+		"mttr_hours":                   nullHours(mttrSecs),
+		"mttr_restored_count":          restored,
 	})
+}
+
+// nullHours converts a nullable second count into a rounded-hours pointer, or
+// nil when there is no data (so the JSON is null, not a fake 0).
+func nullHours(v sql.NullFloat64) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	h := v.Float64 / 3600
+	return &h
 }
 
 // handleDeploymentFrequency returns per-environment weekly deployment counts
