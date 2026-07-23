@@ -43,16 +43,16 @@ func (s *Server) handleDoraMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lead time for changes: median time from a trail's creation (the change
-	// entering the pipeline, carrying its git commit) to its deployment anchor.
-	// This is pipeline lead time — the honest proxy from data Fides stores; there
-	// is no separate git author-commit timestamp column.
+	// Lead time for changes: median time from the change being committed to its
+	// deployment anchor. Uses the git commit timestamp (git_committed_at) when
+	// recorded — true code-to-prod lead time — and falls back to the trail's
+	// creation time (pipeline lead time) when it is not.
 	var leadSecs sql.NullFloat64
 	if err := s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (da.created_at - tr.created_at)))
+		`SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (da.created_at - COALESCE(tr.git_committed_at, tr.created_at))))
 		 FROM deployment_anchors da JOIN trails tr ON tr.id = da.trail_id
 		 WHERE da.org_id = $1 AND da.created_at > now() - make_interval(days => $2)
-		   AND da.created_at >= tr.created_at`, orgID, days).Scan(&leadSecs); err != nil {
+		   AND da.created_at >= COALESCE(tr.git_committed_at, tr.created_at)`, orgID, days).Scan(&leadSecs); err != nil {
 		internalError(w, err)
 		return
 	}
