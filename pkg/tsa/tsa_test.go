@@ -18,10 +18,13 @@ import (
 // mintToken builds a valid RFC3161 timestamp response over headHex using a
 // throwaway self-signed TSA certificate — no live network needed.
 func mintToken(t *testing.T, headHex string) []byte {
-	return mintTokenOpts(t, headHex, true)
+	tok, _ := mintTokenOpts(t, headHex, true)
+	return tok
 }
 
-func mintTokenOpts(t *testing.T, headHex string, embedCert bool) []byte {
+// mintTokenOpts returns the timestamp response and the self-signed TSA cert it
+// was signed with (so tests can build a trusted-roots pool from it).
+func mintTokenOpts(t *testing.T, headHex string, embedCert bool) ([]byte, *x509.Certificate) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -59,7 +62,7 @@ func mintTokenOpts(t *testing.T, headHex string, embedCert bool) []byte {
 	if err != nil {
 		t.Fatalf("create response: %v", err)
 	}
-	return resp
+	return resp, cert
 }
 
 func TestVerifyToken(t *testing.T) {
@@ -67,7 +70,7 @@ func TestVerifyToken(t *testing.T) {
 	token := mintToken(t, head)
 
 	// Valid: the token verifies against the head it was minted over.
-	got, err := VerifyToken(token, head)
+	got, err := VerifyToken(token, head, nil)
 	if err != nil {
 		t.Fatalf("VerifyToken valid case: %v", err)
 	}
@@ -76,12 +79,12 @@ func TestVerifyToken(t *testing.T) {
 	}
 
 	// Tamper: a chain whose head changed no longer matches the anchor.
-	if _, err := VerifyToken(token, "deadbeef"); err == nil {
+	if _, err := VerifyToken(token, "deadbeef", nil); err == nil {
 		t.Fatal("expected verification to FAIL for a tampered/mismatched head")
 	}
 
 	// Garbage token must not parse.
-	if _, err := VerifyToken([]byte("not a timestamp response"), head); err == nil {
+	if _, err := VerifyToken([]byte("not a timestamp response"), head, nil); err == nil {
 		t.Fatal("expected parse failure for a garbage token")
 	}
 }
@@ -91,9 +94,36 @@ func TestVerifyToken(t *testing.T) {
 // would trust an unsigned/forged response.
 func TestVerifyTokenRejectsCertlessToken(t *testing.T) {
 	const head = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-	token := mintTokenOpts(t, head, false) // AddTSACertificate=false -> no embedded cert
-	if _, err := VerifyToken(token, head); err == nil {
+	token, _ := mintTokenOpts(t, head, false) // AddTSACertificate=false -> no embedded cert
+	if _, err := VerifyToken(token, head, nil); err == nil {
 		t.Fatal("expected verification to FAIL for a token with no signing certificate")
+	}
+}
+
+// TestVerifyTokenRootPinning verifies that, when trusted roots are supplied, a
+// token is accepted only if its cert chains to one of them.
+func TestVerifyTokenRootPinning(t *testing.T) {
+	const head = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	token, cert := mintTokenOpts(t, head, true)
+
+	// Trusted: roots containing the signing cert -> chain verifies.
+	trusted := x509.NewCertPool()
+	trusted.AddCert(cert)
+	if _, err := VerifyToken(token, head, trusted); err != nil {
+		t.Fatalf("expected trusted roots to verify: %v", err)
+	}
+
+	// Untrusted: a roots pool with a DIFFERENT cert -> rejected.
+	_, other := mintTokenOpts(t, head, true)
+	untrusted := x509.NewCertPool()
+	untrusted.AddCert(other)
+	if _, err := VerifyToken(token, head, untrusted); err == nil {
+		t.Fatal("expected verification to FAIL when the cert does not chain to a trusted root")
+	}
+
+	// nil roots -> signature-only, still passes (backward compatible).
+	if _, err := VerifyToken(token, head, nil); err != nil {
+		t.Fatalf("nil roots should verify signature-only: %v", err)
 	}
 }
 

@@ -63,7 +63,12 @@ func (s *Server) externalAnchorStatus(ctx context.Context, trailID uuid.UUID, cu
 		return &externalAnchorInfo{Error: "failed to load anchor"}
 	}
 	info := &externalAnchorInfo{Anchored: true, TSAURL: tsaURL, AnchoredAt: anchoredAt}
-	t, verr := tsa.VerifyToken(token, anchoredHead)
+	roots, rerr := tsa.LoadRoots(os.Getenv("FIDES_TSA_ROOTS"))
+	if rerr != nil {
+		info.Error = "TSA trusted roots misconfigured"
+		return info
+	}
+	t, verr := tsa.VerifyToken(token, anchoredHead, roots)
 	if verr != nil {
 		info.Error = verr.Error()
 		return info
@@ -126,7 +131,14 @@ func (s *Server) handleCreateTrailAnchor(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	token, err := tsa.RequestToken(r.Context(), tsaURL, head)
+	// When FIDES_TSA_ROOTS is configured, the fresh token must chain to a trusted
+	// TSA root, not merely be self-signed.
+	roots, rerr := tsa.LoadRoots(os.Getenv("FIDES_TSA_ROOTS"))
+	if rerr != nil {
+		internalError(w, rerr)
+		return
+	}
+	token, err := tsa.RequestToken(r.Context(), tsaURL, head, roots)
 	if err != nil {
 		log.Printf("tsa anchor failed for trail %s: %v", trailID, err)
 		http.Error(w, "timestamp authority error: "+err.Error(), http.StatusBadGateway)
