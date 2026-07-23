@@ -46,7 +46,7 @@ const SwaggerJSON = `{
   "openapi": "3.0.3",
   "info": {
     "title": "Fides Compliance & Provenance API",
-    "description": "Heart of the Fides supply chain integrity and compliance vault platform. Tracks build trails, artifacts, attestations, JQ policies, and LLM-assisted compliance checks.",
+    "description": "Fides supply-chain integrity & compliance API — build trails, artifacts, attestations, JQ policies, and LLM-assisted compliance. This is a curated subset of endpoints; the full CLI/API surface is documented in cli-reference.md.",
     "version": "1.0.0"
   },
   "servers": [
@@ -56,6 +56,66 @@ const SwaggerJSON = `{
     }
   ],
   "paths": {
+    "/impact": {
+      "get": {
+        "summary": "Artifacts + running environments affected by a CVE (VEX not_affected suppressed)",
+        "parameters": [{ "name": "cve", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/vex": {
+      "post": {
+        "summary": "Record a VEX statement (product may be '', an artifact sha256, or a component purl)",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/vulnerabilities/backfill": {
+      "post": {
+        "summary": "Backfill the CVE index from existing trivy/snyk/sarif attestations (admin)",
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/metrics/dora": {
+      "get": {
+        "summary": "DORA metrics: deployment frequency, change-failure rate, lead time, MTTR",
+        "parameters": [{ "name": "days", "in": "query", "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/trails/{id}/verify-chain": {
+      "get": {
+        "summary": "Verify a trail's tamper-evidence chain (+ external RFC3161 anchor status)",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/trails/{id}/anchor": {
+      "post": {
+        "summary": "Anchor a trail's chain head to an external RFC3161 timestamp authority (admin)",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }],
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
+    "/reports/framework/{framework}": {
+      "get": {
+        "summary": "Auditor-ready per-framework report (SOC2/ISO27001/.../SLSA/CRA); ?format=oscal for OSCAL",
+        "parameters": [{ "name": "framework", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/reports/cra-incidents": {
+      "get": {
+        "summary": "EU CRA 24h exploited-vulnerability / incident reporting set",
+        "parameters": [{ "name": "hours", "in": "query", "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Success" } }
+      }
+    },
+    "/controls/import-framework": {
+      "post": {
+        "summary": "Adopt a regulated framework's control catalog",
+        "responses": { "201": { "description": "Created" } }
+      }
+    },
     "/orgs": {
       "get": {
         "summary": "List all organizations (tenants)",
