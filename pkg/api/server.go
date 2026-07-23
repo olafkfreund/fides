@@ -235,6 +235,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/flags/changed", s.handleRecordFlagChange)
 	// Provider webhook adapters (Unleash/Flagsmith) -> flag.changed (#290).
 	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", s.handleFlagWebhook)
+	// Flag-change history for auditors + the /admin console (#291).
+	mux.HandleFunc("GET /api/v1/flags/history", s.handleFlagHistory)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
