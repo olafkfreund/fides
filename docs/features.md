@@ -135,9 +135,18 @@ fides logical-env state --id $LOGICAL       # unified running services across me
 
 ## 10. DORA delivery metrics
 
+All four canonical DORA metrics: deployment frequency, change-failure rate,
+**lead time for changes**, and **MTTR** (time-to-restore). Lead time is measured
+from the git commit timestamp to the deployment anchor when the commit time is
+recorded (true code-to-prod) — record it with `fides trail start --commit <sha>`
+(auto-derived from git) or `--committed-at <RFC3339>`; otherwise it falls back to
+the trail's creation time (pipeline lead time). MTTR is derived from
+non-compliant → next-compliant deployments per service.
+
 ```bash
 fides metrics --days 30
-# {"deployments":42,"deployment_frequency_per_day":1.4,"compliance_rate":0.97,"change_failure_rate":0.03,...}
+# {"deployments":42,"deployment_frequency_per_day":1.4,"change_failure_rate":0.03,
+#  "lead_time_hours":6.2,"mttr_hours":1.5,"mttr_restored_count":3,...}
 
 fides metrics deployment-frequency --weeks 12
 # [{"environment":"prod","week":"2026-W27","deployments":7}, ...]  (weekly, per environment)

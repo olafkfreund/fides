@@ -190,6 +190,7 @@ func handleTrail(config CLIConfig, args []string) {
 	branch := cmd.String("branch", "", "Git branch name")
 	msg := cmd.String("message", "", "Git commit message")
 	committer := cmd.String("committer", "", "Committer identity (email/username) from commit metadata — recorded as a trail tag and used by the segregation-of-duties attestation")
+	committedAt := cmd.String("committed-at", "", "Commit timestamp (RFC3339) for true code-to-prod lead time; auto-derived from git when --commit is set")
 
 	cmd.Parse(args[1:])
 
@@ -199,13 +200,24 @@ func handleTrail(config CLIConfig, args []string) {
 		os.Exit(1)
 	}
 
+	// Record the commit timestamp for true code-to-prod lead time. Prefer an
+	// explicit --committed-at; otherwise derive it from git when a commit is given
+	// (best-effort — silently skipped outside a repo or for an unknown commit).
+	committedAtVal := *committedAt
+	if committedAtVal == "" && *commit != "" {
+		if out, err := gitOutput("show", "-s", "--format=%cI", *commit); err == nil {
+			committedAtVal = strings.TrimSpace(out)
+		}
+	}
+
 	payload := map[string]interface{}{
-		"flow_id":        *flowID,
-		"name":           *trailName,
-		"git_repository": *repo,
-		"git_commit":     *commit,
-		"git_branch":     *branch,
-		"git_message":    *msg,
+		"flow_id":          *flowID,
+		"name":             *trailName,
+		"git_repository":   *repo,
+		"git_commit":       *commit,
+		"git_branch":       *branch,
+		"git_message":      *msg,
+		"git_committed_at": committedAtVal,
 	}
 	if *committer != "" {
 		payload["tags"] = map[string]string{"committer": *committer}

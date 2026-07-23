@@ -6,7 +6,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 ## Pipeline (build/CI)
 | Command | Purpose |
 |---|---|
-| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>]` | Begin a build trail (`--committer` records commit-metadata identity used by the segregation-of-duties attestation) |
+| `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>] [--committed-at <RFC3339>]` | Begin a build trail (`--committer` records commit-metadata identity for segregation-of-duties; `--committed-at`, or auto-derived from `--commit` via git, records the commit timestamp for true code-to-prod DORA lead time) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |

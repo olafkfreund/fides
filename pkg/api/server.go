@@ -700,13 +700,14 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 }
 
 type createTrailReq struct {
-	FlowID        string            `json:"flow_id"`
-	Name          string            `json:"name"`
-	GitRepository string            `json:"git_repository"`
-	GitCommit     string            `json:"git_commit"`
-	GitBranch     string            `json:"git_branch"`
-	GitMessage    string            `json:"git_message"`
-	Tags          map[string]string `json:"tags"`
+	FlowID         string            `json:"flow_id"`
+	Name           string            `json:"name"`
+	GitRepository  string            `json:"git_repository"`
+	GitCommit      string            `json:"git_commit"`
+	GitBranch      string            `json:"git_branch"`
+	GitMessage     string            `json:"git_message"`
+	GitCommittedAt string            `json:"git_committed_at"` // RFC3339 commit timestamp (optional)
+	Tags           map[string]string `json:"tags"`
 }
 
 func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
@@ -734,8 +735,17 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     time.Now(),
 	}
 
-	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, marshalJSONB(trail.Tags), trail.CreatedAt)
+	// Optional git commit timestamp (RFC3339) for true code-to-prod lead time;
+	// stored NULL if absent or unparseable (the metric falls back to created_at).
+	var committedAt *time.Time
+	if req.GitCommittedAt != "" {
+		if t, perr := time.Parse(time.RFC3339, req.GitCommittedAt); perr == nil {
+			committedAt = &t
+		}
+	}
+
+	query := `INSERT INTO trails (id, flow_id, name, git_repository, git_commit, git_branch, git_message, git_committed_at, tags, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`
+	_, err = s.q(r.Context()).ExecContext(r.Context(), query, trail.ID, trail.FlowID, trail.Name, trail.GitRepository, trail.GitCommit, trail.GitBranch, trail.GitMessage, committedAt, marshalJSONB(trail.Tags), trail.CreatedAt)
 	if err != nil {
 		// A duplicate trail name for the flow (UNIQUE(flow_id, name)) is a
 		// client error, not a server fault — return 409 rather than 500.
