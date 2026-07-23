@@ -373,11 +373,12 @@ fides anchor --trail $TRAIL --tsa https://freetsa.org/tsr
 fides verify-chain --trail $TRAIL   # response includes external_anchor{anchored,timestamp,head_matches}
 ```
 
-## 24. SIEM streaming (Splunk HEC)
+## 24. SIEM streaming (Splunk HEC / OTLP)
 
-Stream governance events to a SIEM via the Splunk HTTP Event Collector. Opt in on
-the server with `FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, and
-`FIDES_SIEM_HEC_TOKEN`.
+Stream governance events to a SIEM via the Splunk HTTP Event Collector
+(`FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, `FIDES_SIEM_HEC_TOKEN`), or as
+OpenTelemetry logs to any OTLP/HTTP collector (`FIDES_SIEM_OTLP_ENDPOINT`,
+optional `FIDES_SIEM_OTLP_TOKEN`).
 
 ## 25. Persistent sessions (horizontal scale)
 
