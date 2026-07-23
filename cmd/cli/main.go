@@ -283,6 +283,11 @@ func handleAttest(config CLIConfig, args []string) {
 		handleAttestFetch(config, args[1:])
 		return
 	}
+	// AI-authored-code provenance: `fides attest authorship --trail <id> [--commit <ref>] [--reviewer <name>]`.
+	if len(args) > 0 && args[0] == "authorship" {
+		handleAttestAuthorship(config, args[1:])
+		return
+	}
 
 	cmd := flag.NewFlagSet("attest", flag.ExitOnError)
 	trailID := cmd.String("trail", "", "Trail UUID")

@@ -22,6 +22,7 @@ import (
 	"fides/pkg/crypto"
 	"fides/pkg/db"
 	"fides/pkg/events"
+	"fides/pkg/evidence"
 	"fides/pkg/inbound"
 	"fides/pkg/mcp"
 	"fides/pkg/models"
@@ -1035,6 +1036,17 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		if !ok {
 			isCompliant = false
 			log.Printf("Compliance check failed for rules: %v", failedRules)
+		}
+	}
+
+	// code.authorship: an AI-authored change must carry a human reviewer to be
+	// compliant, so a control requiring code.authorship holds the change gate on
+	// unreviewed agent-generated code. Applied only when no registered JQ rule
+	// already marked it non-compliant (registered rules take precedence).
+	if req.TypeName == "code.authorship" && isCompliant {
+		var a evidence.Authorship
+		if err := json.Unmarshal([]byte(req.Payload), &a); err == nil {
+			isCompliant = a.Compliant()
 		}
 	}
 
