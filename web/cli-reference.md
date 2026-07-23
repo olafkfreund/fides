@@ -12,8 +12,10 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides attest junit\|snyk\|trivy --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation |
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab attestations for an artifact |
+| `fides attest authorship --trail <id> [--commit <ref>] [--reviewer <name>]` | Record a `code.authorship` attestation from git trailers (human vs AI-agent author); AI-authored changes without a human reviewer are non-compliant |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
-| `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken) |
+| `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken); also reports the external RFC3161 anchor status if the trail was anchored |
+| `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (independently provable tamper-evidence). TSA URL from `--tsa` or the server's `FIDES_TSA_URL` |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
 
 ## Runtime snapshots
@@ -38,7 +40,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 ## Controls, frameworks & change gate
 | Command | Purpose |
 |---|---|
-| `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX>` | Adopt a regulated framework's control catalog (idempotent) |
+| `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX\|SLSA\|CRA>` | Adopt a regulated framework's control catalog (idempotent) |
 | `fides control frameworks` | List the available framework catalogs |
 | `fides control coverage` | Show each control's evidence + environment coverage |
 | `fides control enforce --key <key> --env <id>` / `--all-controls --all-environments` | Enforce control(s) — create enabled environment policies requiring their evidence types, raising coverage (idempotent) |
@@ -69,7 +71,9 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides search artifacts [--sha --commit --name]` | Search artifacts |
 | `fides search attestations [--type --trail --compliant]` | Search attestations |
 | `fides search components [--purl --artifact --name]` | Search SBOM components — "which artifacts contain component X" |
-| `fides metrics [--days N]` | DORA delivery metrics |
+| `fides impact --cve <CVE-ID>` | Which artifacts + running environments are affected by a CVE, with `not_affected` VEX statements suppressed |
+| `fides vex --cve <CVE-ID> --status <not_affected\|affected\|fixed\|under_investigation> [--product <sha256>] [--justification <text>]` | Record a VEX statement; `not_affected` suppresses the CVE from `fides impact` |
+| `fides metrics [--days N]` | DORA delivery metrics (deployment frequency, change-failure rate, lead time, MTTR) |
 | `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |
 
 ## Integration & admin config

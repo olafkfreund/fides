@@ -351,3 +351,82 @@ deploy gate the same way as `change-gate`/`verify-chain`/`policy check`. The
 `cosign verify --bundle out.json` or `cosign download signature`; automatic
 registry lookup from a bare `--sha256` digest alone is tracked as follow-up
 work (see the TODO in `pkg/cosignverify`).
+
+## 21. Vulnerability impact index & VEX
+
+Turn point-in-time scan evidence into a live "which running environments ship
+CVE-X?" query. CVE IDs are extracted from ingested trivy/snyk/sarif attestations
+into a queryable index, joined through SBOM components and runtime snapshots to
+the environments actually running each affected artifact. VEX statements
+(`not_affected`) suppress a CVE so teams focus on *exploitable* exposure.
+
+```bash
+# Which artifacts + running environments are affected by a CVE?
+fides impact --cve CVE-2021-44228
+
+# Mark a CVE not-exploitable (org-wide, or scope to one artifact sha256)
+fides vex --cve CVE-2021-44228 --status not_affected \
+  --justification "vulnerable class never loaded"
+```
+
+## 22. AI-authored-code provenance (`code.authorship`)
+
+Record whether a change was authored by a human or an AI agent, parsed from the
+commit's git trailers (`Co-Authored-By:`, `*-Session:`, `Reviewed-by:`).
+AI-authored changes without a human reviewer are recorded non-compliant, so a
+control requiring `code.authorship` holds the change gate until an
+agent-generated change has been reviewed.
+
+```bash
+fides attest authorship --trail $TRAIL --commit HEAD --reviewer "olaf@acme.com"
+# then require it: fides control add --key AI-CODE-REVIEW --require code.authorship
+```
+
+## 23. EU Cyber Resilience Act (CRA) framework
+
+`CRA` is a built-in framework catalog mapping the Annex I essential requirements
+(vulnerability handling, machine-readable SBOM, secure development, artifact
+integrity, change management) to Fides evidence types. Adopt it and report on it
+like any other framework — including OSCAL export.
+
+```bash
+fides control import --framework CRA
+fides report --framework CRA               # add --format oscal for a machine-readable report
+```
+
+## 24. External RFC3161 timestamp anchoring
+
+The tamper-evidence chain is an internal hash chain. Anchor a trail's chain head
+to an external RFC3161 Time-Stamp Authority so an auditor can prove the head
+existed at a point in time — independently of the Fides database.
+
+```bash
+fides anchor --trail $TRAIL --tsa https://freetsa.org/tsr
+fides verify-chain --trail $TRAIL          # response now includes external_anchor{anchored,timestamp,head_matches}
+```
+
+The server rejects TSA URLs that resolve to private/loopback/metadata addresses,
+and a timestamp token is trusted only if it carries a verifiable signature.
+
+## 25. SIEM streaming (Splunk HEC)
+
+Stream every governance event (change / approval / gate / compliance) to a SIEM
+via the Splunk HTTP Event Collector, building the chain of evidence auditors
+expect. Opt in on the server:
+
+```bash
+FIDES_EVENTS_ENABLED=true \
+FIDES_SIEM_HEC_URL=https://splunk.example.com:8088/services/collector/event \
+FIDES_SIEM_HEC_TOKEN=<hec-token> \
+  fides-server
+```
+
+## 26. Persistent sessions (horizontal scale)
+
+Portal sessions are in-memory by default. For multi-replica / HA deployments,
+enable the Postgres-backed session store so sessions survive restarts and are
+shared across replicas (only a hash of each token is stored):
+
+```bash
+FIDES_DB_SESSIONS=true fides-server   # requires migration 0020 (applied on boot)
+```
