@@ -55,6 +55,15 @@ func TestCVEImpactIndexWithVEX(t *testing.T) {
 	mustExec(t, pool, `INSERT INTO snapshot_artifacts (id,snapshot_id,artifact_sha256,service_name,runtime_digest) VALUES ($1,$2,$3,'app','sha256:xyz')`, uuid.New(), snapID, sha)
 	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
 
+	// A DIFFERENT tenant runs the SAME (globally-keyed) artifact sha in its own
+	// environment. Org A's impact query must never surface Org B's environment.
+	orgB, envB, snapB := uuid.New(), uuid.New(), uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, orgB, "b-"+orgB.String()[:8])
+	mustExec(t, pool, `INSERT INTO environments (id,org_id,name,type) VALUES ($1,$2,'other-tenant-prod','k8s')`, envB, orgB)
+	mustExec(t, pool, `INSERT INTO environment_snapshots (id,environment_id) VALUES ($1,$2)`, snapB, envB)
+	mustExec(t, pool, `INSERT INTO snapshot_artifacts (id,snapshot_id,artifact_sha256,service_name,runtime_digest) VALUES ($1,$2,$3,'app','sha256:xyz')`, uuid.New(), snapB, sha)
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, orgB) })
+
 	s := &Server{DB: pool}
 	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"})
 

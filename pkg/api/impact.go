@@ -119,7 +119,12 @@ func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
 		 JOIN artifacts a ON a.sha256 = av.artifact_sha256
 		 LEFT JOIN snapshot_artifacts sa ON sa.artifact_sha256 = av.artifact_sha256 AND sa.stopped_at IS NULL
 		 LEFT JOIN environment_snapshots es ON es.id = sa.snapshot_id
-		 LEFT JOIN environments e ON e.id = es.environment_id
+		 -- Scope environments to the caller's org: artifacts.sha256 is a global PK,
+		 -- so a shared image digest can run in other tenants' environments. Without
+		 -- this, the impact query would leak foreign environment names/digests
+		 -- (there is no RLS backstop). Foreign rows resolve e to NULL and are
+		 -- dropped by the nil-env check below.
+		 LEFT JOIN environments e ON e.id = es.environment_id AND e.org_id = av.org_id
 		 WHERE av.org_id = $1 AND av.cve_id = $2
 		   AND NOT EXISTS (
 		     SELECT 1 FROM vex_statements vx
