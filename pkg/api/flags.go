@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -107,7 +108,22 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 // flow_id, or a find-or-created "feature-flags" flow for the org.
 func (s *Server) resolveFlagFlow(ctx context.Context, orgID uuid.UUID, flowID string) (uuid.UUID, error) {
 	if flowID != "" {
-		return uuid.Parse(flowID)
+		id, err := uuid.Parse(flowID)
+		if err != nil {
+			return uuid.UUID{}, err
+		}
+		// Verify the flow belongs to the caller's org — never trust a request-body
+		// id (there is no RLS backstop; this is the tenant boundary). Without this,
+		// a caller could inject a flag.changed attestation into another org's trail.
+		var owned bool
+		if err := s.q(ctx).QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM flows WHERE id = $1 AND org_id = $2)`, id, orgID).Scan(&owned); err != nil {
+			return uuid.UUID{}, err
+		}
+		if !owned {
+			return uuid.UUID{}, fmt.Errorf("flow not found")
+		}
+		return id, nil
 	}
 	var id uuid.UUID
 	err := s.q(ctx).QueryRowContext(ctx,

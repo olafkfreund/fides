@@ -99,3 +99,44 @@ func TestRecordFlagChange(t *testing.T) {
 		t.Fatalf("payload = %+v, want checkout-v2/prod/on/unleash", p)
 	}
 }
+
+// TestFlagChangeRejectsForeignFlow guards the tenant boundary: a caller must not
+// be able to record a flag change into another org's flow via a request-body
+// flow_id.
+func TestFlagChangeRejectsForeignFlow(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the flag-change cross-org test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+
+	orgA, orgB, flowB := uuid.New(), uuid.New(), uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2),($3,$4)`, orgA, "a-"+orgA.String()[:8], orgB, "b-"+orgB.String()[:8])
+	mustExec(t, pool, `INSERT INTO flows (id,org_id,name,description) VALUES ($1,$2,'victim','')`, flowB, orgB)
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id IN ($1,$2)`, orgA, orgB) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: orgA, Role: auth.RoleAdmin, Kind: "session"})
+
+	body, _ := json.Marshal(map[string]any{"flag_key": "evil", "flow_id": flowB.String(), "new_state": "on"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/flags/changed", strings.NewReader(string(body))).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	s.handleRecordFlagChange(rec, req)
+	if rec.Code == http.StatusCreated {
+		t.Fatalf("expected rejection when writing into another org's flow, got 201")
+	}
+	// Nothing should have been written under org B's flow.
+	var trails int
+	pool.QueryRow(`SELECT count(*) FROM trails WHERE flow_id=$1`, flowB).Scan(&trails)
+	if trails != 0 {
+		t.Fatalf("a trail was injected into org B's flow: %d", trails)
+	}
+}
