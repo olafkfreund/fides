@@ -441,6 +441,16 @@ FIDES_SIEM_HEC_TOKEN=<hec-token> \
   fides-server
 ```
 
+Or forward the same events as OpenTelemetry logs (OTLP/HTTP) to a collector — a
+vendor-neutral alternative that works with any OTLP-compatible SIEM:
+
+```bash
+FIDES_EVENTS_ENABLED=true \
+FIDES_SIEM_OTLP_ENDPOINT=http://otel-collector:4318/v1/logs \
+FIDES_SIEM_OTLP_TOKEN=<optional-bearer> \
+  fides-server
+```
+
 ## 26. Persistent sessions (horizontal scale)
 
 Portal sessions are in-memory by default. For multi-replica / HA deployments,
