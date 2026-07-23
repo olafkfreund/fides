@@ -128,6 +128,32 @@ func gitOutput(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// handleFlagChange records a feature-flag change as a flag.changed attestation
+// (POST /api/v1/flags/changed), making the change governed evidence.
+func handleFlagChange(config CLIConfig, args []string) {
+	if len(args) < 1 || args[0] != "record" {
+		fmt.Println("Usage: fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor <a>] [--source unleash|flagsmith|manual] [--flow <id>]")
+		os.Exit(1)
+	}
+	cmd := flag.NewFlagSet("flag record", flag.ExitOnError)
+	key := cmd.String("flag-key", "", "feature flag key (required)")
+	env := cmd.String("env", "", "environment (e.g. prod)")
+	from := cmd.String("from", "", "old state")
+	to := cmd.String("to", "", "new state")
+	actor := cmd.String("actor", "", "who made the change")
+	source := cmd.String("source", "manual", "unleash | flagsmith | manual")
+	flowID := cmd.String("flow", "", "flow UUID (optional; defaults to the org's feature-flags flow)")
+	cmd.Parse(args[1:])
+	if *key == "" {
+		fmt.Println("Error: --flag-key is required")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/flags/changed", map[string]any{
+		"flag_key": *key, "environment": *env, "old_state": *from, "new_state": *to,
+		"actor": *actor, "source": *source, "flow_id": *flowID,
+	}, "")
+}
+
 // handleImpact shows which artifacts and running environments are affected by a
 // CVE, with not_affected VEX statements suppressed (GET /api/v1/impact).
 func handleImpact(config CLIConfig, args []string) {

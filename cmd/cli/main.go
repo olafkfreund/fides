@@ -98,6 +98,8 @@ func main() {
 		handleControl(config, os.Args[2:])
 	case "flow":
 		handleFlow(config, os.Args[2:])
+	case "flag":
+		handleFlagChange(config, os.Args[2:])
 	case "model":
 		handleModel(config, os.Args[2:])
 	case "change-gate":
@@ -158,6 +160,7 @@ func printUsage() {
 	fmt.Println("  metrics          DORA-style delivery metrics (--days N)")
 	fmt.Println("  control          Governance controls + coverage (add|list|coverage|import|enforce|archive|unarchive)")
 	fmt.Println("  flow             Flows (list | trails --flow <id> | artifacts --flow <id>)")
+	fmt.Println("  flag             Record a feature-flag change as governed evidence (flag record --flag-key --env --from --to)")
 	fmt.Println("  model            EU AI Act model provenance (register|attest|inference-log|versions|timeline)")
 	fmt.Println("  change-gate      Evidence-backed approval verdict + risk score (--trail <id>; exits 2 on hold)")
 	fmt.Println("  policy           Policies (create|delete|generate | add|list|check --env <id>)")

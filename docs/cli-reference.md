@@ -32,6 +32,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 |---|---|
 | `fides allowlist add\|list\|check\|remove --env <id> [--sha <hex> --reason <r>]` | Per-environment artifact approvals (`check` exits 2 if not approved) |
 | `fides flow list \| trails --flow <id> \| artifacts --flow <id>` | List flows and their trails / artifacts |
+| `fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor --source unleash|flagsmith|manual --flow <id>]` | Record a feature-flag change as a `flag.changed` attestation on a per-change trail (governs flag flips like deploys) |
 | `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
