@@ -133,6 +133,27 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Periodically purge expired persistent sessions (no-op for the in-memory
+	// store, which evicts lazily). Stops with ctx.
+	if os.Getenv("FIDES_DB_SESSIONS") == "true" {
+		go func() {
+			ticker := time.NewTicker(1 * time.Hour)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n, err := server.Sessions.CleanupExpired(ctx); err != nil {
+						log.Printf("session cleanup failed: %v", err)
+					} else if n > 0 {
+						log.Printf("purged %d expired sessions", n)
+					}
+				}
+			}
+		}()
+	}
+
 	// Outbound event dispatcher (opt-in via FIDES_EVENTS_ENABLED). Sinks are
 	// registered by integration features (webhooks, ServiceNow, CI/CD gates);
 	// with none registered it idles, leaving events durably queued. Stops with ctx.
