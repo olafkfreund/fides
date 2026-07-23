@@ -49,6 +49,13 @@ type Server struct {
 
 func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Server {
 	telemetry.Instance.SetDB(db)
+	// Sessions are in-memory by default; opt into the persistent Postgres-backed
+	// store (survives restarts, shared across replicas) with FIDES_DB_SESSIONS=true
+	// once migration 0020 has been applied.
+	sessions := auth.NewSessionStore()
+	if os.Getenv("FIDES_DB_SESSIONS") == "true" {
+		sessions = auth.NewDBSessionStore(db)
+	}
 	return &Server{
 		DB:           db,
 		Storage:      store,
@@ -56,7 +63,7 @@ func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Serv
 		LLM:          llm,
 		Secrets:      vault.NewProvider(context.Background()),
 		States:       auth.NewStateStore(),
-		Sessions:     auth.NewSessionStore(),
+		Sessions:     sessions,
 		httpClient:   &http.Client{Timeout: 15 * time.Second},
 	}
 }
