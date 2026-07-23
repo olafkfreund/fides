@@ -87,6 +87,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/search/artifacts", s.handleSearchArtifacts)
 	mux.HandleFunc("GET /api/v1/search/attestations", s.handleSearchAttestations)
 	mux.HandleFunc("GET /api/v1/search/components", s.handleSearchComponents)
+	// CVE -> artifact -> environment impact index + VEX suppression (issue #294).
+	mux.HandleFunc("GET /api/v1/impact", s.handleImpact)
+	mux.HandleFunc("POST /api/v1/vex", s.handleRecordVEX)
 	mux.HandleFunc("GET /api/v1/attestations/{id}", s.handleGetAttestation)
 	mux.HandleFunc("GET /api/v1/environments/{id}/snapshots/diff", s.handleSnapshotDiff)
 
@@ -1093,6 +1096,16 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil && hasOrg {
 		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
 			log.Printf("failed to persist sbom components: %v", err)
+		}
+	}
+
+	// Vulnerability-scan attestations (trivy/snyk/sarif) carry CVE IDs only as
+	// findings[] strings; extract them into artifact_vulnerabilities so the
+	// CVE->environment impact query can answer "which environments ship CVE-X".
+	// Best-effort, like SBOM components above.
+	if vulnScanTypes[req.TypeName] && artifactSHA != nil && hasOrg {
+		if err := s.persistVulnerabilities(r.Context(), orgID, *artifactSHA, attestation.ID, req.TypeName, attestation.Payload); err != nil {
+			log.Printf("failed to persist vulnerabilities: %v", err)
 		}
 	}
 
