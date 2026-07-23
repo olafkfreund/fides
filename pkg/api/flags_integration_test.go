@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 
 	"fides/pkg/auth"
 	"fides/pkg/ledger"
@@ -97,6 +97,57 @@ func TestRecordFlagChange(t *testing.T) {
 	}
 	if p.FlagKey != "checkout-v2" || p.Environment != "prod" || p.NewState != "on" || p.Source != "unleash" {
 		t.Fatalf("payload = %+v, want checkout-v2/prod/on/unleash", p)
+	}
+}
+
+// TestFlagChangePolicyCompliance checks that JQ rules registered for the
+// flag.changed attestation type govern compliance (#288): a flag change that
+// violates the rule is recorded non-compliant (and so fails the change gate).
+func TestFlagChangePolicyCompliance(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the flag-change policy test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+
+	org := uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
+	// Governance policy: a flag change must name an actor to be compliant.
+	mustExec(t, pool, `INSERT INTO attestation_types (id,org_id,name,jq_rules) VALUES ($1,$2,$3,$4)`,
+		uuid.New(), org, FlagChangedAttestationType, pq.Array([]string{`.actor != ""`}))
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"})
+
+	rec := func(actor string) bool {
+		body, _ := json.Marshal(map[string]any{"flag_key": "k", "environment": "prod", "new_state": "on", "actor": actor})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/flags/changed", strings.NewReader(string(body))).WithContext(ctx)
+		w := httptest.NewRecorder()
+		s.handleRecordFlagChange(w, r)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("record: %d %s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		var compliant bool
+		pool.QueryRow(`SELECT is_compliant FROM attestations WHERE id=$1`, out["attestation_id"]).Scan(&compliant)
+		return compliant
+	}
+
+	if rec("") {
+		t.Fatal("flag change with no actor should be non-compliant (violates .actor != \"\")")
+	}
+	if !rec("olaf@acme.com") {
+		t.Fatal("flag change with an actor should be compliant")
 	}
 }
 

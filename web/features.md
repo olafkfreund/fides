@@ -411,3 +411,8 @@ fides flag record --flag-key checkout-v2 --env prod --from off --to on \
 Require it as a control (`fides control add --key FLAG-GOVERNANCE --require
 flag.changed`) to hold a deploy until flag changes are evidenced; flag tools feed
 this via their outbound webhooks.
+
+Register JQ rules on the `flag.changed` attestation type to govern changes — a
+violating change is recorded non-compliant and fails the change gate (e.g.
+`.actor != ""` requires every flip to name who made it, or
+`.environment != "prod" or .actor != ""` requires it only in prod).
