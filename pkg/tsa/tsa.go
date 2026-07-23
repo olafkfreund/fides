@@ -9,16 +9,36 @@ import (
 	"context"
 	"crypto"
 	"crypto/sha256"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/digitorus/timestamp"
 )
+
+// LoadRoots reads a PEM bundle of trusted TSA CA certificates into a pool, so
+// VerifyToken can require that a timestamp token chains to one of them. Returns
+// (nil, nil) when pemPath is empty (root pinning disabled — signature-only).
+func LoadRoots(pemPath string) (*x509.CertPool, error) {
+	if pemPath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(pemPath) // #nosec G304 -- operator-configured trusted-roots bundle path
+	if err != nil {
+		return nil, fmt.Errorf("read tsa roots: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("no certificates found in %s", pemPath)
+	}
+	return pool, nil
+}
 
 // imprint is the digest the TSA signs: sha256 of the chain-head hex string.
 // RequestToken and VerifyToken must compute it identically.
@@ -54,7 +74,7 @@ func ValidateURL(raw string) error {
 // RequestToken asks an RFC3161 TSA to timestamp the given chain-head hash and
 // returns the DER-encoded timestamp response. The response is validated before
 // it is returned, so a stored token is always verifiable.
-func RequestToken(ctx context.Context, tsaURL, headHex string) ([]byte, error) {
+func RequestToken(ctx context.Context, tsaURL, headHex string, roots *x509.CertPool) ([]byte, error) {
 	if err := ValidateURL(tsaURL); err != nil {
 		return nil, err
 	}
@@ -83,7 +103,7 @@ func RequestToken(ctx context.Context, tsaURL, headHex string) ([]byte, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("tsa returned status %d", resp.StatusCode)
 	}
-	if _, err := VerifyToken(body, headHex); err != nil {
+	if _, err := VerifyToken(body, headHex, roots); err != nil {
 		return nil, fmt.Errorf("tsa response did not verify: %w", err)
 	}
 	return body, nil
@@ -93,15 +113,19 @@ func RequestToken(ctx context.Context, tsaURL, headHex string) ([]byte, error) {
 // the embedded TSA certificate) and that it timestamps exactly headHex, and
 // returns the asserted time. A mismatching headHex — e.g. a tampered chain whose
 // head no longer equals what was anchored — fails here.
-func VerifyToken(token []byte, headHex string) (time.Time, error) {
+//
+// When roots is non-nil, the token's timestamping certificate must also chain to
+// one of those trusted roots (root pinning); a self-signed or otherwise
+// untrusted TSA cert is then rejected. With roots nil, only the token's own
+// signature is checked (a valid signature by any embedded cert passes).
+func VerifyToken(token []byte, headHex string, roots *x509.CertPool) (time.Time, error) {
 	ts, err := timestamp.ParseResponse(token)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("parse timestamp: %w", err)
 	}
 	// The underlying parser only verifies the CMS signature when the token embeds
 	// a certificate. Reject a token with none, or an unsigned/forged response
-	// would be trusted (its signature is never checked). Chaining that cert to a
-	// pinned trusted root is the remaining hardening (see package docs).
+	// would be trusted (its signature is never checked).
 	if len(ts.Certificates) == 0 {
 		return time.Time{}, fmt.Errorf("timestamp token has no signing certificate (signature unverifiable)")
 	}
@@ -112,5 +136,43 @@ func VerifyToken(token []byte, headHex string) (time.Time, error) {
 	if !bytes.Equal(ts.HashedMessage, want[:]) {
 		return time.Time{}, fmt.Errorf("timestamp imprint does not match chain head")
 	}
+	if roots != nil {
+		if err := verifyChain(ts, roots); err != nil {
+			return time.Time{}, err
+		}
+	}
 	return ts.Time, nil
+}
+
+// verifyChain checks that the token's timestamping certificate chains to a
+// trusted root with the timestamping extended key usage.
+func verifyChain(ts *timestamp.Timestamp, roots *x509.CertPool) error {
+	var leaf *x509.Certificate
+	inter := x509.NewCertPool()
+	for _, c := range ts.Certificates {
+		isTS := false
+		for _, eku := range c.ExtKeyUsage {
+			if eku == x509.ExtKeyUsageTimeStamping {
+				isTS = true
+				break
+			}
+		}
+		if isTS && leaf == nil {
+			leaf = c
+		} else {
+			inter.AddCert(c)
+		}
+	}
+	if leaf == nil {
+		return fmt.Errorf("no timestamping certificate in token")
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: inter,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		CurrentTime:   ts.Time,
+	}); err != nil {
+		return fmt.Errorf("tsa certificate chain not trusted: %w", err)
+	}
+	return nil
 }

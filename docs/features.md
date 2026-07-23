@@ -426,7 +426,10 @@ fides verify-chain --trail $TRAIL          # response now includes external_anch
 ```
 
 The server rejects TSA URLs that resolve to private/loopback/metadata addresses,
-and a timestamp token is trusted only if it carries a verifiable signature.
+and a timestamp token is trusted only if it carries a verifiable signature. Set
+`FIDES_TSA_ROOTS` to a PEM bundle of trusted TSA CA certificates to additionally
+require that the token's certificate chains to one of them (root pinning);
+without it, only the token's own signature is checked.
 
 ## 25. SIEM streaming (Splunk HEC)
 

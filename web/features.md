@@ -373,6 +373,9 @@ fides anchor --trail $TRAIL --tsa https://freetsa.org/tsr
 fides verify-chain --trail $TRAIL   # response includes external_anchor{anchored,timestamp,head_matches}
 ```
 
+Set `FIDES_TSA_ROOTS` (a PEM bundle of trusted TSA CA certs) to require the token
+to chain to a trusted root (root pinning); otherwise only its signature is checked.
+
 ## 24. SIEM streaming (Splunk HEC / OTLP)
 
 Stream governance events to a SIEM via the Splunk HTTP Event Collector
