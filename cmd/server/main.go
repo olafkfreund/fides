@@ -16,6 +16,7 @@ import (
 	"fides/pkg/events"
 	"fides/pkg/gitstatus"
 	"fides/pkg/servicenow"
+	"fides/pkg/siem"
 	"fides/pkg/slack"
 	"fides/pkg/storage"
 	"fides/pkg/vault"
@@ -143,6 +144,11 @@ func main() {
 			servicenow.NewITOMSink(servicenow.NewDBLoader(db, secrets)),
 			servicenow.NewCMDBSink(servicenow.NewDBLoader(db, secrets)),
 			slack.NewSink(slack.NewDBLoader(db, secrets)),
+		}
+		// Optional SIEM forwarding: stream every event to a Splunk HEC endpoint.
+		if hecURL := os.Getenv("FIDES_SIEM_HEC_URL"); hecURL != "" {
+			sinks = append(sinks, siem.NewSplunkSink(hecURL, os.Getenv("FIDES_SIEM_HEC_TOKEN")))
+			log.Printf("SIEM sink enabled (Splunk HEC)")
 		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
 		log.Printf("Event dispatcher enabled (webhook, git-commit-status, ServiceNow ITOM + CMDB sinks)")
