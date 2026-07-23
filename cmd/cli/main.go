@@ -82,6 +82,10 @@ func main() {
 		handleRemediation(config, os.Args[2:])
 	case "search":
 		handleSearch(config, os.Args[2:])
+	case "impact":
+		handleImpact(config, os.Args[2:])
+	case "vex":
+		handleVEX(config, os.Args[2:])
 	case "audit":
 		handleAudit(config, os.Args[2:])
 	case "policy":
@@ -161,6 +165,8 @@ func printUsage() {
 	fmt.Println("                   compliance-correlation (--days N): DORA vs risk score & control coverage")
 	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
 	fmt.Println("  search           Search artifacts/attestations/components (search artifacts|attestations|components ...)")
+	fmt.Println("  impact           Show artifacts + running environments affected by a CVE (--cve <CVE-ID>)")
+	fmt.Println("  vex              Record a VEX statement to suppress/annotate a CVE (--cve --status [--product --justification])")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println()

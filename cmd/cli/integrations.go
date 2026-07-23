@@ -128,6 +128,39 @@ func gitOutput(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// handleImpact shows which artifacts and running environments are affected by a
+// CVE, with not_affected VEX statements suppressed (GET /api/v1/impact).
+func handleImpact(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("impact", flag.ExitOnError)
+	cve := cmd.String("cve", "", "CVE identifier, e.g. CVE-2021-44228")
+	cmd.Parse(args)
+	if *cve == "" {
+		fmt.Println("Usage: fides impact --cve <CVE-ID>")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/impact?cve="+neturl.QueryEscape(*cve))
+	fail(err, "query impact")
+	fmt.Println(body)
+}
+
+// handleVEX records a VEX statement (POST /api/v1/vex). A not_affected statement
+// suppresses the CVE from the impact query so teams focus on exploitable risk.
+func handleVEX(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("vex", flag.ExitOnError)
+	cve := cmd.String("cve", "", "CVE identifier (required)")
+	status := cmd.String("status", "", "not_affected | affected | fixed | under_investigation (required)")
+	product := cmd.String("product", "", "artifact sha256 to scope to, or empty for org-wide")
+	justification := cmd.String("justification", "", "reason (optional)")
+	cmd.Parse(args)
+	if *cve == "" || *status == "" {
+		fmt.Println("Usage: fides vex --cve <CVE-ID> --status <not_affected|affected|fixed|under_investigation> [--product <sha256>] [--justification <text>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/vex", map[string]any{
+		"cve": *cve, "status": *status, "product": *product, "justification": *justification,
+	}, "")
+}
+
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
 	req, err := http.NewRequest("GET", config.ServerURL+path, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
@@ -459,7 +492,7 @@ func handleApprove(config CLIConfig, args []string) {
 // machine-readable format frameworks like FedRAMP 20x mandate).
 func handleReport(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("report", flag.ExitOnError)
-	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+	framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX, SLSA, CRA)")
 	format := cmd.String("format", "", "output format: default (human-readable JSON) or oscal")
 	cmd.Parse(args)
 	if *framework == "" {
@@ -549,7 +582,7 @@ func handleControl(config CLIConfig, args []string) {
 		fmt.Println(body)
 	case "import":
 		cmd := flag.NewFlagSet("control import", flag.ExitOnError)
-		framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX)")
+		framework := cmd.String("framework", "", "framework name (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX, SLSA, CRA)")
 		cmd.Parse(args[1:])
 		if *framework == "" {
 			fmt.Println("Error: --framework is required (see: fides control frameworks)")

@@ -318,3 +318,64 @@ ORG_NAME="Acme Corp" ./scripts/setup-db.sh
 ```
 
 Full walkthrough (RLS role, secrets, first login, upgrade path): [Setup & Seeding](setup.md).
+
+## 20. Vulnerability impact index & VEX
+
+Turn point-in-time scan evidence into a live "which running environments ship
+CVE-X?" query. CVE IDs from ingested trivy/snyk/sarif attestations are joined
+through SBOM components and runtime snapshots to the environments running each
+affected artifact. VEX `not_affected` statements suppress a CVE so teams focus on
+*exploitable* exposure.
+
+```bash
+fides impact --cve CVE-2021-44228
+fides vex --cve CVE-2021-44228 --status not_affected --justification "class never loaded"
+```
+
+## 21. AI-authored-code provenance (`code.authorship`)
+
+Record whether a change was authored by a human or an AI agent, parsed from git
+commit trailers. AI-authored changes without a human reviewer are non-compliant,
+so a control requiring `code.authorship` holds the change gate until review.
+
+```bash
+fides attest authorship --trail $TRAIL --commit HEAD --reviewer "olaf@acme.com"
+```
+
+## 22. EU Cyber Resilience Act (CRA) framework
+
+Built-in framework catalog mapping CRA Annex I essential requirements to Fides
+evidence types; adopt and report on it like any other framework (OSCAL export
+included).
+
+```bash
+fides control import --framework CRA
+fides report --framework CRA
+```
+
+## 23. External RFC3161 timestamp anchoring
+
+Anchor a trail's chain head to an external RFC3161 Time-Stamp Authority so an
+auditor can prove the head existed at a point in time, independently of the Fides
+database.
+
+```bash
+fides anchor --trail $TRAIL --tsa https://freetsa.org/tsr
+fides verify-chain --trail $TRAIL   # response includes external_anchor{anchored,timestamp,head_matches}
+```
+
+## 24. SIEM streaming (Splunk HEC)
+
+Stream governance events to a SIEM via the Splunk HTTP Event Collector. Opt in on
+the server with `FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, and
+`FIDES_SIEM_HEC_TOKEN`.
+
+## 25. Persistent sessions (horizontal scale)
+
+Enable the Postgres-backed session store for multi-replica / HA deployments so
+sessions survive restarts and are shared across replicas (only a token hash is
+stored):
+
+```bash
+FIDES_DB_SESSIONS=true fides-server   # requires migration 0020
+```
