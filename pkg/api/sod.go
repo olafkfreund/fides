@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"fides/pkg/events"
+	"fides/pkg/ledger"
 )
 
 // SegregationOfDutiesAttestationType is the well-known attestation type_name /
@@ -156,6 +158,24 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 	payload, err := json.Marshal(result)
 	if err != nil {
 		return sodAttestation{}, err
+	}
+
+	// Idempotent: only chain a new attestation when the verdict actually changed.
+	// The change-gate verdict is served on a GET and this also runs on every
+	// approval POST, so without this guard repeated reads/no-op approvals would
+	// append duplicate SoD attestations to the append-only ledger on every call
+	// (#282). Compare against the trail's most recent SoD attestation payload
+	// (canonicalized, since Postgres re-serializes JSONB).
+	var lastPayload string
+	err = s.q(ctx).QueryRowContext(ctx,
+		`SELECT payload::text FROM attestations
+		 WHERE trail_id = $1 AND type_name = $2
+		 ORDER BY created_at DESC, id DESC LIMIT 1`, trailID, SegregationOfDutiesAttestationType).Scan(&lastPayload)
+	if err != nil && err != sql.ErrNoRows {
+		return sodAttestation{}, err
+	}
+	if err == nil && ledger.CanonicalJSON(lastPayload) == ledger.CanonicalJSON(string(payload)) {
+		return result, nil // unchanged verdict — don't append a duplicate
 	}
 
 	contentHash, prevHash, err := s.attestationChain(ctx, trailID, SegregationOfDutiesAttestationType, SegregationOfDutiesAttestationType, string(payload), result.Compliant)
