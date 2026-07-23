@@ -438,16 +438,26 @@ func handleSnapshot(config CLIConfig, args []string) {
 	var reportedArtifacts []map[string]string
 
 	if runtimeType == "docker" {
-		// Mock query docker sockets/inspect to fetch container digests.
-		// In a real cli client we'd pull from: Docker CLI socket client.
+		// Query the local Docker daemon for running containers and resolve each
+		// container's image content digest via `docker inspect`.
 		fmt.Println("Ingesting running docker containers...")
-
-		// Demo mock container digest report
-		mockDigest := "b1d830f367e9154ec5a6dc8634c01d6706e23b20757d59850c90c01067e23b20"
-		reportedArtifacts = append(reportedArtifacts, map[string]string{
-			"sha256":       mockDigest,
-			"service_name": *containerName,
+		psArgs := []string{"ps", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}"}
+		if *containerName != "" {
+			psArgs = append(psArgs, "--filter", "name="+*containerName)
+		}
+		out, err := exec.Command("docker", psArgs...).Output() // #nosec G204 -- fixed subcommand; container name filter passed as an arg
+		if err != nil {
+			fmt.Printf("Failed to query docker containers: %v\n", err)
+			os.Exit(1)
+		}
+		reportedArtifacts = dockerSnapshotArtifacts(string(out), func(id string) (string, error) {
+			d, derr := exec.Command("docker", "inspect", "--format", "{{.Image}}", id).Output() // #nosec G204 -- id from docker ps output
+			return string(d), derr
 		})
+		if len(reportedArtifacts) == 0 {
+			fmt.Println("No running docker containers found")
+			os.Exit(0)
+		}
 	} else if runtimeType == "k8s" {
 		fmt.Println("Ingesting running Kubernetes namespaces dynamically...")
 		cmdK8s := exec.Command("kubectl", "get", "pods", "-A", "-o", "json")
@@ -595,6 +605,36 @@ func handleSnapshot(config CLIConfig, args []string) {
 	}
 
 	fmt.Printf("Snapshot submitted successfully: %s\n", respBody)
+}
+
+// dockerSnapshotArtifacts parses `docker ps` output (tab-separated "ID<TAB>Names",
+// one container per line) and resolves each container's image content digest via
+// the inspect callback (`docker inspect --format {{.Image}}` -> "sha256:..."),
+// producing snapshot artifacts. Containers whose digest can't be resolved are
+// skipped rather than failing the whole snapshot.
+func dockerSnapshotArtifacts(psOutput string, inspect func(id string) (string, error)) []map[string]string {
+	var arts []map[string]string
+	for _, line := range strings.Split(strings.TrimSpace(psOutput), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		id := strings.TrimSpace(parts[0])
+		name := ""
+		if len(parts) > 1 {
+			name = strings.TrimSpace(parts[1])
+		}
+		img, err := inspect(id)
+		if err != nil {
+			continue
+		}
+		digest := strings.TrimPrefix(strings.TrimSpace(img), "sha256:")
+		if digest == "" {
+			continue
+		}
+		arts = append(arts, map[string]string{"sha256": digest, "service_name": name})
+	}
+	return arts
 }
 
 // Helpers

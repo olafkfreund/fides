@@ -3,15 +3,18 @@
 // session store for the OAuth2 authorization-code flow, plus helpers to perform
 // the token exchange and userinfo lookup.
 //
-// The state and session stores are in-memory and therefore single-process. For
-// a horizontally scaled deployment, back them with a shared store (Redis/DB);
-// the interfaces here are intentionally small to make that swap easy.
+// The state store is in-memory (single-process). The session store is in-memory
+// by default but can be Postgres-backed (NewDBSessionStore) so sessions survive
+// restarts and are shared across replicas.
 package auth
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -121,14 +124,31 @@ type sessionEntry struct {
 	expiry    time.Time
 }
 
-// SessionStore maps opaque session tokens to Principals.
+// SessionStore maps opaque session tokens to Principals. With db == nil it is an
+// in-memory map (single-process); with a *sql.DB it persists sessions to the
+// `sessions` table so they survive restarts and are shared across replicas. Only
+// a sha256 hash of the token is stored, never the raw token.
 type SessionStore struct {
 	mu sync.Mutex
 	m  map[string]sessionEntry
+	db *sql.DB
 }
 
 func NewSessionStore() *SessionStore {
 	return &SessionStore{m: make(map[string]sessionEntry)}
+}
+
+// NewDBSessionStore returns a Postgres-backed session store (requires the
+// `sessions` table from migration 0020).
+func NewDBSessionStore(db *sql.DB) *SessionStore {
+	return &SessionStore{db: db}
+}
+
+// hashToken returns the sha256 hex of a session token; only the hash is stored,
+// so a database leak does not expose usable session tokens.
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 // Create stores p and returns a new opaque session token.
@@ -136,6 +156,16 @@ func (s *SessionStore) Create(p Principal, ttl time.Duration, now time.Time) (st
 	token, err := randomToken()
 	if err != nil {
 		return "", err
+	}
+	if s.db != nil {
+		_, err := s.db.Exec(
+			`INSERT INTO sessions (token_hash, org_id, user_id, email, role, kind, expiry)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			hashToken(token), p.OrgID, p.UserID, p.Email, p.Role, p.Kind, now.Add(ttl))
+		if err != nil {
+			return "", err
+		}
+		return token, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -146,6 +176,21 @@ func (s *SessionStore) Create(p Principal, ttl time.Duration, now time.Time) (st
 // Get returns the Principal for token if the session exists and is unexpired.
 // Expired sessions are evicted.
 func (s *SessionStore) Get(token string, now time.Time) (Principal, bool) {
+	if s.db != nil {
+		var p Principal
+		var expiry time.Time
+		err := s.db.QueryRow(
+			`SELECT org_id, user_id, email, role, kind, expiry FROM sessions WHERE token_hash = $1`,
+			hashToken(token)).Scan(&p.OrgID, &p.UserID, &p.Email, &p.Role, &p.Kind, &expiry)
+		if err != nil {
+			return Principal{}, false // sql.ErrNoRows or a real error: treat as unauthenticated
+		}
+		if now.After(expiry) {
+			s.Delete(token)
+			return Principal{}, false
+		}
+		return p, true
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry, ok := s.m[token]
@@ -161,6 +206,10 @@ func (s *SessionStore) Get(token string, now time.Time) (Principal, bool) {
 
 // Delete removes a session (logout).
 func (s *SessionStore) Delete(token string) {
+	if s.db != nil {
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token_hash = $1`, hashToken(token))
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.m, token)
