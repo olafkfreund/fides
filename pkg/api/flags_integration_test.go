@@ -151,6 +151,73 @@ func TestFlagChangePolicyCompliance(t *testing.T) {
 	}
 }
 
+// TestFlagChangeFourEyes checks that a flag change is attributed to its actor as
+// the trail committer, so segregation-of-duties applies (#289): the actor cannot
+// approve their own flip (collision), while a distinct approver + deployer make
+// it compliant.
+func TestFlagChangeFourEyes(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the flag-change SoD test")
+	}
+	pool, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer pool.Close()
+	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
+	if _, err := pool.Exec(string(schema)); err != nil {
+		t.Fatalf("schema: %v", err)
+	}
+	org := uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
+
+	s := &Server{DB: pool}
+	ctx := auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"})
+
+	rec := func(actor string) uuid.UUID {
+		body, _ := json.Marshal(map[string]any{"flag_key": "k", "environment": "prod", "new_state": "on", "actor": actor})
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/flags/changed", strings.NewReader(string(body))).WithContext(ctx)
+		w := httptest.NewRecorder()
+		s.handleRecordFlagChange(w, r)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("record: %d %s", w.Code, w.Body.String())
+		}
+		var out map[string]any
+		json.Unmarshal(w.Body.Bytes(), &out)
+		return uuid.MustParse(out["trail_id"].(string))
+	}
+	approve := func(trail uuid.UUID, who, role string) {
+		mustExec(t, pool, `INSERT INTO trail_approvals (org_id,trail_id,approved_by,approver_kind,role) VALUES ($1,$2,$3,'session',$4)`,
+			org, trail, who, role)
+	}
+
+	// The flag actor is recorded as the trail committer.
+	t1 := rec("olaf@acme.com")
+	var committer string
+	pool.QueryRow(`SELECT tags->>'committer' FROM trails WHERE id=$1`, t1).Scan(&committer)
+	if committer != "olaf@acme.com" {
+		t.Fatalf("trail committer = %q, want olaf@acme.com", committer)
+	}
+
+	// Self-approval is a collision — you can't sign off your own flag flip.
+	approve(t1, "olaf@acme.com", "approver")
+	sod := s.emitSegregationOfDutiesAttestation(ctx, org, t1)
+	if sod == nil || sod.Compliant {
+		t.Fatalf("self-approval should be non-compliant (collision): %+v", sod)
+	}
+
+	// A distinct approver + deployer satisfy segregation of duties.
+	t2 := rec("alice@acme.com")
+	approve(t2, "bob@acme.com", "approver")
+	approve(t2, "carol@acme.com", "deployer")
+	sod2 := s.emitSegregationOfDutiesAttestation(ctx, org, t2)
+	if sod2 == nil || !sod2.Compliant {
+		t.Fatalf("distinct approver+deployer should be compliant: %+v", sod2)
+	}
+}
+
 // TestFlagChangeRejectsForeignFlow guards the tenant boundary: a caller must not
 // be able to record a flag change into another org's flow via a request-body
 // flow_id.

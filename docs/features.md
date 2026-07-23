@@ -507,3 +507,18 @@ targeting}`):
 Register them via `POST /api/v1/attestation-types`
 (`{"name":"flag.changed","jq_rules":[".actor != \"\""]}`); with no rules
 registered, flag changes are compliant by default.
+
+**Four-eyes on high-risk flips (segregation of duties).** The `--actor` is
+recorded as the flag-change trail's committer, so the existing SoD evaluation
+applies: **you cannot approve your own flip** — an approval by the actor is a
+committer-is-also-approver collision (non-compliant). Require it and gate on it:
+
+```bash
+# hold high-risk flag changes until a distinct reviewer (and releaser) sign off
+fides control add --key FLAG-FOUR-EYES --require segregation-of-duties
+
+# a DIFFERENT person signs off on olaf's flip (self-approval is rejected)
+fides approve --trail $FLAG_TRAIL --role approver   --reason "reviewed"    # by someone != actor
+fides approve --trail $FLAG_TRAIL --role deployer   --reason "released"    # a third identity
+fides change-gate --trail $FLAG_TRAIL               # green only when committer != approver != deployer
+```
