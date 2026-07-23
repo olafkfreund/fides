@@ -73,6 +73,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides search attestations [--type --trail --compliant]` | Search attestations |
 | `fides search components [--purl --artifact --name]` | Search SBOM components — "which artifacts contain component X" |
 | `fides impact --cve <CVE-ID>` | Which artifacts + running environments are affected by a CVE, with `not_affected` VEX statements suppressed |
+| `fides impact --backfill` | Re-extract CVEs from existing trivy/snyk/sarif scan attestations into the impact index (admin; idempotent) — for scans recorded before CVE extraction shipped |
 | `fides vex --cve <CVE-ID> --status <not_affected\|affected\|fixed\|under_investigation> [--product <sha256>] [--justification <text>]` | Record a VEX statement; `not_affected` suppresses the CVE from `fides impact` |
 | `fides metrics [--days N]` | DORA delivery metrics (deployment frequency, change-failure rate, lead time, MTTR) |
 | `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |

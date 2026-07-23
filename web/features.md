@@ -336,6 +336,7 @@ affected artifact. VEX `not_affected` statements suppress a CVE so teams focus o
 ```bash
 fides impact --cve CVE-2021-44228
 fides vex --cve CVE-2021-44228 --status not_affected --justification "class never loaded"
+fides impact --backfill   # index scans recorded before CVE extraction shipped (admin, idempotent)
 ```
 
 ## 21. AI-authored-code provenance (`code.authorship`)
