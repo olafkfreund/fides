@@ -18,6 +18,10 @@ import (
 // mintToken builds a valid RFC3161 timestamp response over headHex using a
 // throwaway self-signed TSA certificate — no live network needed.
 func mintToken(t *testing.T, headHex string) []byte {
+	return mintTokenOpts(t, headHex, true)
+}
+
+func mintTokenOpts(t *testing.T, headHex string, embedCert bool) []byte {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -49,7 +53,7 @@ func mintToken(t *testing.T, headHex string) []byte {
 		SerialNumber:      big.NewInt(42),
 		Policy:            asn1.ObjectIdentifier{1, 2, 3, 4, 1}, // required TSTInfo policy OID
 		Certificates:      []*x509.Certificate{cert},
-		AddTSACertificate: true,
+		AddTSACertificate: embedCert,
 	}
 	resp, err := ts.CreateResponse(cert, key)
 	if err != nil {
@@ -79,5 +83,31 @@ func TestVerifyToken(t *testing.T) {
 	// Garbage token must not parse.
 	if _, err := VerifyToken([]byte("not a timestamp response"), head); err == nil {
 		t.Fatal("expected parse failure for a garbage token")
+	}
+}
+
+// A token that embeds no signing certificate must be rejected: the underlying
+// parser skips signature verification when no cert is present, so accepting it
+// would trust an unsigned/forged response.
+func TestVerifyTokenRejectsCertlessToken(t *testing.T) {
+	const head = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	token := mintTokenOpts(t, head, false) // AddTSACertificate=false -> no embedded cert
+	if _, err := VerifyToken(token, head); err == nil {
+		t.Fatal("expected verification to FAIL for a token with no signing certificate")
+	}
+}
+
+func TestValidateURL(t *testing.T) {
+	bad := []string{
+		"ftp://tsa.example.com",          // wrong scheme
+		"http://127.0.0.1/tsa",           // loopback
+		"https://169.254.169.254/latest", // cloud metadata (link-local)
+		"http://localhost:318",           // loopback by name
+		"not a url with spaces",
+	}
+	for _, u := range bad {
+		if err := ValidateURL(u); err == nil {
+			t.Errorf("ValidateURL(%q) = nil, want error", u)
+		}
 	}
 }

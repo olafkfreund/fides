@@ -102,6 +102,20 @@ func (s *Server) handleCreateTrailAnchor(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Verify the trail belongs to the caller's org before computing or returning
+	// its chain head (there is no RLS backstop; org-scoping is explicit).
+	var owned bool
+	if err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM trails tr JOIN flows f ON f.id = tr.flow_id
+		 WHERE tr.id = $1 AND f.org_id = $2)`, trailID, p.OrgID).Scan(&owned); err != nil {
+		internalError(w, err)
+		return
+	}
+	if !owned {
+		http.Error(w, "trail not found", http.StatusNotFound)
+		return
+	}
+
 	head, err := s.trailChainHead(r.Context(), trailID)
 	if err != nil {
 		internalError(w, err)
