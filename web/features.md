@@ -381,3 +381,6 @@ stored):
 ```bash
 FIDES_DB_SESSIONS=true fides-server   # requires migration 0020
 ```
+
+Expired session rows are purged automatically by an hourly background sweep, in
+addition to lazy eviction on lookup.

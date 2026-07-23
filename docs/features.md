@@ -435,3 +435,6 @@ shared across replicas (only a hash of each token is stored):
 ```bash
 FIDES_DB_SESSIONS=true fides-server   # requires migration 0020 (applied on boot)
 ```
+
+Expired session rows are purged automatically by a background sweep (hourly) in
+addition to being evicted lazily on lookup.

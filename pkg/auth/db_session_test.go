@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -9,6 +10,62 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 )
+
+// sessionsDDL is the minimal table the DB-backed session store needs; inlined so
+// these tests are self-contained (no migration-path coupling).
+const sessionsDDL = `CREATE TABLE IF NOT EXISTS sessions (
+	token_hash VARCHAR(64) PRIMARY KEY, org_id UUID NOT NULL, user_id UUID,
+	email VARCHAR(255) NOT NULL DEFAULT '', role VARCHAR(50) NOT NULL DEFAULT '',
+	kind VARCHAR(20) NOT NULL DEFAULT 'session', expiry TIMESTAMPTZ NOT NULL,
+	created_at TIMESTAMPTZ DEFAULT now())`
+
+// resetSessions gives the test a clean sessions table. It drops first so the
+// test is independent of any rows a prior test left behind — the post-test DROP
+// can't be relied on because `defer db.Close()` runs before t.Cleanup, closing
+// the pool the cleanup would use.
+func resetSessions(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`DROP TABLE IF EXISTS sessions`); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := db.Exec(sessionsDDL); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+}
+
+// TestDBSessionCleanupExpired verifies CleanupExpired removes only expired rows.
+func TestDBSessionCleanupExpired(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN to run the DB session cleanup test")
+	}
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+	resetSessions(t, db)
+
+	store := NewDBSessionStore(db)
+	now := time.Now()
+	p := Principal{OrgID: uuid.New(), Role: RoleViewer, Kind: "session"}
+	expiredTok, _ := store.Create(p, -time.Hour, now) // already expired
+	activeTok, _ := store.Create(p, time.Hour, now)   // still valid
+
+	n, err := store.CleanupExpired(context.Background())
+	if err != nil {
+		t.Fatalf("CleanupExpired: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("CleanupExpired removed %d, want 1", n)
+	}
+	if _, ok := store.Get(expiredTok, now); ok {
+		t.Fatal("expired session should be gone")
+	}
+	if _, ok := store.Get(activeTok, now); !ok {
+		t.Fatal("active session should survive cleanup")
+	}
+}
 
 // TestDBSessionStore exercises the Postgres-backed session store: create, look
 // up, expiry eviction, delete, and that only a hash of the token is stored.
@@ -22,14 +79,7 @@ func TestDBSessionStore(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS sessions (
-		token_hash VARCHAR(64) PRIMARY KEY, org_id UUID NOT NULL, user_id UUID,
-		email VARCHAR(255) NOT NULL DEFAULT '', role VARCHAR(50) NOT NULL DEFAULT '',
-		kind VARCHAR(20) NOT NULL DEFAULT 'session', expiry TIMESTAMPTZ NOT NULL,
-		created_at TIMESTAMPTZ DEFAULT now())`); err != nil {
-		t.Fatalf("create table: %v", err)
-	}
-	t.Cleanup(func() { db.Exec(`DROP TABLE sessions`) })
+	resetSessions(t, db)
 
 	store := NewDBSessionStore(db)
 	now := time.Now()

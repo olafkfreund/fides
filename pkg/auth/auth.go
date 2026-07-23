@@ -215,6 +215,22 @@ func (s *SessionStore) Delete(token string) {
 	delete(s.m, token)
 }
 
+// CleanupExpired purges expired rows from the Postgres-backed store and returns
+// how many were removed. It is a no-op (0) for the in-memory store, which evicts
+// lazily on Get. Intended to be called periodically so expired rows don't
+// accumulate between logins.
+func (s *SessionStore) CleanupExpired(ctx context.Context) (int64, error) {
+	if s.db == nil {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expiry < now()`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ----- OAuth2 authorization-code helpers -----
 
 // OAuthConfig holds the per-tenant provider settings needed to complete a flow.
