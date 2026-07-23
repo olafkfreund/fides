@@ -8,6 +8,7 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -79,6 +80,52 @@ func handleAttestFetch(config CLIConfig, args []string) {
 	post(config, "/api/v1/attest/fetch", map[string]any{
 		"trail_id": *trailID, "artifact_sha256": *artSHA, "provider": *provider, "repo": *repo,
 	}, "")
+}
+
+// handleAttestAuthorship records a code.authorship attestation by parsing the
+// git commit trailers (Co-Authored-By, *-Session, Reviewed-by) to determine
+// whether a change was authored by a human or an AI agent, and by whom it was
+// reviewed. AI-authored changes without a human reviewer are recorded
+// non-compliant server-side, so a control requiring code.authorship holds the
+// change gate until an agent-generated change has human review.
+func handleAttestAuthorship(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("attest authorship", flag.ExitOnError)
+	trailID := cmd.String("trail", "", "Trail UUID")
+	commit := cmd.String("commit", "HEAD", "git commit to inspect")
+	reviewer := cmd.String("reviewer", "", "human reviewer (overrides a Reviewed-by trailer)")
+	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (optional)")
+	name := cmd.String("name", "code-authorship", "Attestation name")
+	cmd.Parse(args)
+
+	if *trailID == "" {
+		fmt.Println("Error: --trail is required\nUsage: fides attest authorship --trail <id> [--commit <ref>] [--reviewer <name>]")
+		os.Exit(1)
+	}
+	msg, err := gitOutput("log", "-1", "--format=%B", *commit)
+	fail(err, "read git commit message")
+	sha, err := gitOutput("rev-parse", *commit)
+	fail(err, "resolve git commit")
+
+	a := evidence.ParseAuthorship(msg)
+	a.Commit = strings.TrimSpace(sha)
+	if *reviewer != "" {
+		a.HumanReviewer = *reviewer
+	}
+	payload, _ := json.Marshal(a)
+
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, "code.authorship", string(payload), nil, false)
+	fail(err, "record attestation")
+	fmt.Printf("Recorded code.authorship attestation (author_kind=%s, reviewer=%q, compliant=%v): %s\n",
+		a.AuthorKind, a.HumanReviewer, a.Compliant(), respBody)
+}
+
+// gitOutput runs a git subcommand and returns its trimmed stdout.
+func gitOutput(args ...string) (string, error) {
+	out, err := exec.Command("git", args...).Output() // #nosec G204 -- fixed subcommand; ref is passed as an arg, never a shell string
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
 
 // getRequest performs an authenticated GET and returns the response body.
