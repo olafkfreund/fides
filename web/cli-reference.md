@@ -46,6 +46,7 @@ key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 | `fides control enforce --key <key> --env <id>` / `--all-controls --all-environments` | Enforce control(s) — create enabled environment policies requiring their evidence types, raising coverage (idempotent) |
 | `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
 | `fides report --framework <name> [--format oscal]` | Auditor-ready per-framework report (control-by-control evidence + coverage); `--format oscal` emits a NIST OSCAL 1.x assessment-results JSON document instead (e.g. for FedRAMP 20x submission) |
+| `fides report --cra-incidents [--hours N]` | EU CRA 24h reporting set: exploitable vulnerabilities (VEX `not_affected` excluded) discovered in the window, with affected artifacts + running environments |
 | `fides change-gate --trail <id>` | Evidence-backed approve/hold verdict + 0–100 risk score (exits 2 on HOLD) |
 | `fides approve --trail <id> [--reason <r>] [--role approver\|deployer]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans); refreshes the trail's `segregation-of-duties` attestation proving committer != approver != deployer |
 

@@ -351,6 +351,8 @@ included).
 ```bash
 fides control import --framework CRA
 fides report --framework CRA
+# CRA Art. 14 — 24-hour exploited-vulnerability / incident reporting set:
+fides report --cra-incidents --hours 24
 ```
 
 ## 23. External RFC3161 timestamp anchoring
