@@ -33,9 +33,11 @@ func TestCRAIncidentReport(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	mig, _ := os.ReadFile(filepath.Join("..", "db", "migrations", "0018_vulnerabilities_vex.sql"))
-	if _, err := pool.Exec(string(mig)); err != nil {
-		t.Fatalf("migration 0018: %v", err)
+	for _, m := range []string{"0012_sbom_components.sql", "0018_vulnerabilities_vex.sql"} {
+		mig, _ := os.ReadFile(filepath.Join("..", "db", "migrations", m))
+		if _, err := pool.Exec(string(mig)); err != nil {
+			t.Fatalf("migration %s: %v", m, err)
+		}
 	}
 
 	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
