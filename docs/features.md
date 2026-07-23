@@ -486,3 +486,24 @@ require it as a control so a deploy is held until flag changes are evidenced
 four-eyes sign-off for high-risk flips via the segregation-of-duties flow, and
 export the history in the trail audit package. Flag tools feed this endpoint via
 their outbound webhooks (`--source unleash|flagsmith`).
+
+**Policy on flag changes (JQ).** Register JQ rules on the `flag.changed`
+attestation type and a flag change that violates them is recorded
+**non-compliant** — failing the change gate on its trail. Example templates
+(the payload is `{flag_key, environment, old_state, new_state, actor, source,
+targeting}`):
+
+```jsonc
+// every flag change must name who made it (accountability)
+".actor != \"\""
+
+// production flips must name an actor; non-prod is unrestricted
+".environment != \"prod\" or .actor != \"\""
+
+// a rollout targeting > 50% of users must be approved out-of-band
+"(.targeting.percentage // 0) <= 50 or (.actor != \"\")"
+```
+
+Register them via `POST /api/v1/attestation-types`
+(`{"name":"flag.changed","jq_rules":[".actor != \"\""]}`); with no rules
+registered, flag changes are compliant by default.

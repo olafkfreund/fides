@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 
 	"fides/pkg/events"
 )
@@ -80,7 +82,18 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 		"old_state": req.OldState, "new_state": req.NewState,
 		"actor": req.Actor, "source": req.Source, "targeting": req.Targeting,
 	})
-	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), true)
+
+	// Compliance is policy-driven: any JQ rules registered for the flag.changed
+	// attestation type govern the change (e.g. "prod flips must name an actor" or
+	// "a >50% rollout must be approved"). A non-compliant flag.changed then fails
+	// the change gate on this trail (#288). No rules registered => compliant.
+	compliant, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, FlagChangedAttestationType, string(payload))
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
+	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -88,8 +101,8 @@ func (s *Server) handleRecordFlagChange(w http.ResponseWriter, r *http.Request) 
 	attID := uuid.New()
 	if _, err := s.q(r.Context()).ExecContext(r.Context(),
 		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-		 VALUES ($1,$2,$3,$4,$5,true,$6,$7, now())`,
-		attID, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), contentHash, prevHash); err != nil {
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())`,
+		attID, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant, contentHash, prevHash); err != nil {
 		internalError(w, err)
 		return
 	}
@@ -132,4 +145,30 @@ func (s *Server) resolveFlagFlow(ctx context.Context, orgID uuid.UUID, flowID st
 		 ON CONFLICT (org_id, name) DO UPDATE SET name = EXCLUDED.name
 		 RETURNING id`, uuid.New(), orgID, flagFlowName).Scan(&id)
 	return id, err
+}
+
+// evaluateAttestationTypeCompliance evaluates the JQ rules (if any) registered
+// for an attestation type against a payload, returning whether it is compliant.
+// A type with no registered rules defaults to compliant. This mirrors the
+// compliance evaluation the generic attestation-record path performs, so
+// flag.changed (and any other well-known type recorded outside that path) can be
+// governed by per-org JQ policy rules.
+func (s *Server) evaluateAttestationTypeCompliance(ctx context.Context, orgID uuid.UUID, typeName, payload string) (bool, error) {
+	var rules []string
+	err := s.q(ctx).QueryRowContext(ctx,
+		`SELECT jq_rules FROM attestation_types WHERE org_id = $1 AND name = $2 LIMIT 1`, orgID, typeName).Scan(pq.Array(&rules))
+	if err == sql.ErrNoRows {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(rules) == 0 {
+		return true, nil
+	}
+	ok, _, err := s.PolicyEngine.EvaluateAttestation(payload, rules)
+	if err != nil {
+		return false, err
+	}
+	return ok, nil
 }
