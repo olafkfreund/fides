@@ -1171,6 +1171,20 @@ func handleUser(config CLIConfig, args []string) {
 }
 
 // post is a small helper: POST json, print success message (or the body), exit on error.
+// handleAnchor timestamps a trail's chain head with an external RFC3161 TSA, so
+// verify-chain can later prove the head existed independently of the Fides DB.
+func handleAnchor(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("anchor", flag.ExitOnError)
+	trailID := cmd.String("trail", "", "trail UUID")
+	tsaURL := cmd.String("tsa", "", "RFC3161 TSA URL (defaults to server's FIDES_TSA_URL)")
+	cmd.Parse(args)
+	if *trailID == "" {
+		fmt.Println("Usage: fides anchor --trail <trail_id> [--tsa <url>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/trails/"+*trailID+"/anchor", map[string]any{"tsa_url": *tsaURL}, "")
+}
+
 func post(config CLIConfig, path string, payload any, successMsg string) {
 	body, err := postRequest(config, path, payload)
 	fail(err, "request to "+path)
