@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"fides/pkg/crypto"
+	"fides/pkg/exitcode"
 )
 
 // httpClient is shared across CLI requests and enforces an overall timeout so a
@@ -432,10 +433,20 @@ func handleAssert(config CLIConfig, args []string) {
 		for _, v := range violations {
 			fmt.Printf("  - %v\n", v)
 		}
-		os.Exit(1) // Exits non-zero to fail the CI/CD step
+		os.Exit(assertExit(false)) // Violation (2) — a completed gate that said no.
 	}
 
 	fmt.Printf("COMPLIANCE PASS: Artifact %s is compliant with policies\n", *sha)
+}
+
+// assertExit maps a compliance verdict to a process exit code: compliant -> OK,
+// non-compliant -> Violation (2). This aligns `assert` with verify-image /
+// change-gate so CI gates on exit 2 the same way for every gate command.
+func assertExit(compliant bool) int {
+	if compliant {
+		return exitcode.OK
+	}
+	return exitcode.Violation
 }
 
 // 5. Environment Snapshotting
