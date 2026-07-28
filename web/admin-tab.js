@@ -14,6 +14,7 @@
 
   // Tabs to inject (order = display order after the native tabs).
   var TABS = [
+    { id: "fides-console-tab", label: "Dashboard", src: "/console" },
     { id: "fides-servicenow-tab", label: "ServiceNow", src: "/servicenow" },
     { id: "fides-integrations-tab", label: "Integrations", src: "/admin" }
   ];
