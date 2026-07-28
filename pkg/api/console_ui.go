@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type consoleRecentCheck struct {
@@ -35,7 +39,68 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	sum, err := s.buildConsoleSummary(r.Context(), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(sum)
+}
+
+// handleConsoleStream pushes the console summary as Server-Sent Events every few
+// seconds so the dashboard updates without repeated polling. Clients that can't
+// stream fall back to GET /api/v1/console/summary.
+func (s *Server) handleConsoleStream(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Connection", "keep-alive")
+	h.Set("X-Accel-Buffering", "no") // don't let the ingress/proxy buffer the stream
 	ctx := r.Context()
+
+	send := func() bool {
+		sum, err := s.buildConsoleSummary(ctx, orgID)
+		if err != nil {
+			return true // transient DB error — keep the stream open, try next tick
+		}
+		b, _ := json.Marshal(sum)
+		if _, werr := fmt.Fprintf(w, "data: %s\n\n", b); werr != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+	if !send() {
+		return
+	}
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !send() {
+				return
+			}
+		}
+	}
+}
+
+// buildConsoleSummary runs the summary queries for one org (shared by the JSON
+// endpoint and the SSE stream).
+func (s *Server) buildConsoleSummary(ctx context.Context, orgID uuid.UUID) (consoleSummary, error) {
 	q := s.q(ctx)
 	var sum consoleSummary
 
@@ -43,8 +108,7 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		`SELECT COUNT(*) FROM artifacts a
 		 JOIN trails t ON t.id = a.trail_id JOIN flows f ON f.id = t.flow_id
 		 WHERE f.org_id = $1`, orgID).Scan(&sum.Artifacts); err != nil {
-		internalError(w, err)
-		return
+		return sum, err
 	}
 
 	// Total, compliant, and last-24h check counts in one pass.
@@ -55,8 +119,7 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		 FROM attestations at
 		 JOIN trails tr ON tr.id = at.trail_id JOIN flows f ON f.id = tr.flow_id
 		 WHERE f.org_id = $1`, orgID).Scan(&sum.ChecksTotal, &sum.Compliant, &sum.ChecksLast24h); err != nil {
-		internalError(w, err)
-		return
+		return sum, err
 	}
 
 	// AI evaluations (LLM compliance assessments), scoped via attestation->trail->flow.
@@ -65,8 +128,7 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		 JOIN attestations att ON la.attestation_id = att.id
 		 JOIN trails tr ON att.trail_id = tr.id JOIN flows f ON tr.flow_id = f.id
 		 WHERE f.org_id = $1`, orgID).Scan(&sum.AIEvaluations); err != nil {
-		internalError(w, err)
-		return
+		return sum, err
 	}
 
 	sum.NonCompliant = sum.ChecksTotal - sum.Compliant
@@ -79,8 +141,7 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		 WHERE f.org_id = $1
 		 ORDER BY at.created_at DESC LIMIT 25`, orgID)
 	if err != nil {
-		internalError(w, err)
-		return
+		return sum, err
 	}
 	defer rows.Close()
 	sum.Recent = []consoleRecentCheck{}
@@ -88,16 +149,14 @@ func (s *Server) handleConsoleSummary(w http.ResponseWriter, r *http.Request) {
 		var c consoleRecentCheck
 		var created time.Time
 		if err := rows.Scan(&c.Name, &c.Kind, &c.Compliant, &created); err != nil {
-			internalError(w, err)
-			return
+			return sum, err
 		}
 		c.At = created.UTC().Format(time.RFC3339)
 		sum.Recent = append(sum.Recent, c)
 	}
 
 	sum.ServerTime = time.Now().UTC().Format(time.RFC3339)
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(sum)
+	return sum, rows.Err()
 }
 
 // compliancePct is the integer percentage of compliant checks over total,
