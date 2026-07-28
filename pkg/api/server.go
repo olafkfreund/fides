@@ -212,6 +212,12 @@ func (s *Server) Routes() http.Handler {
 	// git/webhooks, environments policies/allow-lists, metrics).
 	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
 
+	// Redesigned assurance console — a live dashboard (posture, coverage,
+	// environments, and the real-time check stream). Same public-shell/
+	// session-cookie pattern; polls /api/v1/console/summary.
+	mux.HandleFunc("GET /console", s.handleConsolePage)
+	mux.HandleFunc("GET /api/v1/console/summary", s.handleConsoleSummary)
+
 	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
 	// approvals, change-gate verdict, tamper-evidence chain status), built on
 	// existing read APIs. Same public-shell/session-cookie pattern as above.
