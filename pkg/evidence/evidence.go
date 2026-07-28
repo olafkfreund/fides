@@ -367,10 +367,35 @@ func ParseSBOM(data []byte) (Result, error) {
 		return components[i].Version < components[j].Version
 	})
 
+	// Summarize licenses so a policy rule can gate on them without walking the
+	// component list, e.g. allow-list:
+	//   (.summary.licenses - ["MIT","Apache-2.0","BSD-3-Clause"]) | length == 0
+	// or "no unlicensed components": .summary.unlicensed == 0
+	licSet := map[string]struct{}{}
+	unlicensed := 0
+	for _, c := range components {
+		if len(c.Licenses) == 0 {
+			unlicensed++
+			continue
+		}
+		for _, l := range c.Licenses {
+			licSet[l] = struct{}{}
+		}
+	}
+	licenses := make([]string, 0, len(licSet))
+	for l := range licSet {
+		licenses = append(licenses, l)
+	}
+	sort.Strings(licenses)
+
 	return Result{
-		Format:     format,
-		Compliant:  true,
-		Summary:    map[string]any{"components": len(components)},
+		Format:    format,
+		Compliant: true,
+		Summary: map[string]any{
+			"components": len(components),
+			"licenses":   licenses,
+			"unlicensed": unlicensed,
+		},
 		Components: components,
 	}, nil
 }
