@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Copy, Package, CheckCircle2, XCircle, ShieldCheck, FileText } from "lucide-react";
 import { apiGet } from "@/lib/api";
-import { PageHeader, Panel, Chip, DistBars } from "@/components/dash";
+import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Artifact = { sha256: string; name: string; type: string; git_commit?: string; created_at?: string };
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; created_at?: string };
@@ -111,11 +111,19 @@ export default function Artifacts() {
 
       {arts.length > 0 && (
         <Panel label="Inventory" className="mt-6">
-          <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
-            <div className="min-w-[280px] flex-1">
-              <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">By type</div>
-              <DistBars items={Object.entries(arts.reduce<Record<string, number>>((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {})).map(([label, value]) => ({ label, value }))} />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
+              <div className="font-mono text-2xl font-bold tabular-nums text-primary">{arts.length}</div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Total</div>
             </div>
+            {Object.entries(arts.reduce<Record<string, number>>((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {}))
+              .sort((a, b) => b[1] - a[1])
+              .map(([type, count]) => (
+                <div key={type} className="rounded-lg border border-border bg-muted/20 p-3">
+                  <div className="font-mono text-2xl font-bold tabular-nums">{count}</div>
+                  <div className="mt-1 truncate font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground" title={type}>{type}</div>
+                </div>
+              ))}
           </div>
         </Panel>
       )}
