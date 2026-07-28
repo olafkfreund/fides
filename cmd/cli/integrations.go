@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"fides/pkg/evidence"
+	"fides/pkg/exitcode"
 )
 
 // isEvidenceFormat reports whether name is a supported evidence report format.
@@ -571,7 +572,7 @@ func handleChangeGate(config CLIConfig, args []string) {
 	fail(err, "evaluate change gate")
 	fmt.Println(body)
 	if strings.Contains(body, "\"approved\":false") {
-		os.Exit(2) // non-zero so CI / a change pipeline can gate on the verdict
+		os.Exit(exitcode.Violation) // so CI / a change pipeline can gate on the verdict
 	}
 }
 
@@ -885,7 +886,7 @@ func handlePolicy(config CLIConfig, args []string) {
 		fail(err, "policy check")
 		fmt.Println(body)
 		if strings.Contains(body, "\"compliant\":false") {
-			os.Exit(2) // non-zero so CI can gate a deploy
+			os.Exit(exitcode.Violation) // so CI can gate a deploy
 		}
 	default:
 		fmt.Println("Usage: fides policy <add|list|check> --env <id>")
@@ -1012,7 +1013,7 @@ func handleEnvVerify(config CLIConfig, args []string) {
 	fail(err, "verify environment compliance")
 	fmt.Println(body)
 	if strings.Contains(body, "\"compliant\":false") {
-		os.Exit(2) // non-zero so CI can gate on runtime compliance
+		os.Exit(exitcode.Violation) // so CI can gate on runtime compliance
 	}
 }
 
@@ -1036,7 +1037,7 @@ func handleEnvDiff(config CLIConfig, args []string) {
 		fail(err, "drift re-evaluation")
 		fmt.Println(body)
 		if strings.Contains(body, "\"drift_detected\":true") {
-			os.Exit(2) // non-zero so CI/pipelines can react to post-approval drift
+			os.Exit(exitcode.Violation) // so CI/pipelines can react to post-approval drift
 		}
 		return
 	}
@@ -1091,7 +1092,7 @@ func handleAllowlist(config CLIConfig, args []string) {
 		fail(err, "check allowlist")
 		fmt.Println(body)
 		if strings.Contains(body, "\"approved\":false") {
-			os.Exit(2) // non-zero so CI can gate a deploy on approval
+			os.Exit(exitcode.Violation) // so CI can gate a deploy on approval
 		}
 	case "remove":
 		if *sha == "" {
@@ -1215,7 +1216,7 @@ func remediationTransition(config CLIConfig, args []string, verb string) {
 	fail(err, "remediation "+verb)
 	fmt.Println(body)
 	if verb == "apply" && strings.Contains(body, "\"error\"") {
-		os.Exit(2)
+		os.Exit(exitcode.Violation)
 	}
 }
 
@@ -1232,7 +1233,7 @@ func handleVerifyChain(config CLIConfig, args []string) {
 	fail(err, "verify chain")
 	fmt.Println(body)
 	if strings.Contains(body, "\"valid\":false") {
-		os.Exit(2) // non-zero so CI fails on a broken chain
+		os.Exit(exitcode.Violation) // so CI fails on a broken chain
 	}
 }
 

@@ -3,6 +3,21 @@
 Set `FIDES_SERVER_URL` and `FIDES_API_TOKEN` (a static token or a service-account
 key). Optionally `FIDES_ENCRYPTION_KEY` to encrypt attestation payloads.
 
+## Exit codes (gate commands)
+
+Every gate command follows one convention so CI can tell "policy said no" apart
+from "the command broke":
+
+| Code | Meaning |
+|------|---------|
+| `0` | OK — success / verified / compliant |
+| `1` | Error — operational failure (usage, network, parse); no verdict reached |
+| `2` | Violation — the gate completed and the verdict is FAIL |
+
+Gate deploys on `2`. Applies to `assert`, `verify-image`, `change-gate`,
+`verify-chain`, `env verify`, `allowlist check`. (`assert` now exits `2` on
+non-compliance — previously `1`.)
+
 ## Pipeline (build/CI)
 | Command | Purpose |
 |---|---|

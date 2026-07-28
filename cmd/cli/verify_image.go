@@ -9,16 +9,17 @@ import (
 	"os"
 
 	"fides/pkg/cosignverify"
+	"fides/pkg/exitcode"
 )
 
-// Exit codes for `fides verify-image`. exitVerifyFailed (2) matches the
-// deploy-gate convention used by change-gate/verify-chain/policy check/
-// allowlist check (see docs/cli-reference.md); exitError (1) is reserved for
-// usage/operational errors that prevented verification from completing.
+// Exit codes for `fides verify-image` come from the shared pkg/exitcode:
+// exitOK (0) verified, exitError (1) operational failure, exitVerifyFailed (2)
+// signature failed/untrusted — the deploy-gate convention shared with
+// change-gate/verify-chain/assert (see docs/cli-reference.md).
 const (
-	exitOK           = 0
-	exitError        = 1
-	exitVerifyFailed = 2
+	exitOK           = exitcode.OK
+	exitError        = exitcode.Error
+	exitVerifyFailed = exitcode.Violation
 )
 
 // handleVerifyImage is the `fides verify-image` entrypoint: it verifies a
