@@ -122,6 +122,21 @@ policy-gate:
 fides policy add --env prod --name no-critical-vulns --rule '.critical == 0'
 ```
 
+### License policy
+
+A recorded SBOM attestation summarizes its licenses (`ParseSBOM` populates
+`summary.licenses` — unique, sorted — and `summary.unlicensed`), so you can gate
+on them with a JQ rule:
+
+```bash
+# Allow-list: fail if any component uses a license outside the allowed set.
+fides policy add --env prod --name allowed-licenses \
+  --rule '(.summary.licenses - ["MIT","Apache-2.0","BSD-3-Clause"]) | length == 0'
+
+# Or: fail if any component is unlicensed.
+fides policy add --env prod --name no-unlicensed --rule '.summary.unlicensed == 0'
+```
+
 ---
 
 ## What Fides deliberately does NOT do
@@ -140,5 +155,6 @@ that complement this flow.
 - `fides assert` now exits `2` on non-compliance and is a first-class
   [Fides Gate action](ci-gate.md) command (`command: assert`), so the policy gate
   in the recipes above can run as the action instead of a raw step.
-- `fides sbom diff` (compare two recorded SBOM attestations) and license-policy
-  gating are tracked as follow-ups (#337, #336).
+- License-policy gating is now supported via `summary.licenses` (see above);
+  `fides sbom diff` compares two SBOM files today, with diffing two *recorded*
+  attestations as a follow-up.
