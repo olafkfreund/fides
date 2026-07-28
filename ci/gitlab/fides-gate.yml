@@ -31,6 +31,8 @@ spec:
       default: ''
     sha256:
       default: ''
+    policy:
+      default: ''
     signer:
       default: ''
     issuer:
@@ -60,6 +62,7 @@ fides-gate:
     IN_CLI_REPO: "$[[ inputs.cli_repo ]]"
     IN_TRAIL: "$[[ inputs.trail ]]"
     IN_SHA256: "$[[ inputs.sha256 ]]"
+    IN_POLICY: "$[[ inputs.policy ]]"
     IN_SIGNER: "$[[ inputs.signer ]]"
     IN_ISSUER: "$[[ inputs.issuer ]]"
     IN_KEY: "$[[ inputs.key ]]"
@@ -98,6 +101,7 @@ fides-gate:
       case "$IN_COMMAND" in
         change-gate)  set -- change-gate --trail "$IN_TRAIL" ;;
         verify-chain) set -- verify-chain --trail "$IN_TRAIL" ;;
+        assert)       set -- assert --sha256 "$IN_SHA256" --policy "$IN_POLICY" ;;
         verify-image)
           set -- verify-image --sha256 "$IN_SHA256"
           [ -n "$IN_SIGNER" ] && set -- "$@" --signer "$IN_SIGNER" || true

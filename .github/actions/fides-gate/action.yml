@@ -7,7 +7,7 @@ branding:
 
 inputs:
   command:
-    description: 'Which gate to run: change-gate | verify-image | verify-chain | env-verify'
+    description: 'Which gate to run: change-gate | verify-image | verify-chain | env-verify | assert'
     required: true
   server-url:
     description: 'Fides server URL (also settable via the FIDES_SERVER_URL env var).'
@@ -35,7 +35,11 @@ inputs:
     required: false
     default: ''
   sha256:
-    description: 'Image digest, sha256 hex (verify-image).'
+    description: 'Artifact/image digest, sha256 hex (verify-image, assert).'
+    required: false
+    default: ''
+  policy:
+    description: 'Policy name to evaluate the artifact against (assert).'
     required: false
     default: ''
   signer:
@@ -97,6 +101,7 @@ runs:
         IN_CLI_REPO: ${{ inputs.cli-repo }}
         IN_TRAIL: ${{ inputs.trail }}
         IN_SHA256: ${{ inputs.sha256 }}
+        IN_POLICY: ${{ inputs.policy }}
         IN_SIGNER: ${{ inputs.signer }}
         IN_ISSUER: ${{ inputs.issuer }}
         IN_KEY: ${{ inputs.key }}
@@ -147,6 +152,7 @@ runs:
         case "${IN_COMMAND}" in
           change-gate)  argv=(change-gate --trail "${IN_TRAIL}") ;;
           verify-chain) argv=(verify-chain --trail "${IN_TRAIL}") ;;
+          assert)       argv=(assert --sha256 "${IN_SHA256}" --policy "${IN_POLICY}") ;;
           verify-image)
             argv=(verify-image --sha256 "${IN_SHA256}")
             [ -n "${IN_SIGNER}" ] && argv+=(--signer "${IN_SIGNER}")
@@ -157,7 +163,7 @@ runs:
           env-verify)
             argv=(env verify --env "${IN_ENV}" --server "${IN_MCP_SERVER}" --tool "${IN_TOOL}" --rule "${IN_RULE}")
             ;;
-          *) echo "::error::unknown command '${IN_COMMAND}' (change-gate|verify-image|verify-chain|env-verify)"; exit 1 ;;
+          *) echo "::error::unknown command '${IN_COMMAND}' (change-gate|verify-image|verify-chain|env-verify|assert)"; exit 1 ;;
         esac
         # shellcheck disable=SC2206
         [ -n "${IN_ARGS}" ] && argv+=(${IN_ARGS})
