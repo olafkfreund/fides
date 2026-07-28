@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiGet } from "@/lib/api";
-import { PageHeader, Panel, StatTile, Chip } from "@/components/dash";
+import { PageHeader, Panel, StatTile, Chip, Donut, DistBars } from "@/components/dash";
 
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; trail_id: string; created_at?: string };
 type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algorithm?: string; content_hash?: string; artifact_sha256?: string };
@@ -53,6 +53,7 @@ export default function Attestations() {
   const shown = atts.filter((a) => a.name.toLowerCase().includes(name.toLowerCase()));
   const compliant = atts.filter((a) => a.is_compliant).length;
   const types = [...new Set(atts.map((a) => a.type_name))];
+  const byType = atts.reduce<Record<string, number>>((acc, a) => { acc[a.type_name] = (acc[a.type_name] || 0) + 1; return acc; }, {});
 
   return (
     <div>
@@ -63,6 +64,18 @@ export default function Attestations() {
         <StatTile label="Compliant" value={`${atts.length ? Math.round((compliant / atts.length) * 100) : 0}%`} sub={`${compliant} of ${atts.length}`} color="text-green-400" />
         <StatTile label="Evidence Types" value={String(types.length)} />
       </div>
+
+      {atts.length > 0 && (
+        <Panel label="Compliance" className="mt-4">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
+            <Donut value={atts.length ? compliant / atts.length : 0} color="#35C08A" sublabel="compliant" />
+            <div className="min-w-[280px] flex-1">
+              <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">By evidence type</div>
+              <DistBars items={Object.entries(byType).map(([label, value]) => ({ label, value }))} />
+            </div>
+          </div>
+        </Panel>
+      )}
 
       <Panel label="Ledger" className="mt-6">
         <div className="mb-4 flex flex-wrap items-center gap-3">

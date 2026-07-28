@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import { PageHeader, Panel, Chip } from "@/components/dash";
+import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
 type Env = {
@@ -109,6 +109,23 @@ export default function Environments() {
       <PageHeader title="Environments" subtitle="Runtime compliance, verified automatically against your MCP-connected clusters." />
 
       <div className="flex flex-col gap-5">
+        {/* Fleet overview — derived from the already-fetched envs */}
+        {envs.length > 0 && (
+          <Panel label="Fleet">
+            <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
+              <Donut
+                value={envs.length ? envs.filter((e) => (e.drifts?.length ?? 0) === 0 && (e.shadowChanges?.length ?? 0) === 0).length / envs.length : 0}
+                color="#35C08A"
+                sublabel="secure"
+              />
+              <div className="min-w-[280px] flex-1">
+                <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Running workloads</div>
+                <DistBars items={envs.map((e) => ({ label: e.name, value: e.running?.length ?? 0 }))} />
+              </div>
+            </div>
+          </Panel>
+        )}
+
         {/* Runtime environments */}
         <Panel label="Runtime Environments" right={<input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />}>
           <div className="flex flex-col gap-2">
