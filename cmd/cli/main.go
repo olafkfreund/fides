@@ -110,6 +110,8 @@ func main() {
 		handleApprove(config, os.Args[2:])
 	case "slack":
 		handleSlack(config, os.Args[2:])
+	case "dashboard":
+		runDashboard(config, os.Args[2:])
 	case "env":
 		sub := ""
 		if len(os.Args) > 2 {
@@ -172,6 +174,7 @@ func printUsage() {
 	fmt.Println("  vex              Record a VEX statement to suppress/annotate a CVE (--cve --status [--product --justification])")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
+	fmt.Println("  dashboard        Interactive terminal dashboard of live server stats (TUI)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
