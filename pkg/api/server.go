@@ -497,12 +497,12 @@ func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
-		// SAMEORIGIN (not DENY) so the portal can embed its own Go-served admin
-		// pages (e.g. the /admin console inside the Settings "Integrations" tab).
-		// Cross-origin framing (clickjacking) is still blocked.
-		h.Set("X-Frame-Options", "SAMEORIGIN")
+		// DENY: the source-owned portal never frames itself, and the Go-served
+		// admin pages that needed SAMEORIGIN framing (via web/admin-tab.js) were
+		// removed after the portal cutover. Block all framing (clickjacking).
+		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; frame-ancestors 'self'")
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com; frame-ancestors 'none'")
 		h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
