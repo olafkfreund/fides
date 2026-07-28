@@ -137,8 +137,8 @@ that complement this flow.
 
 ## Related enhancements
 
-- Aligning `fides assert` to exit `2` on non-compliance (matching the other gates)
-  would let the Fides Gate action drive it directly as a `command` — tracked with
-  the exit-code standardization work.
+- `fides assert` now exits `2` on non-compliance and is a first-class
+  [Fides Gate action](ci-gate.md) command (`command: assert`), so the policy gate
+  in the recipes above can run as the action instead of a raw step.
 - `fides sbom diff` (compare two recorded SBOM attestations) and license-policy
-  gating are tracked as follow-ups.
+  gating are tracked as follow-ups (#337, #336).
