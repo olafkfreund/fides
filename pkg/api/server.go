@@ -204,24 +204,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow/events", s.handleServiceNowEvents)
 
-	// ServiceNow admin UI: a Go-served page (the page shell is public; its API
-	// calls are authenticated by the session cookie, like the rest of the portal).
-	mux.HandleFunc("GET /servicenow", s.handleServiceNowAdminPage)
-
-	// Unified Go-served admin console (tabs: ServiceNow, Slack, service accounts,
-	// git/webhooks, environments policies/allow-lists, metrics).
-	mux.HandleFunc("GET /admin", s.handleAdminConsolePage)
-
-	// Redesigned assurance console — a live dashboard (posture, coverage,
-	// environments, and the real-time check stream). Same public-shell/
-	// session-cookie pattern; polls /api/v1/console/summary.
-	mux.HandleFunc("GET /console", s.handleConsolePage)
+	// Assurance console summary — powers the source-owned portal frontpage
+	// (portal/src/app/(portal)/page.tsx). The Go-served HTML pages that used to
+	// live here (/console, /admin, /servicenow, /evidence) were removed after the
+	// portal cutover; only their backing APIs remain.
 	mux.HandleFunc("GET /api/v1/console/summary", s.handleConsoleSummary)
-
-	// Evidence Vault: a Go-served per-trail evidence timeline (attestations,
-	// approvals, change-gate verdict, tamper-evidence chain status), built on
-	// existing read APIs. Same public-shell/session-cookie pattern as above.
-	mux.HandleFunc("GET /evidence", s.handleEvidenceVaultPage)
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
