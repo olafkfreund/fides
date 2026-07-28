@@ -89,7 +89,7 @@ func handleSBOMDiff(args []string) {
 }
 
 func parseSBOMFile(path string) []evidence.Component {
-	data, err := os.ReadFile(path) // #nosec G304 -- CLI reads a user-specified SBOM by design
+	data, err := os.ReadFile(path) // #nosec G304 G703 -- CLI reads a user-specified SBOM by design
 	fail(err, "read SBOM "+path)
 	r, err := evidence.ParseSBOM(data)
 	fail(err, "parse SBOM "+path)
