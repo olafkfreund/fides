@@ -209,6 +209,7 @@ func (s *Server) Routes() http.Handler {
 	// live here (/console, /admin, /servicenow, /evidence) were removed after the
 	// portal cutover; only their backing APIs remain.
 	mux.HandleFunc("GET /api/v1/console/summary", s.handleConsoleSummary)
+	mux.HandleFunc("GET /api/v1/console/stream", s.handleConsoleStream)
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.

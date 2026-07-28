@@ -79,23 +79,48 @@ export default function Overview() {
 
   useEffect(() => {
     let stop = false;
-    const tick = () => {
-      apiGet<Summary>("/api/v1/console/summary").then((d) => {
-        if (stop) return;
-        setLive(true);
-        const top = d.recent?.[0] ? d.recent[0].name + d.recent[0].at : null;
-        if (top && lastTop.current !== null && top !== lastTop.current) { setFlashTop(true); setTimeout(() => setFlashTop(false), 1600); }
-        lastTop.current = top;
-        setS(d);
-        setUpdated(new Date().toLocaleTimeString());
-      }).catch(() => { if (!stop) setLive(false); });
+    let es: EventSource | null = null;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+
+    const applySummary = (d: Summary) => {
+      if (stop) return;
+      setLive(true);
+      const top = d.recent?.[0] ? d.recent[0].name + d.recent[0].at : null;
+      if (top && lastTop.current !== null && top !== lastTop.current) { setFlashTop(true); setTimeout(() => setFlashTop(false), 1600); }
+      lastTop.current = top;
+      setS(d);
+      setUpdated(new Date().toLocaleTimeString());
+    };
+
+    // Secondary panels change slowly — a plain poll is plenty.
+    const pollAux = () => {
       apiGet<Env[]>("/api/v1/environments").then((e) => !stop && setEnvs(e || [])).catch(() => {});
       apiGet<Coverage>("/api/v1/controls/coverage").then((c) => !stop && setCov(c)).catch(() => {});
       apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => !stop && setEvents(e || [])).catch(() => {});
     };
-    tick();
-    const id = setInterval(tick, 5000);
-    return () => { stop = true; clearInterval(id); };
+    pollAux();
+    const auxId = setInterval(pollAux, 10000);
+
+    // Primary summary via Server-Sent Events; fall back to polling if the stream
+    // can't be established (older browser, buffering proxy, etc.).
+    const startPoll = () => {
+      if (pollId || stop) return;
+      const tick = () => apiGet<Summary>("/api/v1/console/summary").then(applySummary).catch(() => { if (!stop) setLive(false); });
+      tick();
+      pollId = setInterval(tick, 5000);
+    };
+    try {
+      es = new EventSource("/api/v1/console/stream");
+      es.onmessage = (ev) => { try { applySummary(JSON.parse(ev.data) as Summary); } catch { /* ignore malformed frame */ } };
+      es.onerror = () => { if (es) { es.close(); es = null; } startPoll(); };
+    } catch { startPoll(); }
+
+    return () => {
+      stop = true;
+      if (es) es.close();
+      if (pollId) clearInterval(pollId);
+      clearInterval(auxId);
+    };
   }, []);
 
   const secureEnvs = envs.filter((e) => !e.drifts?.length && !e.shadowChanges?.length).length;
