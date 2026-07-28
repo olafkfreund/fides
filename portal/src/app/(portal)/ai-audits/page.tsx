@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bot, CheckCircle2, XCircle } from "lucide-react";
+import { Bot } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Assessment = {
   id?: string;
@@ -73,10 +74,9 @@ export default function AIAudits() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">AI Audits</h1>
-      <p className="mt-1 text-sm text-muted-foreground">LLM evaluator reports for reported attestations.</p>
+      <PageHeader title="AI Audits" subtitle="LLM evaluator reports for reported attestations." />
 
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[300px_1fr]">
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[300px_1fr]">
         {/* Report list */}
         <div className="max-h-[76vh] overflow-y-auto rounded-xl border border-border bg-card p-2">
           {list.length ? list.map((a, i) => (
@@ -86,13 +86,13 @@ export default function AIAudits() {
                 <span className="block truncate font-mono">{a.attestationName || "attestation"}</span>
                 <span className="block text-xs text-muted-foreground">{a.modelName}</span>
               </span>
-              <span className={`shrink-0 text-xs font-semibold ${scoreColor(a.complianceScore)}`}>{a.complianceScore ?? "—"}</span>
+              <span className={`shrink-0 font-mono tabular-nums text-xs font-semibold ${scoreColor(a.complianceScore)}`}>{a.complianceScore ?? "—"}</span>
             </button>
           )) : <p className="p-3 text-sm text-muted-foreground">No AI assessments yet.</p>}
         </div>
 
         {/* Detail */}
-        <div className="rounded-xl border border-border bg-card p-5">
+        <Panel>
           {sel && parsed ? (
             <>
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -101,11 +101,11 @@ export default function AIAudits() {
                   <div className="mt-0.5 text-xs text-muted-foreground">Model: {sel.modelName}{sel.createdAt ? ` · ${sel.createdAt.replace("T", " ").slice(0, 19)}` : ""}</div>
                 </div>
                 <div className="text-right">
-                  <div className={`text-2xl font-bold ${scoreColor(score)}`}>{score ?? "—"}<span className="text-sm font-normal text-muted-foreground">/100</span></div>
+                  <div className={`font-mono tabular-nums text-2xl font-bold ${scoreColor(score)}`}>{score ?? "—"}<span className="text-sm font-normal text-muted-foreground">/100</span></div>
                   {compliant !== undefined && (
-                    <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${compliant ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>
-                      {compliant ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}{compliant ? "Compliant" : "Non-compliant"}
-                    </span>
+                    <div className="mt-1">
+                      <Chip tone={compliant ? "ok" : "bad"}>{compliant ? "Compliant" : "Non-compliant"}</Chip>
+                    </div>
                   )}
                 </div>
               </div>
@@ -127,7 +127,7 @@ export default function AIAudits() {
               </div>
             </>
           ) : <p className="text-sm text-muted-foreground">Select a report.</p>}
-        </div>
+        </Panel>
       </div>
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
     </div>

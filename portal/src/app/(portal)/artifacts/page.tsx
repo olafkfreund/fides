@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Copy, Package, CheckCircle2, XCircle, ShieldCheck, FileText } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Artifact = { sha256: string; name: string; type: string; git_commit?: string; created_at?: string };
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; created_at?: string };
@@ -17,7 +18,6 @@ type AttDetail = Att & {
 type SbomItem = { name: string; version?: string; license?: string };
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
-const panel = "rounded-xl border border-border bg-card p-5";
 
 // Extract a component list from whatever SBOM shape the payload carries
 // (CycloneDX .components, SPDX .packages, Syft .artifacts, or a bare array).
@@ -107,10 +107,9 @@ export default function Artifacts() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Artifacts &amp; SBOM</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Search build artifacts; click one for its attestations and SBOM.</p>
+      <PageHeader title="Artifacts & SBOM" subtitle="Search build artifacts; click one for its attestations and SBOM." />
 
-      <div className={`${panel} mt-6`}>
+      <Panel label="Registry" className="mt-6">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <input className={input} value={sha} onChange={(e) => setSha(e.target.value)} placeholder="SHA256 prefix" />
           <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="name" />
@@ -128,9 +127,9 @@ export default function Artifacts() {
                     <span className="min-w-0 flex-1">
                       <span className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-sm font-medium">{a.name} <span className="text-xs text-muted-foreground">· {a.type}</span></span>
-                        <span className="font-mono text-xs text-muted-foreground">{a.git_commit ? `commit ${a.git_commit.slice(0, 12)}` : ""}</span>
+                        <span className="font-mono tabular-nums text-xs text-muted-foreground">{a.git_commit ? `commit ${a.git_commit.slice(0, 12)}` : ""}</span>
                       </span>
-                      <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">sha256 {a.sha256}</span>
+                      <span className="mt-1 block truncate font-mono tabular-nums text-xs text-muted-foreground">sha256 {a.sha256}</span>
                     </span>
                   </button>
 
@@ -145,7 +144,7 @@ export default function Artifacts() {
                         <>
                           {/* SBOM */}
                           <div>
-                            <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Package className="size-3.5" /> SBOM {sbom ? <span className={sbom.status === "compliant" ? "text-green-400" : "text-red-400"}>· {sbom.status}</span> : null}</div>
+                            <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Package className="size-3.5" /> SBOM {sbom ? <Chip tone={sbom.status === "compliant" ? "ok" : "bad"}>{sbom.status}</Chip> : null}</div>
                             {sbom ? (
                               sbom.items.length ? (
                                 <div className="overflow-hidden rounded-md border border-border">
@@ -197,7 +196,7 @@ export default function Artifacts() {
             })}
           </div>
         ) : <p className="mt-3 text-sm text-muted-foreground">No results.</p>}
-      </div>
+      </Panel>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
     </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Info, Archive, ArchiveRestore, ShieldCheck, ChevronRight, Check, Plus, Loader2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
+import { PageHeader, StatTile, Chip } from "@/components/dash";
 
 type Control = { id: string; key: string; name: string; framework?: string; required_types?: string[]; archived?: boolean };
 type CovControl = { control: string; name: string; framework?: string; enforced_in: string[]; coverage: number };
@@ -101,23 +102,14 @@ export default function Controls() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Controls &amp; Coverage</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Governance controls and how well your environments enforce them.</p>
+      <PageHeader title="Controls & Coverage" subtitle="Governance controls and how well your environments enforce them." />
 
       {/* At-a-glance summary */}
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {[
-          { label: "Controls", value: String(covControls.length), sub: `${groupNames.length} frameworks` },
-          { label: "Avg coverage", value: `${avg}%`, sub: `across ${totalEnvs} environments`, cls: pctColor(avg / 100) },
-          { label: "Fully covered", value: String(fully), sub: "enforced everywhere", cls: fully ? "text-green-400" : "text-muted-foreground" },
-          { label: "Gaps", value: String(gaps), sub: "need attention", cls: gaps ? "text-amber-400" : "text-green-400" },
-        ].map((s) => (
-          <div key={s.label} className={panel}>
-            <div className="text-xs uppercase tracking-wide text-muted-foreground">{s.label}</div>
-            <div className={`mt-1 text-2xl font-semibold ${s.cls || ""}`}>{s.value}</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">{s.sub}</div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatTile label="Controls" value={String(covControls.length)} sub={`${groupNames.length} frameworks`} />
+        <StatTile label="Avg coverage" value={`${avg}%`} sub={`across ${totalEnvs} environments`} color={pctColor(avg / 100)} />
+        <StatTile label="Fully covered" value={String(fully)} sub="enforced everywhere" color={fully ? "text-green-400" : "text-muted-foreground"} />
+        <StatTile label="Gaps" value={String(gaps)} sub="need attention" color={gaps ? "text-amber-400" : "text-green-400"} />
       </div>
 
       {msg.t && <p className={`mt-4 text-sm ${msg.ok ? "text-green-400" : "text-red-400"}`}>{msg.t}</p>}
@@ -144,7 +136,7 @@ export default function Controls() {
                         <ChevronRight className={`size-4 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-90" : ""}`} />
                         <span className="min-w-0 flex-1 truncate text-sm"><span className="font-mono">{c.control}</span> <span className="text-muted-foreground">{c.name}</span></span>
                         <span className="h-1.5 w-24 shrink-0 rounded-full bg-muted"><span className={`block h-1.5 rounded-full ${barColor(c.coverage)}`} style={{ width: `${Math.round(c.coverage * 100)}%` }} /></span>
-                        <span className={`w-10 shrink-0 text-right text-sm ${pctColor(c.coverage)}`}>{Math.round(c.coverage * 100)}%</span>
+                        <span className={`w-12 shrink-0 text-right font-mono text-sm tabular-nums ${pctColor(c.coverage)}`}>{Math.round(c.coverage * 100)}%</span>
                       </button>
 
                       {isOpen && (
@@ -152,7 +144,7 @@ export default function Controls() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-xs text-muted-foreground">Requires evidence:</span>
                             {(ctrl?.required_types || []).length
-                              ? (ctrl?.required_types || []).map((t) => <span key={t} className="rounded bg-primary/10 px-2 py-0.5 text-xs text-primary">{t}</span>)
+                              ? (ctrl?.required_types || []).map((t) => <Chip key={t} tone="gold">{t}</Chip>)
                               : <span className="text-xs text-muted-foreground">no evidence types set</span>}
                           </div>
                           <div>

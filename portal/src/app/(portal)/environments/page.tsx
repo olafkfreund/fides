@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
+import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
 type Env = {
@@ -19,7 +20,6 @@ const DEFAULT_TOOL = "get_pods";
 const DEFAULT_RULES = ['.pods[].status == "Ready"', ".pods[].replicas == .pods[].readyReplicas"];
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
-const panel = "rounded-xl border border-border bg-card p-5";
 
 export default function Environments() {
   const [envs, setEnvs] = useState<Env[]>([]);
@@ -106,16 +106,11 @@ export default function Environments() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Environments</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Runtime compliance, verified automatically against your MCP-connected clusters.</p>
+      <PageHeader title="Environments" subtitle="Runtime compliance, verified automatically against your MCP-connected clusters." />
 
-      <div className="mt-6 flex flex-col gap-5">
+      <div className="flex flex-col gap-5">
         {/* Runtime environments */}
-        <div className={panel}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Runtime Environments</h2>
-            <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />
-          </div>
+        <Panel label="Runtime Environments" right={<input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />}>
           <div className="flex flex-col gap-2">
             {envs.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())).map((e) => {
               const drifts = e.drifts?.length ?? 0, shadows = e.shadowChanges?.length ?? 0, running = e.running?.length ?? 0;
@@ -125,10 +120,10 @@ export default function Environments() {
                   <div className="flex items-start justify-between">
                     <div>
                       <span className="font-semibold">{e.name}</span>
-                      <span className="ml-2 rounded bg-muted px-2 py-0.5 text-xs uppercase text-muted-foreground">{e.type}</span>
+                      <span className="ml-2"><Chip tone="muted">{e.type}</Chip></span>
                       {e.description && <div className="mt-0.5 text-xs text-muted-foreground">{e.description}</div>}
                     </div>
-                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${secure ? "bg-green-500/15 text-green-400" : "bg-amber-500/15 text-amber-400"}`}>{secure ? "SECURE" : "DRIFT"}</span>
+                    <Chip tone={secure ? "ok" : "warn"}>{secure ? "SECURE" : "DRIFT"}</Chip>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
                     <span><span className="text-foreground">{running}</span> running</span>
@@ -141,17 +136,18 @@ export default function Environments() {
             })}
             {envs.length === 0 && <p className="text-sm text-muted-foreground">No environments.</p>}
           </div>
-        </div>
+        </Panel>
 
         {/* Automatic MCP compliance */}
-        <div className={panel}>
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live Compliance — {envs.find((e) => e.id === sel)?.name || "…"}</h2>
+        <Panel
+          label={<>Live Compliance — {envs.find((e) => e.id === sel)?.name || "…"}</>}
+          right={
             <div className="flex items-center gap-3">
-              {overall.length > 0 && <span className={`rounded px-2 py-0.5 text-xs font-medium ${allCompliant ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{allCompliant ? "ALL COMPLIANT" : "ISSUES FOUND"}</span>}
+              {overall.length > 0 && <Chip tone={allCompliant ? "ok" : "bad"}>{allCompliant ? "ALL COMPLIANT" : "ISSUES FOUND"}</Chip>}
               <button onClick={() => loadEnv(sel)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs"><RefreshCw className="size-3.5" /> Re-run</button>
             </div>
-          </div>
+          }
+        >
           <p className="mb-4 flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-4 shrink-0 text-primary" />
             <span>Fides connects to this environment&apos;s <strong>MCP servers</strong> (e.g. the in-cluster <code className="rounded bg-muted px-1">fides-mcp-sensor</code>) and automatically runs runtime compliance checks — no queries to write. Each connection below is checked for workload readiness on load.</span>
@@ -170,9 +166,9 @@ export default function Environments() {
                         {ch?.loading ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : ch?.verdict ? (ch.verdict.compliant ? <CheckCircle2 className="size-4 text-green-400" /> : <XCircle className="size-4 text-red-400" />) : <XCircle className="size-4 text-muted-foreground" />}
                         {c.name} <span className="text-xs font-normal text-muted-foreground">({c.transport})</span>
                       </span>
-                      <span className={`text-xs font-medium ${ch?.loading ? "text-muted-foreground" : ch?.verdict ? (ch.verdict.compliant ? "text-green-400" : "text-red-400") : "text-muted-foreground"}`}>
+                      <Chip tone={ch?.loading ? "muted" : ch?.verdict ? (ch.verdict.compliant ? "ok" : "bad") : ch?.error ? "warn" : "muted"}>
                         {ch?.loading ? "checking…" : ch?.verdict ? (ch.verdict.compliant ? "COMPLIANT" : "NON-COMPLIANT") : ch?.error ? "unreachable" : "—"}
-                      </span>
+                      </Chip>
                     </div>
                     {ch?.verdict && !ch.verdict.compliant && (ch.verdict.failed_rules?.length ?? 0) > 0 && (
                       <div className="mt-1.5 text-xs text-red-400">failed: {ch.verdict.failed_rules!.join("  |  ")}</div>
@@ -183,11 +179,10 @@ export default function Environments() {
               })}
             </div>
           )}
-        </div>
+        </Panel>
 
         {/* Approved artifacts */}
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Approved Artifacts (allow-list)</h2>
+        <Panel label="Approved Artifacts (allow-list)">
           {allow.length > 0 ? (
             <table className="w-full text-left text-xs font-mono">
               <thead className="text-muted-foreground"><tr><th className="py-1">SHA256</th><th>By</th><th>Reason</th></tr></thead>
@@ -200,10 +195,10 @@ export default function Environments() {
             <button onClick={addAllow} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Approve</button>
             <a href="/api/v1/environments/export" className="ml-auto rounded-md border border-border px-4 py-2 text-sm">Download Audit Report</a>
           </div>
-        </div>
+        </Panel>
 
         {/* Advanced */}
-        <div className={panel}>
+        <Panel>
           <button onClick={() => setAdvanced((a) => !a)} className="flex w-full items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {advanced ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />} Advanced — custom check &amp; add connection
           </button>
@@ -234,7 +229,7 @@ export default function Environments() {
               </div>
             </div>
           )}
-        </div>
+        </Panel>
 
         {err && <p className="text-sm text-red-400">{err}</p>}
       </div>

@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { apiGet, apiPost, api } from "@/lib/api";
+import { PageHeader, Panel } from "@/components/dash";
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
-const panel = "rounded-xl border border-border bg-card p-5";
 const btn = "rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground";
 const ghost = "rounded-md border border-border px-4 py-2 text-sm";
 
@@ -51,8 +51,7 @@ function InfrastructureTab() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className={panel}>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">SSO &amp; OAuth</h3>
+      <Panel label="SSO & OAuth">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm"><span className="text-muted-foreground">Identity Provider</span>
             <select className={input} value={(auth.provider_name as string) ?? "github"} onChange={(e) => setAuth({ ...auth, provider_name: e.target.value })}>
@@ -67,10 +66,9 @@ function InfrastructureTab() {
           <Field label="Userinfo URL" obj={auth} set={setAuth} k="userinfo_url" ph="https://api.github.com/user" />
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!auth.enabled} onChange={(e) => setAuth({ ...auth, enabled: e.target.checked })} /> Enable SSO Login</label>
-      </div>
+      </Panel>
 
-      <div className={panel}>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Evidence Storage</h3>
+      <Panel label="Evidence Storage">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm"><span className="text-muted-foreground">Storage Driver</span>
             <select className={input} value={(storage.storage_driver as string) ?? "local"} onChange={(e) => setStorage({ ...storage, storage_driver: e.target.value })}>
@@ -87,10 +85,9 @@ function InfrastructureTab() {
           <Field label="Azure Container" obj={storage} set={setStorage} k="azure_container" />
           <Field label="Azure Connection Ref" obj={storage} set={setStorage} k="azure_connection_string_path" />
         </div>
-      </div>
+      </Panel>
 
-      <div className={panel}>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Secret Key Engines</h3>
+      <Panel label="Secret Key Engines">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm"><span className="text-muted-foreground">Vault Provider</span>
             <select className={input} value={(vault.vault_provider as string) ?? "none"} onChange={(e) => setVault({ ...vault, vault_provider: e.target.value })}>
@@ -101,10 +98,9 @@ function InfrastructureTab() {
           <Field label="Token / Auth Reference Path" obj={vault} set={setVault} k="vault_token_path" ph="fides/vault-token (or IRSA)" />
           <Field label="IAM / AppRole Role Name" obj={vault} set={setVault} k="vault_role" ph="fides-secrets-reader" />
         </div>
-      </div>
+      </Panel>
 
-      <div className={panel}>
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">LLM Configuration</h3>
+      <Panel label="LLM Configuration">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <label className="text-sm"><span className="text-muted-foreground">LLM Provider</span>
             <select className={input} value={(llm.provider_name as string) ?? "ollama"} onChange={(e) => setLlm({ ...llm, provider_name: e.target.value })}>
@@ -117,7 +113,7 @@ function InfrastructureTab() {
           <Field label="AWS Region" obj={llm} set={setLlm} k="aws_region" ph="us-east-1" />
           <Field label="Azure Deployment" obj={llm} set={setLlm} k="azure_deployment" />
         </div>
-      </div>
+      </Panel>
 
       <div><button onClick={load} className={ghost}>Reload</button> <button onClick={save} className={btn}>Save Configuration</button><Msg m={m} /></div>
     </div>
@@ -136,9 +132,8 @@ function DirectoryTab() {
     catch (e) { setM({ t: String((e as Error).message), ok: false }); }
   };
   return (
-    <div className={panel}>
+    <Panel label="Map an SSO/IdP group to a Fides role">
       <Help>When SSO is enabled, users sign in via your identity provider. These mappings translate an <strong>IdP group</strong> (e.g. <code className="rounded bg-muted px-1">platform-admins</code>) into a Fides <strong>role</strong>, so access is managed centrally in your directory instead of per-user here.</Help>
-      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Map an SSO/IdP group to a Fides role</h3>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input className={input} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="external group (e.g. platform-admins)" />
         <select className={input} value={role} onChange={(e) => setRole(e.target.value)}><option>Admin</option><option>Writer</option><option>Auditor</option><option>Viewer</option></select>
@@ -151,7 +146,7 @@ function DirectoryTab() {
           <tbody>{maps.map((g) => <tr key={g.id} className="border-t border-border"><td className="py-2">{g.external_group}</td><td>{g.role}</td></tr>)}</tbody>
         </table>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -166,7 +161,7 @@ function ServiceNowTab() {
     catch (e) { setM({ t: String((e as Error).message), ok: false }); }
   };
   return (
-    <div className={panel}>
+    <Panel>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <label className="text-sm"><span className="text-muted-foreground">Instance URL</span><input className={input} value={(c.instance_url as string) ?? ""} onChange={(e) => setC({ ...c, instance_url: e.target.value })} placeholder="https://acme.service-now.com" /></label>
         <label className="text-sm"><span className="text-muted-foreground">Auth type</span><select className={input} value={(c.auth_type as string) ?? "basic"} onChange={(e) => setC({ ...c, auth_type: e.target.value })}><option value="basic">basic</option><option value="oauth2">oauth2</option></select></label>
@@ -175,7 +170,7 @@ function ServiceNowTab() {
       </div>
       <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={!!c.enabled} onChange={(e) => setC({ ...c, enabled: e.target.checked })} /> Enabled</label>
       <div className="mt-4"><button onClick={load} className={ghost}>Reload</button> <button onClick={save} className={btn}>Save</button><Msg m={m} /></div>
-    </div>
+    </Panel>
   );
 }
 
@@ -188,12 +183,12 @@ function SlackTab() {
   useEffect(() => { load(); }, []);
   const save = async () => { try { await apiPost("/api/v1/tenant/slack", { webhook_secret_path: secret, enabled }); setM({ t: "Saved.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
-    <div className={panel}>
+    <Panel>
       <Help>Send real-time compliance alerts to Slack. Store your Slack incoming-webhook URL in your secrets backend and reference it here (e.g. <code className="rounded bg-muted px-1">fides/slack-webhook</code>). Fides posts to it when a build fails a policy or an environment drifts.</Help>
       <label className="text-sm"><span className="text-muted-foreground">Incoming-webhook secret reference</span><input className={input} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="fides/slack-webhook" /></label>
       <label className="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
       <div className="mt-4"><button onClick={save} className={btn}>Save</button><Msg m={m} /></div>
-    </div>
+    </Panel>
   );
 }
 
@@ -207,7 +202,7 @@ function ServiceAccountsTab() {
   const create = async () => { try { await apiPost("/api/v1/tenant/service-accounts", { name, role }); setName(""); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   const issue = async (id: string) => { try { const r = await apiPost<{ api_key: string }>(`/api/v1/tenant/service-accounts/${id}/keys`, { label: "portal", expires_hours: 0 }); setKey(r.api_key); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
-    <div className={panel}>
+    <Panel>
       <Help>A <strong>service account</strong> is a machine identity for CI/CD. Your pipeline authenticates as one (via an API key set as <code className="rounded bg-muted px-1">FIDES_API_TOKEN</code>) to record attestations, snapshots, and approvals — no human login. Create an account, choose a role (Writer for pipelines, Auditor for read-only), then <strong>issue a key</strong> and paste it into your CI secrets.</Help>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <input className={input} value={name} onChange={(e) => setName(e.target.value)} placeholder="name (ci-pipeline)" />
@@ -231,7 +226,7 @@ function ServiceAccountsTab() {
           <tbody>{list.map((a) => <tr key={a.id} className="border-t border-border"><td className="py-2">{a.name}</td><td>{a.role}</td><td>{a.active_keys}</td><td><button onClick={() => issue(a.id)} className={ghost}>Issue key</button></td></tr>)}</tbody>
         </table>
       )}
-    </div>
+    </Panel>
   );
 }
 
@@ -242,7 +237,7 @@ function UsersTab() {
   useEffect(() => { apiGet<typeof users>("/api/v1/tenant/users").then(setUsers).catch(() => {}); }, []);
   const setPass = async (id: string) => { try { await apiPost(`/api/v1/tenant/users/${id}/password`, { password: pw[id] || "" }); setM({ t: "Password set.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
-    <div className={panel}>
+    <Panel>
       {users.length ? (
         <table className="w-full text-left text-sm">
           <thead className="text-muted-foreground"><tr><th className="py-1">Name</th><th>Email</th><th>Role</th><th>Set password</th></tr></thead>
@@ -255,7 +250,7 @@ function UsersTab() {
         </table>
       ) : <p className="text-sm text-muted-foreground">No users.</p>}
       <Msg m={m} />
-    </div>
+    </Panel>
   );
 }
 
@@ -279,8 +274,7 @@ function GitWebhooksTab() {
     <div className="flex flex-col gap-5">
       <Help>Connect a <strong>Git provider</strong> so Fides can post commit-status checks back to PRs and receive signed push webhooks that auto-create trails. <strong>Outbound webhooks</strong> forward compliance events to any HTTPS endpoint (HMAC-signed) — e.g. your own automation or an incident tool.</Help>
       {providers.length > 0 && (
-        <div className={panel}>
-          <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Configured Git providers</h3>
+        <Panel label="Configured Git providers">
           <div className="flex flex-col gap-2">
             {providers.map((p) => (
               <div key={p.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
@@ -289,10 +283,9 @@ function GitWebhooksTab() {
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
-      <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Add Git provider</h3>
+      <Panel label="Add Git provider">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <select className={input} value={gp.provider} onChange={(e) => setGp({ ...gp, provider: e.target.value })}><option>github</option><option>gitlab</option><option value="bitbucket">bitbucket</option><option value="azure-devops">azure-devops</option></select>
           <input className={input} placeholder="host (github.com)" onChange={(e) => setGp({ ...gp, host: e.target.value })} />
@@ -301,10 +294,9 @@ function GitWebhooksTab() {
           <input className={input} placeholder="inbound secret ref (optional)" onChange={(e) => setGp({ ...gp, inbound_secret_path: e.target.value })} />
         </div>
         <div className="mt-3"><button onClick={saveGit} className={btn}>Save provider</button></div>
-      </div>
+      </Panel>
       {webhooks.length > 0 && (
-        <div className={panel}>
-          <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Configured outbound webhooks</h3>
+        <Panel label="Configured outbound webhooks">
           <div className="flex flex-col gap-2">
             {webhooks.map((h) => (
               <div key={h.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
@@ -313,17 +305,16 @@ function GitWebhooksTab() {
               </div>
             ))}
           </div>
-        </div>
+        </Panel>
       )}
-      <div className={panel}>
-        <h3 className="mb-3 text-xs uppercase tracking-wide text-muted-foreground">Add outbound webhook</h3>
+      <Panel label="Add outbound webhook">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <input className={input} placeholder="name" onChange={(e) => setWh({ ...wh, name: e.target.value })} />
           <input className={input} placeholder="https url" onChange={(e) => setWh({ ...wh, url: e.target.value })} />
           <input className={input} placeholder="signing secret ref" onChange={(e) => setWh({ ...wh, secret_path: e.target.value })} />
         </div>
         <div className="mt-3"><button onClick={saveHook} className={btn}>Save webhook</button><Msg m={m} /></div>
-      </div>
+      </Panel>
     </div>
   );
 }
@@ -342,9 +333,8 @@ export default function Settings() {
   const [tab, setTab] = useState("infra");
   return (
     <div className="max-w-4xl">
-      <h1 className="text-xl font-semibold">Settings</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Integrations, credentials, and user management.</p>
-      <div className="mt-4 flex gap-1 border-b border-border">
+      <PageHeader title="Settings" subtitle="Integrations, credentials, and user management." />
+      <div className="flex gap-1 border-b border-border">
         {TABS.map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm ${tab === t.id ? "border-b-2 border-primary text-foreground" : "text-muted-foreground"}`}>{t.label}</button>
         ))}

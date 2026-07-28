@@ -6,6 +6,7 @@ import {
   PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 import { apiGet } from "@/lib/api";
+import { PageHeader, Panel, StatTile } from "@/components/dash";
 
 type Metrics = {
   total_requests: number;
@@ -25,18 +26,7 @@ const RED = "#ef4444";
 const BLUE = "#3b82f6";
 const MUTED = "#a1a1a1";
 
-const panel = "rounded-xl border border-border bg-card p-5";
 const tooltipStyle = { background: "#171717", border: "1px solid #262626", borderRadius: 8, fontSize: 12, color: "#fafafa" };
-
-function KPI({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
-  return (
-    <div className={panel}>
-      <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-2 text-2xl font-semibold" style={color ? { color } : undefined}>{value}</div>
-      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
-    </div>
-  );
-}
 
 function fmtUptime(s: number) {
   const h = Math.floor(s / 3600), mn = Math.floor((s % 3600) / 60);
@@ -88,19 +78,17 @@ export default function Telemetry() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Telemetry &amp; OTel</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Live API backend metrics (updates every 3s).</p>
+      <PageHeader title="Telemetry & OTel" subtitle="Live API backend metrics (updates every 3s)." />
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <KPI label="Total Requests" value={m ? m.total_requests.toLocaleString() : "…"} sub={m ? `${m.goroutines} goroutines` : undefined} />
-        <KPI label="Error Rate" value={m ? `${m.error_rate.toFixed(2)}%` : "…"} sub={m ? `${m.total_errors} errors` : undefined} color={m && m.error_rate > 1 ? RED : GREEN} />
-        <KPI label="Avg Latency" value={m ? `${m.average_latency_ms.toFixed(1)} ms` : "…"} color={GOLD} />
-        <KPI label="Uptime" value={m ? fmtUptime(m.uptime_seconds) : "…"} sub={m ? `${m.memory_allocated_mb.toFixed(1)} MB heap` : undefined} />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile label="Total Requests" value={m ? m.total_requests.toLocaleString() : "…"} sub={m ? `${m.goroutines} goroutines` : undefined} />
+        <StatTile label="Error Rate" value={m ? `${m.error_rate.toFixed(2)}%` : "…"} sub={m ? `${m.total_errors} errors` : undefined} color={m && m.error_rate > 1 ? "text-red-400" : "text-green-400"} />
+        <StatTile label="Avg Latency" value={m ? `${m.average_latency_ms.toFixed(1)} ms` : "…"} color="text-primary" />
+        <StatTile label="Uptime" value={m ? fmtUptime(m.uptime_seconds) : "…"} sub={m ? `${m.memory_allocated_mb.toFixed(1)} MB heap` : undefined} />
       </div>
 
       {freqData.length > 0 && (
-        <div className={`${panel} mt-6`}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Deployment Frequency — weekly, per environment (last 12 weeks)</h2>
+        <Panel label="Deployment Frequency — weekly, per environment (last 12 weeks)" className="mt-6">
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={freqData} margin={{ left: -10, right: 8, top: 5 }} maxBarSize={40} barGap={2} barCategoryGap="28%">
               <CartesianGrid strokeDasharray="3 3" stroke="#262626" vertical={false} />
@@ -113,12 +101,11 @@ export default function Telemetry() {
               {envNames.map((env, i) => <Bar key={env} dataKey={env} fill={PALETTE[i % PALETTE.length]} radius={[3, 3, 0, 0]} />)}
             </BarChart>
           </ResponsiveContainer>
-        </div>
+        </Panel>
       )}
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Requests &amp; Latency (live)</h2>
+        <Panel label="Requests & Latency (live)">
           <ResponsiveContainer width="100%" height={220}>
             <LineChart data={series} margin={{ left: -10, right: 8, top: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
@@ -130,10 +117,9 @@ export default function Telemetry() {
               <Line yAxisId="r" type="monotone" dataKey="latency" stroke={BLUE} strokeWidth={2} dot={false} name="latency ms" />
             </LineChart>
           </ResponsiveContainer>
-        </div>
+        </Panel>
 
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Heap Memory (live, MB)</h2>
+        <Panel label="Heap Memory (live, MB)">
           <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={series} margin={{ left: -10, right: 8, top: 5 }}>
               <defs>
@@ -149,10 +135,9 @@ export default function Telemetry() {
               <Area type="monotone" dataKey="memory" stroke={GOLD} strokeWidth={2} fill="url(#mem)" name="heap MB" />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
+        </Panel>
 
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">DB Connections</h2>
+        <Panel label="DB Connections">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={dbData} margin={{ left: -10, right: 8, top: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
@@ -164,10 +149,9 @@ export default function Telemetry() {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
-        </div>
+        </Panel>
 
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Request Outcomes</h2>
+        <Panel label="Request Outcomes">
           <ResponsiveContainer width="100%" height={220}>
             <PieChart>
               <Pie data={reqSplit} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2}>
@@ -180,7 +164,7 @@ export default function Telemetry() {
             <span className="flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: GREEN }} /> Success</span>
             <span className="flex items-center gap-1"><span className="size-2 rounded-full" style={{ background: RED }} /> Errors</span>
           </div>
-        </div>
+        </Panel>
       </div>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
