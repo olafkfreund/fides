@@ -150,6 +150,19 @@ By design — bring these upstream (Trivy/Grype/Syft/Bomly), Fides records + gat
 See the [Fides Gate action](ci-gate.md) for the signature/approval/runtime gates
 that complement this flow.
 
+## Gate on NEW vulnerabilities only
+
+To fail a PR only on vulnerabilities it *introduces* (not the pre-existing
+backlog), diff the current scan against a baseline:
+
+```bash
+# Exits 2 if the current scan has any CRITICAL/HIGH CVE not in the baseline.
+fides vuln diff baseline-trivy.json current-trivy.json --format trivy --fail-on-new
+```
+
+Produce `baseline-trivy.json` from the merge base (or the last release) and
+`current-trivy.json` from the PR head. Works with `--format trivy|snyk|sarif`.
+
 ## Related enhancements
 
 - `fides assert` now exits `2` on non-compliance and is a first-class
