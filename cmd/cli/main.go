@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"fides/pkg/cliprogress"
 	"fides/pkg/crypto"
 	"fides/pkg/exitcode"
 )
@@ -472,6 +473,10 @@ func handleSnapshot(config CLIConfig, args []string) {
 
 	var reportedArtifacts []map[string]string
 
+	// TTY-only progress; silent when stderr is piped/redirected (e.g. CI).
+	p := cliprogress.New(os.Stderr, false)
+	p.StartStage("Snapshotting " + runtimeType + " runtime")
+
 	if runtimeType == "docker" {
 		// Query the local Docker daemon for running containers and resolve each
 		// container's image content digest via `docker inspect`.
@@ -628,16 +633,21 @@ func handleSnapshot(config CLIConfig, args []string) {
 		}
 	}
 
+	p.CompleteStage(fmt.Sprintf("Collected %d artifact(s)", len(reportedArtifacts)))
+
 	payload := map[string]interface{}{
 		"environment_id": *envID,
 		"artifacts":      reportedArtifacts,
 	}
 
+	p.StartStage("Reporting snapshot to Fides")
 	respBody, err := postRequest(config, "/api/v1/snapshots", payload)
 	if err != nil {
+		p.CompleteStage("") // erase the spinner before the error
 		fmt.Printf("Failed to report snapshot: %v\n", err)
 		os.Exit(1)
 	}
+	p.CompleteStage("Snapshot submitted")
 
 	fmt.Printf("Snapshot submitted successfully: %s\n", respBody)
 }
