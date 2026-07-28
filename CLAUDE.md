@@ -1,6 +1,31 @@
 # CLAUDE.md — Fides project context
 
-## Frontend / Portal UI — IMPORTANT (verified 2026-07-01)
+## Frontend / Portal UI — IMPORTANT (CORRECTED 2026-07-28)
+
+> **⚠️ CORRECTION — everything below dated 2026-07-01 is STALE.** The portal
+> frontend **IS source-owned in this repo at `portal/`** (Next.js 16 / React 19 +
+> Tailwind v4). A CUTOVER (see `Dockerfile.server`) replaced the old externally
+> built compiled SPA: the Dockerfile builds `portal/` and its `out/` **overwrites
+> `./web/`**, which the Go `http.FileServer` serves at `/`.
+>
+> - **To change ANY portal UI, edit `portal/src/app/…` (real TSX), then
+>   `cd portal && npm run build`.** Frontpage/dashboard = `portal/src/app/(portal)/page.tsx`;
+>   other pages under `(portal)/` (settings, environments, controls, attestations,
+>   flows, policies, ai-audits, artifacts, telemetry, help). Components in
+>   `portal/src/components/`; API client `portal/src/lib/api.ts` (`apiGet`/`apiPost`,
+>   same-origin cookie auth). Theme tokens in `portal/src/app/globals.css` — brand
+>   `--primary` is **gold**; use `text-primary`/`border-border`/`bg-card`/
+>   `text-muted-foreground`; light+dark via next-themes. **Next 16 has breaking
+>   changes — read `portal/AGENTS.md` / `node_modules/next/dist/docs/` first.**
+> - **Do NOT** build Go-served `go:embed` HTML pages for UI, and do NOT edit
+>   `web/admin-tab.js` — that iframe-injection approach is dead (admin-tab.js is
+>   404 live). The Go-served `/servicenow`, `/admin`, `/evidence`, `/console`
+>   pages are orphaned and being removed. **Their `_ui.go` files also hold API
+>   handlers the portal still calls** (`handleServiceNowEvents` →
+>   `/api/v1/tenant/servicenow/events`, `handleConsoleSummary` →
+>   `/api/v1/console/summary`) — keep those. The `http.FileServer` on `./web` STAYS.
+>
+> Historical (stale) notes follow, kept for context only:
 
 **The portal (React/Next.js SPA) source is NOT in this repo and never was.**
 This was verified three ways:

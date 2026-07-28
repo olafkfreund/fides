@@ -1,158 +1,287 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Package, ShieldCheck, AlertTriangle, Bot, CheckCircle2, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Package, ShieldCheck, CheckCircle2, Zap } from "lucide-react";
 import { apiGet } from "@/lib/api";
 
-type Dora = {
-  deployments: number;
-  deployment_frequency_per_day: number;
-  trails: number;
-  compliance_rate: number;
-  change_failure_rate: number;
+// Live snapshot from the console summary endpoint (counts + recent checks).
+type Summary = {
+  artifacts: number;
+  checksTotal: number;
+  checksLast24h: number;
+  compliant: number;
+  nonCompliant: number;
+  compliancePct: number;
+  aiEvaluations: number;
+  recent: { name: string; kind: string; compliant: boolean; at: string }[];
 };
-type Env = { id: string; name: string; type: string };
-type Att = { id: string; name: string; type_name: string; is_compliant: boolean; created_at?: string };
-type Coverage = { total_environments: number; controls: { control: string; coverage: number }[] };
-type IntEvent = { event_type: string; status: string; created_at?: string };
+type Env = { id: string; name: string; type: string; drifts?: string[]; shadowChanges?: string[] };
+type Coverage = { controls: { control: string; coverage: number }[] };
+type IntEvent = { event_type: string; status: string };
 
-function Card({ label, value, sub, icon: Ic, iconClass, href }: { label: string; value: string; sub?: string; icon: React.ComponentType<{ className?: string }>; iconClass?: string; href?: string }) {
-  const body = (
-    <>
-      <div className="flex items-start justify-between">
-        <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-        <span className={`flex size-8 items-center justify-center rounded-lg bg-primary/10 ${iconClass || "text-primary"}`}><Ic className="size-4" /></span>
-      </div>
-      <div className="mt-2 text-2xl font-semibold">{value}</div>
-      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
-    </>
-  );
-  const base = "block rounded-xl border border-border bg-card p-5";
-  if (!href) return <div className={base}>{body}</div>;
-  // Clickable stat: highlight on hover/focus and link through to the underlying detail page.
+const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
+
+// A card with faint registration ticks at the corners — the "precision
+// instrument" motif, drawn in the brand (gold) primary.
+function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <a
-      href={href}
-      title={`View ${label} details`}
-      className={`${base} cursor-pointer transition-colors hover:border-primary hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-    >
-      {body}
-    </a>
+    <section className={`relative rounded-xl border border-border bg-card p-5 ${className}`}>
+      <span aria-hidden className="pointer-events-none absolute left-2 top-2 size-2 border-l border-t border-primary/60" />
+      <span aria-hidden className="pointer-events-none absolute bottom-2 right-2 size-2 border-b border-r border-primary/60" />
+      {children}
+    </section>
   );
 }
 
+function Label({ children }: { children: React.ReactNode }) {
+  return <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"><span className="size-1.5 rounded-full bg-primary" />{children}</h2>;
+}
+
+// Single-value ring gauge. value is 0..1.
+function Ring({ value, size, stroke, color, children }: { value: number; size: number; stroke: number; color: string; children?: React.ReactNode }) {
+  const r = size / 2 - stroke;
+  const c = 2 * Math.PI * r;
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" stroke={color}
+          strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(0, Math.min(1, value)))}
+          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.3,.8,.3,1)" }} />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
+    </div>
+  );
+}
+
+const FAM_COLORS = ["#edb200", "#49AEDC", "#35C08A", "#F2823C", "#E5484D", "#A78BFA"];
+
+// Coverage donut segmented by control-framework prefix (DORA / ISO / SOC2 …).
+function CoverageDonut({ controls }: { controls: { control: string; coverage: number }[] }) {
+  const size = 150, stroke = 14, r = size / 2 - stroke, c = 2 * Math.PI * r, gap = 4;
+  const covered = controls.filter((x) => x.coverage > 0).length;
+  const fam = new Map<string, number>();
+  for (const x of controls) { const k = x.control.split(/[-.]/)[0] || "OTHER"; fam.set(k, (fam.get(k) || 0) + 1); }
+  const keys = [...fam.keys()].sort((a, b) => fam.get(b)! - fam.get(a)!);
+  const total = controls.length || 1;
+  let offset = 0;
+  const segs = keys.map((k, i) => {
+    const frac = fam.get(k)! / total;
+    const len = Math.max(0, frac * c - gap);
+    const seg = { k, color: FAM_COLORS[i % FAM_COLORS.length], dash: `${len} ${c - len}`, off: -offset, count: fam.get(k)! };
+    offset += frac * c;
+    return seg;
+  });
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90">
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
+          {segs.map((seg) => (
+            <circle key={seg.k} cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke={seg.color} strokeDasharray={seg.dash} strokeDashoffset={seg.off} />
+          ))}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="font-mono text-2xl font-bold tabular-nums">{covered}/{controls.length}</span>
+          <span className="mt-0.5 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">Covered</span>
+        </div>
+      </div>
+      <div className="flex w-full flex-col gap-2">
+        {segs.map((seg) => (
+          <div key={seg.k} className="flex items-center gap-2.5 text-xs">
+            <span className="size-2.5 shrink-0 rounded-sm" style={{ background: seg.color }} />
+            <span className="font-mono text-muted-foreground">{seg.k}</span>
+            <span className="ml-auto font-mono tabular-nums text-muted-foreground">{seg.count}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, icon: Ic, color, href }: { label: string; value: string; sub: string; icon: React.ComponentType<{ className?: string }>; color?: string; href?: string }) {
+  const body = (
+    <>
+      <div className="flex items-start justify-between">
+        <div>
+          <div className={`font-mono text-3xl font-bold tabular-nums leading-none ${color || ""}`}>{value}</div>
+          <div className="mt-1.5 text-[9.5px] font-medium uppercase tracking-[0.13em] text-muted-foreground">{label}</div>
+        </div>
+        <span className={`flex size-8 items-center justify-center rounded-lg border border-border bg-muted/40 ${color || "text-primary"}`}><Ic className="size-4" /></span>
+      </div>
+      <div className="mt-3 text-[10.5px] text-muted-foreground">{sub}</div>
+    </>
+  );
+  const base = "block rounded-xl border border-border bg-card p-4";
+  return href
+    ? <a href={href} className={`${base} transition-colors hover:border-primary hover:bg-accent`}>{body}</a>
+    : <div className={base}>{body}</div>;
+}
+
 export default function Overview() {
-  const [dora, setDora] = useState<Dora | null>(null);
-  const [artifacts, setArtifacts] = useState<number | null>(null);
-  const [aiCount, setAiCount] = useState<number | null>(null);
+  const [s, setS] = useState<Summary | null>(null);
   const [envs, setEnvs] = useState<Env[]>([]);
-  const [atts, setAtts] = useState<Att[]>([]);
   const [cov, setCov] = useState<Coverage | null>(null);
   const [events, setEvents] = useState<IntEvent[]>([]);
-  const [err, setErr] = useState("");
+  const [updated, setUpdated] = useState<string>("");
+  const [live, setLive] = useState(true);
+  const lastTop = useRef<string | null>(null);
+  const [flashTop, setFlashTop] = useState(false);
 
   useEffect(() => {
-    apiGet<Dora>("/api/v1/metrics/dora?days=30").then(setDora).catch((e) => setErr(String(e.message || e)));
-    apiGet<unknown[]>("/api/v1/search/artifacts").then((a) => setArtifacts(Array.isArray(a) ? a.length : 0)).catch(() => {});
-    apiGet<unknown[]>("/api/v1/ai-assessments").then((a) => setAiCount(Array.isArray(a) ? a.length : 0)).catch(() => {});
-    apiGet<Env[]>("/api/v1/environments").then((e) => setEnvs(e || [])).catch(() => {});
-    apiGet<Att[]>("/api/v1/search/attestations").then((a) => setAtts(a || [])).catch(() => {});
-    apiGet<Coverage>("/api/v1/controls/coverage").then(setCov).catch(() => {});
-    apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => setEvents(e || [])).catch(() => {});
+    let stop = false;
+    const tick = () => {
+      apiGet<Summary>("/api/v1/console/summary").then((d) => {
+        if (stop) return;
+        setLive(true);
+        const top = d.recent?.[0] ? d.recent[0].name + d.recent[0].at : null;
+        if (top && lastTop.current !== null && top !== lastTop.current) { setFlashTop(true); setTimeout(() => setFlashTop(false), 1600); }
+        lastTop.current = top;
+        setS(d);
+        setUpdated(new Date().toLocaleTimeString());
+      }).catch(() => { if (!stop) setLive(false); });
+      apiGet<Env[]>("/api/v1/environments").then((e) => !stop && setEnvs(e || [])).catch(() => {});
+      apiGet<Coverage>("/api/v1/controls/coverage").then((c) => !stop && setCov(c)).catch(() => {});
+      apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => !stop && setEvents(e || [])).catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => { stop = true; clearInterval(id); };
   }, []);
 
-  const alerts = atts.filter((a) => !a.is_compliant).length;
-  const trail = atts.slice(0, 12);
+  const secureEnvs = envs.filter((e) => !e.drifts?.length && !e.shadowChanges?.length).length;
+  const pct = s?.compliancePct ?? 0;
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Dashboard</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Real-time compliance status of software components.</p>
-
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card label="Tracked Artifacts" value={artifacts === null ? "…" : String(artifacts)} sub="Build artifacts tracked" icon={Package} href="/artifacts" />
-        <Card label="Compliance Pass" value={dora ? `${Math.round(dora.compliance_rate * 100)}%` : "…"} sub="Artifacts passing JQ gates" icon={ShieldCheck} iconClass="text-green-400" href="/attestations?compliant=true" />
-        <Card label="Active Alerts" value={String(alerts)} sub="Non-compliant attestations" icon={AlertTriangle} iconClass={alerts > 0 ? "text-red-400" : "text-muted-foreground"} href="/attestations?compliant=false" />
-        <Card label="AI Evaluations" value={aiCount === null ? "…" : String(aiCount)} sub="LLM compliance reports" icon={Bot} href="/ai-audits" />
+    <div
+      className="-m-4 p-4 sm:-m-6 sm:p-6"
+      style={{
+        backgroundImage:
+          "linear-gradient(rgba(128,128,140,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(128,128,140,0.05) 1px,transparent 1px)",
+        backgroundSize: "34px 34px",
+      }}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="font-mono text-lg font-semibold uppercase tracking-[0.2em]">Assurance Console</h1>
+          <p className="mt-1 text-sm text-muted-foreground">Live compliance &amp; provenance posture across every tracked artifact.</p>
+        </div>
+        <span className={`flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-1.5 font-mono text-[11px] ${live ? "text-green-400" : "text-amber-400"}`}>
+          <span className={`size-1.5 rounded-full ${live ? "bg-green-400" : "bg-amber-400"}`} />
+          {live ? "Live" : "Offline"}<span className="text-muted-foreground">{updated && ` · ${updated}`}</span>
+        </span>
       </div>
 
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workload Environments</h2>
-          {envs.length ? (
-            <div className="flex flex-col gap-2">
-              {envs.map((e) => (
-                <div key={e.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
-                  <span className="font-mono">{e.name}</span>
-                  <span className="flex items-center gap-2">
-                    <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{e.type}</span>
-                    <span className="rounded bg-green-500/15 px-2 py-0.5 text-xs font-medium text-green-400">SECURE</span>
+      {/* Row 1 — posture + coverage + environments */}
+      <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <Panel className="lg:col-span-2">
+          <Label>Compliance Posture</Label>
+          <div className="mt-4 flex flex-wrap items-center gap-6">
+            <Ring value={pct / 100} size={190} stroke={13} color="#35C08A">
+              <span className="font-mono text-[44px] font-bold leading-none tabular-nums">{s ? pct : "—"}<span className="text-xl text-muted-foreground">%</span></span>
+              <span className="mt-1 font-mono text-[11px] uppercase tracking-[0.22em] text-green-400">Passing</span>
+            </Ring>
+            <div className="min-w-[220px] flex-1">
+              <h3 className="text-lg font-semibold">{s && s.nonCompliant > 0 ? `${s.nonCompliant} need attention` : "All environments verified & sealed"}</h3>
+              <p className="mt-1 text-sm text-muted-foreground">Every tracked artifact carries a signed attestation chain; the tamper-evident ledger is intact.</p>
+              <div className="mt-4 grid grid-cols-3 gap-2.5">
+                {[
+                  { n: num(s?.artifacts), t: "Artifacts", cls: "" },
+                  { n: num(s?.nonCompliant), t: "Alerts", cls: s && s.nonCompliant > 0 ? "text-red-400" : "text-green-400" },
+                  { n: num(s?.aiEvaluations), t: "AI evals", cls: "text-primary" },
+                ].map((f) => (
+                  <div key={f.t} className="rounded-lg border border-border bg-muted/30 p-2.5">
+                    <div className={`font-mono text-xl font-bold tabular-nums ${f.cls}`}>{f.n}</div>
+                    <div className="mt-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground">{f.t}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </Panel>
+
+        <Panel>
+          <Label>Controls Coverage</Label>
+          <div className="mt-4">
+            {cov && cov.controls.length ? <CoverageDonut controls={cov.controls} /> : <p className="text-sm text-muted-foreground">No controls defined yet.</p>}
+          </div>
+        </Panel>
+
+        <Panel>
+          <Label>Environments</Label>
+          <div className="mt-4 flex items-center gap-4">
+            <Ring value={envs.length ? secureEnvs / envs.length : 0} size={64} stroke={7} color="#35C08A">
+              <span className="font-mono text-xs font-bold text-green-400">{secureEnvs}/{envs.length || 0}</span>
+            </Ring>
+            <div className="font-mono text-[11px] leading-relaxed text-muted-foreground">
+              <span className="text-green-400">{envs.length && secureEnvs === envs.length ? "All secure" : `${envs.length - secureEnvs} drifting`}</span><br />
+              {envs.length} workloads · {envs.length - secureEnvs} drift
+            </div>
+          </div>
+          <div className="mt-4 flex max-h-[220px] flex-col gap-1.5 overflow-auto">
+            {envs.map((e) => {
+              const secure = !e.drifts?.length && !e.shadowChanges?.length;
+              return (
+                <div key={e.id} className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-2.5 py-1.5">
+                  <span className={`size-1.5 rounded-full ${secure ? "bg-green-400" : "bg-red-400"}`} />
+                  <span className="truncate font-mono text-xs">{e.name}</span>
+                  <span className="ml-auto flex shrink-0 gap-1.5">
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">{/aws|ecs|lambda/i.test(e.type + e.name) ? "AWS" : "K8s"}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase ${secure ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{secure ? "Secure" : "Drift"}</span>
                   </span>
                 </div>
-              ))}
-            </div>
-          ) : <p className="text-sm text-muted-foreground">No environments.</p>}
-        </div>
-
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Audit Log Trail</h2>
-          {trail.length ? (
-            <div className="flex flex-col gap-2">
-              {trail.map((a) => (
-                <div key={a.id} className="flex items-start gap-2 border-t border-border pt-2 text-sm first:border-t-0 first:pt-0">
-                  <CheckCircle2 className={`mt-0.5 size-4 shrink-0 ${a.is_compliant ? "text-green-400" : "text-red-400"}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-mono">{a.name} <span className="text-muted-foreground">· {a.type_name}</span></div>
-                    <div className="text-xs text-muted-foreground">{(a.created_at || "").replace("T", " ").slice(0, 19)}</div>
-                  </div>
-                  <span className={`text-xs font-medium ${a.is_compliant ? "text-green-400" : "text-red-400"}`}>{a.is_compliant ? "pass" : "fail"}</span>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-sm text-muted-foreground">No recent attestations.</p>}
-        </div>
-      </div>
-
-      <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Controls Coverage</h2>
-            {cov && cov.controls.length ? (
-              <span className="text-xs text-muted-foreground">{cov.controls.filter((c) => c.coverage > 0).length}/{cov.controls.length} covered · <a href="/controls" className="text-primary hover:underline">view all</a></span>
-            ) : null}
+              );
+            })}
+            {!envs.length && <p className="text-sm text-muted-foreground">No environments.</p>}
           </div>
-          {cov && cov.controls.length ? (
-            <div className="flex flex-col gap-2.5">
-              {/* Show the least-covered controls first — the gaps that need attention. */}
-              {[...cov.controls].sort((a, b) => a.coverage - b.coverage).slice(0, 8).map((c) => (
-                <div key={c.control}>
-                  <div className="flex justify-between text-xs"><span className="font-mono">{c.control}</span><span className={c.coverage === 0 ? "text-red-400" : c.coverage < 1 ? "text-amber-400" : "text-green-400"}>{Math.round(c.coverage * 100)}%</span></div>
-                  <div className="mt-1 h-1.5 w-full rounded-full bg-muted"><div className={`h-1.5 rounded-full ${c.coverage === 0 ? "bg-red-500" : c.coverage < 1 ? "bg-amber-500" : "bg-green-500"}`} style={{ width: `${Math.round(c.coverage * 100)}%` }} /></div>
-                </div>
-              ))}
-              {cov.controls.length > 8 ? (
-                <a href="/controls" className="mt-1 text-xs text-primary hover:underline">+ {cov.controls.length - 8} more controls →</a>
-              ) : null}
-            </div>
-          ) : <p className="text-sm text-muted-foreground">No controls defined yet.</p>}
-        </div>
-
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Integration Events <span className="font-normal normal-case text-muted-foreground">· ServiceNow &amp; webhooks</span></h2>
-          {events.length ? (
-            <div className="flex flex-col gap-1.5">
-              {events.slice(0, 8).map((e, i) => (
-                <div key={i} className="flex items-center justify-between border-t border-border pt-1.5 text-xs first:border-t-0 first:pt-0">
-                  <span className="flex items-center gap-1.5 font-mono"><Zap className="size-3.5 text-primary" />{e.event_type}</span>
-                  <span className={e.status === "delivered" || e.status === "success" ? "text-green-400" : e.status === "failed" ? "text-red-400" : "text-amber-400"}>{e.status}</span>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-sm text-muted-foreground">No integration events yet — ServiceNow change requests and webhook deliveries appear here once enabled.</p>}
-        </div>
+        </Panel>
       </div>
 
-      {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
+      {/* Row 2 — KPI tiles */}
+      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi label="Checks performed" value={num(s?.checksTotal)} sub="Cumulative attestations" icon={CheckCircle2} href="/attestations" />
+        <Kpi label="Checks · last 24h" value={num(s?.checksLast24h)} sub="Throughput" icon={Zap} color="text-primary" />
+        <Kpi label="Compliant checks" value={num(s?.compliant)} sub="Sealed &amp; verified" icon={ShieldCheck} color="text-green-400" href="/attestations?compliant=true" />
+        <Kpi label="Tracked artifacts" value={num(s?.artifacts)} sub="Build artifacts" icon={Package} href="/artifacts" />
+      </div>
+
+      {/* Row 3 — live checks + integrations */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Panel className="lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <Label>Live Checks</Label>
+            <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-green-400"><span className="size-1.5 rounded-full bg-green-400" />streaming</span>
+          </div>
+          <div className="mt-3 flex max-h-[420px] flex-col overflow-auto">
+            {s?.recent?.length ? s.recent.map((e, i) => (
+              <div key={e.name + e.at} className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-dashed border-border py-2.5 last:border-0 ${i === 0 && flashTop ? "animate-pulse" : ""}`}>
+                <span className={`size-2.5 rounded-full border-2 ${e.compliant ? "border-green-400" : "border-red-400"}`} />
+                <div className="min-w-0">
+                  <div className="truncate font-mono text-[12.5px]">{e.name}</div>
+                  <div className="font-mono text-[10.5px] text-muted-foreground">{e.kind}</div>
+                </div>
+                <span className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${e.compliant ? "border-green-500/40 bg-green-500/10 text-green-400" : "border-red-500/40 bg-red-500/10 text-red-400"}`}>{e.compliant ? "pass" : "fail"}</span>
+              </div>
+            )) : <p className="py-4 font-mono text-xs text-muted-foreground">Connecting to the attestation stream…</p>}
+          </div>
+        </Panel>
+
+        <Panel>
+          <Label>Integrations</Label>
+          <div className="mt-3 flex flex-col gap-2">
+            {events.length ? events.slice(0, 10).map((e, i) => {
+              const ok = e.status === "delivered" || e.status === "success";
+              return (
+                <div key={i} className="flex items-center gap-2.5 font-mono text-[11.5px]">
+                  <Zap className="size-3.5 shrink-0 text-primary" />
+                  <span className="truncate text-muted-foreground">{e.event_type}</span>
+                  <span className={`ml-auto shrink-0 text-[9.5px] uppercase tracking-[0.13em] ${ok ? "text-green-400" : e.status === "failed" ? "text-red-400" : "text-amber-400"}`}>{e.status}</span>
+                </div>
+              );
+            }) : <p className="text-sm text-muted-foreground">No integration events yet.</p>}
+          </div>
+        </Panel>
+      </div>
     </div>
   );
 }
