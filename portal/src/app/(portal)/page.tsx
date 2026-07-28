@@ -64,13 +64,13 @@ function CoverageDonut({ controls }: { controls: { control: string; coverage: nu
   for (const x of controls) { const k = x.control.split(/[-.]/)[0] || "OTHER"; fam.set(k, (fam.get(k) || 0) + 1); }
   const keys = [...fam.keys()].sort((a, b) => fam.get(b)! - fam.get(a)!);
   const total = controls.length || 1;
-  let offset = 0;
+  // Prefix-sum the offset purely (no render-scope reassignment — the Next 16
+  // React Compiler forbids mutating a variable declared during render).
   const segs = keys.map((k, i) => {
     const frac = fam.get(k)! / total;
     const len = Math.max(0, frac * c - gap);
-    const seg = { k, color: FAM_COLORS[i % FAM_COLORS.length], dash: `${len} ${c - len}`, off: -offset, count: fam.get(k)! };
-    offset += frac * c;
-    return seg;
+    const prev = keys.slice(0, i).reduce((sum, kk) => sum + (fam.get(kk)! / total) * c, 0);
+    return { k, color: FAM_COLORS[i % FAM_COLORS.length], dash: `${len} ${c - len}`, off: -prev, count: fam.get(k)! };
   });
   return (
     <div className="flex flex-col items-center gap-4">
