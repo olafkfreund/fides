@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Copy, Package, CheckCircle2, XCircle, ShieldCheck, FileText } from "lucide-react";
 import { apiGet } from "@/lib/api";
-import { PageHeader, Panel, Chip } from "@/components/dash";
+import { PageHeader, Panel, Chip, DistBars } from "@/components/dash";
 
 type Artifact = { sha256: string; name: string; type: string; git_commit?: string; created_at?: string };
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; created_at?: string };
@@ -108,6 +108,17 @@ export default function Artifacts() {
   return (
     <div>
       <PageHeader title="Artifacts & SBOM" subtitle="Search build artifacts; click one for its attestations and SBOM." />
+
+      {arts.length > 0 && (
+        <Panel label="Inventory" className="mt-6">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
+            <div className="min-w-[280px] flex-1">
+              <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">By type</div>
+              <DistBars items={Object.entries(arts.reduce<Record<string, number>>((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {})).map(([label, value]) => ({ label, value }))} />
+            </div>
+          </div>
+        </Panel>
+      )}
 
       <Panel label="Registry" className="mt-6">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto]">

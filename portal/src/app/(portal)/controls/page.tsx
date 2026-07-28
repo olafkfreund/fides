@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Info, Archive, ArchiveRestore, ShieldCheck, ChevronRight, Check, Plus, Loader2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import { PageHeader, StatTile, Chip } from "@/components/dash";
+import { PageHeader, StatTile, Chip, Panel, Donut, DistBars } from "@/components/dash";
 
 type Control = { id: string; key: string; name: string; framework?: string; required_types?: string[]; archived?: boolean };
 type CovControl = { control: string; name: string; framework?: string; enforced_in: string[]; coverage: number };
@@ -111,6 +111,18 @@ export default function Controls() {
         <StatTile label="Fully covered" value={String(fully)} sub="enforced everywhere" color={fully ? "text-green-400" : "text-muted-foreground"} />
         <StatTile label="Gaps" value={String(gaps)} sub="need attention" color={gaps ? "text-amber-400" : "text-green-400"} />
       </div>
+
+      {covControls.length > 0 && (
+        <Panel label="Coverage" className="mt-4">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-6">
+            <Donut value={avg / 100} color="#35C08A" sublabel="avg coverage" />
+            <div className="min-w-[280px] flex-1">
+              <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Controls by framework</div>
+              <DistBars items={groupNames.map((fw) => ({ label: fw, value: groups[fw].length }))} />
+            </div>
+          </div>
+        </Panel>
+      )}
 
       {msg.t && <p className={`mt-4 text-sm ${msg.ok ? "text-green-400" : "text-red-400"}`}>{msg.t}</p>}
 

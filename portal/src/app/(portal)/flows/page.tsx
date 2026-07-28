@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, ChevronDown, ShieldCheck, ShieldAlert } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import { PageHeader, Panel, Chip } from "@/components/dash";
+import { PageHeader, Panel, Chip, DistBars } from "@/components/dash";
 
 type Flow = { id: string; name: string; description?: string; created_at?: string; updated_at?: string; tags?: Record<string, string> | string[] | null };
 type Trail = { id: string; name: string; git_commit?: string; git_branch?: string; created_at?: string; attestations: number; compliant: boolean };
@@ -82,11 +82,25 @@ export default function Flows() {
 
   const shown = flows.filter((f) => f.name.toLowerCase().includes(ffilter.toLowerCase()));
 
+  // Activity viz from already-fetched data: prefer the expanded flow's
+  // attestations-per-trail; otherwise trails-per-flow for whatever flows have
+  // been loaded. No new fetches — both come from trailsByFlow / flows.
+  const selTrails = expanded ? trailsByFlow[expanded] : undefined;
+  const activity = selTrails && selTrails.length
+    ? { header: "Attestations per trail", items: selTrails.map((t) => ({ label: t.name, value: t.attestations })) }
+    : { header: "Trails per flow", items: Object.entries(trailsByFlow).map(([id, ts]) => ({ label: flows.find((f) => f.id === id)?.name || id, value: ts.length })) };
+
   return (
     <div>
       <PageHeader title="Flows &amp; Trails" subtitle="Delivery pipelines and their build trails. Click a flow to see its trails." />
 
       <div className="flex flex-col gap-5">
+        {activity.items.length > 0 && (
+          <Panel label="Activity">
+            <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{activity.header}</div>
+            <DistBars items={activity.items} />
+          </Panel>
+        )}
         <Panel label="New Flow">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <input className={input} value={nName} onChange={(e) => setNName(e.target.value)} placeholder="flow name" />
