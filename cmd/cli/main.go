@@ -64,6 +64,8 @@ func main() {
 		handleVerifyImage(config, os.Args[2:])
 	case "snapshot":
 		handleSnapshot(config, os.Args[2:])
+	case "sbom":
+		handleSBOM(config, os.Args[2:])
 	case "servicenow":
 		handleServiceNow(config, os.Args[2:])
 	case "git-provider":
@@ -177,6 +179,7 @@ func printUsage() {
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
 	fmt.Println("  dashboard        Interactive terminal dashboard of live server stats (TUI)")
+	fmt.Println("  sbom diff        Diff two local SBOM files (added/removed/changed components) [--json]")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
