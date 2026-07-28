@@ -2,22 +2,10 @@ package api
 
 import (
 	"database/sql"
-	_ "embed"
 	"encoding/json"
 	"net/http"
 	"time"
 )
-
-//go:embed assets/servicenow.html
-var serviceNowAdminHTML []byte
-
-// handleServiceNowAdminPage serves the standalone ServiceNow admin page. The
-// page shell is public; its API calls are authenticated by the session cookie.
-func (s *Server) handleServiceNowAdminPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Write(serviceNowAdminHTML)
-}
 
 type integrationEventView struct {
 	EventType string  `json:"event_type"`

@@ -1,23 +1,10 @@
 package api
 
 import (
-	_ "embed"
 	"encoding/json"
 	"net/http"
 	"time"
 )
-
-//go:embed assets/console.html
-var consoleHTML []byte
-
-// handleConsolePage serves the redesigned Fides assurance console. The page
-// shell is public; its API calls are authenticated by the session cookie, like
-// the /servicenow and /admin pages.
-func (s *Server) handleConsolePage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = w.Write(consoleHTML)
-}
 
 type consoleRecentCheck struct {
 	Name      string `json:"name"`
