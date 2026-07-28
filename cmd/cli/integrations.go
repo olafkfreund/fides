@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fides/pkg/cliprogress"
 	"fides/pkg/evidence"
 	"fides/pkg/exitcode"
 )
@@ -1006,11 +1007,17 @@ func handleEnvVerify(config CLIConfig, args []string) {
 		fmt.Println("Error: provide at least one --rule or a --rules-file")
 		os.Exit(1)
 	}
+	p := cliprogress.New(os.Stderr, false)
+	p.StartStage("Running runtime compliance check")
 	body, err := postRequest(config, "/api/v1/environments/mcp/verify", map[string]any{
 		"environment_id": *env, "server_name": *server, "tool_name": *tool,
 		"arguments": map[string]any{}, "rules": rl,
 	})
-	fail(err, "verify environment compliance")
+	if err != nil {
+		p.CompleteStage("")
+		fail(err, "verify environment compliance")
+	}
+	p.CompleteStage("Runtime checked")
 	fmt.Println(body)
 	if strings.Contains(body, "\"compliant\":false") {
 		os.Exit(exitcode.Violation) // so CI can gate on runtime compliance
@@ -1229,8 +1236,14 @@ func handleVerifyChain(config CLIConfig, args []string) {
 		fmt.Println("Usage: fides verify-chain --trail <trail_id>")
 		os.Exit(1)
 	}
+	p := cliprogress.New(os.Stderr, false)
+	p.StartStage("Verifying tamper-evidence chain")
 	body, err := getRequest(config, "/api/v1/trails/"+*trailID+"/verify-chain")
-	fail(err, "verify chain")
+	if err != nil {
+		p.CompleteStage("")
+		fail(err, "verify chain")
+	}
+	p.CompleteStage("Chain checked")
 	fmt.Println(body)
 	if strings.Contains(body, "\"valid\":false") {
 		os.Exit(exitcode.Violation) // so CI fails on a broken chain
