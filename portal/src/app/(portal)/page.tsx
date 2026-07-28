@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Package, ShieldCheck, CheckCircle2, Zap } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { Panel, SectionLabel, Ring, StatTile } from "@/components/dash";
 
 // Live snapshot from the console summary endpoint (counts + recent checks).
 type Summary = {
@@ -20,39 +21,6 @@ type Coverage = { controls: { control: string; coverage: number }[] };
 type IntEvent = { event_type: string; status: string };
 
 const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
-
-// A card with faint registration ticks at the corners — the "precision
-// instrument" motif, drawn in the brand (gold) primary.
-function Panel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <section className={`relative rounded-xl border border-border bg-card p-5 ${className}`}>
-      <span aria-hidden className="pointer-events-none absolute left-2 top-2 size-2 border-l border-t border-primary/60" />
-      <span aria-hidden className="pointer-events-none absolute bottom-2 right-2 size-2 border-b border-r border-primary/60" />
-      {children}
-    </section>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"><span className="size-1.5 rounded-full bg-primary" />{children}</h2>;
-}
-
-// Single-value ring gauge. value is 0..1.
-function Ring({ value, size, stroke, color, children }: { value: number; size: number; stroke: number; color: string; children?: React.ReactNode }) {
-  const r = size / 2 - stroke;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" stroke={color}
-          strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(0, Math.min(1, value)))}
-          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.3,.8,.3,1)" }} />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
-    </div>
-  );
-}
 
 const FAM_COLORS = ["#edb200", "#49AEDC", "#35C08A", "#F2823C", "#E5484D", "#A78BFA"];
 
@@ -97,25 +65,6 @@ function CoverageDonut({ controls }: { controls: { control: string; coverage: nu
       </div>
     </div>
   );
-}
-
-function Kpi({ label, value, sub, icon: Ic, color, href }: { label: string; value: string; sub: string; icon: React.ComponentType<{ className?: string }>; color?: string; href?: string }) {
-  const body = (
-    <>
-      <div className="flex items-start justify-between">
-        <div>
-          <div className={`font-mono text-3xl font-bold tabular-nums leading-none ${color || ""}`}>{value}</div>
-          <div className="mt-1.5 text-[9.5px] font-medium uppercase tracking-[0.13em] text-muted-foreground">{label}</div>
-        </div>
-        <span className={`flex size-8 items-center justify-center rounded-lg border border-border bg-muted/40 ${color || "text-primary"}`}><Ic className="size-4" /></span>
-      </div>
-      <div className="mt-3 text-[10.5px] text-muted-foreground">{sub}</div>
-    </>
-  );
-  const base = "block rounded-xl border border-border bg-card p-4";
-  return href
-    ? <a href={href} className={`${base} transition-colors hover:border-primary hover:bg-accent`}>{body}</a>
-    : <div className={base}>{body}</div>;
 }
 
 export default function Overview() {
@@ -175,7 +124,7 @@ export default function Overview() {
       {/* Row 1 — posture + coverage + environments */}
       <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-4">
         <Panel className="lg:col-span-2">
-          <Label>Compliance Posture</Label>
+          <SectionLabel>Compliance Posture</SectionLabel>
           <div className="mt-4 flex flex-wrap items-center gap-6">
             <Ring value={pct / 100} size={190} stroke={13} color="#35C08A">
               <span className="font-mono text-[44px] font-bold leading-none tabular-nums">{s ? pct : "—"}<span className="text-xl text-muted-foreground">%</span></span>
@@ -201,14 +150,14 @@ export default function Overview() {
         </Panel>
 
         <Panel>
-          <Label>Controls Coverage</Label>
+          <SectionLabel>Controls Coverage</SectionLabel>
           <div className="mt-4">
             {cov && cov.controls.length ? <CoverageDonut controls={cov.controls} /> : <p className="text-sm text-muted-foreground">No controls defined yet.</p>}
           </div>
         </Panel>
 
         <Panel>
-          <Label>Environments</Label>
+          <SectionLabel>Environments</SectionLabel>
           <div className="mt-4 flex items-center gap-4">
             <Ring value={envs.length ? secureEnvs / envs.length : 0} size={64} stroke={7} color="#35C08A">
               <span className="font-mono text-xs font-bold text-green-400">{secureEnvs}/{envs.length || 0}</span>
@@ -239,17 +188,17 @@ export default function Overview() {
 
       {/* Row 2 — KPI tiles */}
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Kpi label="Checks performed" value={num(s?.checksTotal)} sub="Cumulative attestations" icon={CheckCircle2} href="/attestations" />
-        <Kpi label="Checks · last 24h" value={num(s?.checksLast24h)} sub="Throughput" icon={Zap} color="text-primary" />
-        <Kpi label="Compliant checks" value={num(s?.compliant)} sub="Sealed &amp; verified" icon={ShieldCheck} color="text-green-400" href="/attestations?compliant=true" />
-        <Kpi label="Tracked artifacts" value={num(s?.artifacts)} sub="Build artifacts" icon={Package} href="/artifacts" />
+        <StatTile label="Checks performed" value={num(s?.checksTotal)} sub="Cumulative attestations" icon={CheckCircle2} href="/attestations" />
+        <StatTile label="Checks · last 24h" value={num(s?.checksLast24h)} sub="Throughput" icon={Zap} color="text-primary" />
+        <StatTile label="Compliant checks" value={num(s?.compliant)} sub="Sealed &amp; verified" icon={ShieldCheck} color="text-green-400" href="/attestations?compliant=true" />
+        <StatTile label="Tracked artifacts" value={num(s?.artifacts)} sub="Build artifacts" icon={Package} href="/artifacts" />
       </div>
 
       {/* Row 3 — live checks + integrations */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Panel className="lg:col-span-2">
           <div className="flex items-center justify-between">
-            <Label>Live Checks</Label>
+            <SectionLabel>Live Checks</SectionLabel>
             <span className="flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-green-400"><span className="size-1.5 rounded-full bg-green-400" />streaming</span>
           </div>
           <div className="mt-3 flex max-h-[420px] flex-col overflow-auto">
@@ -267,7 +216,7 @@ export default function Overview() {
         </Panel>
 
         <Panel>
-          <Label>Integrations</Label>
+          <SectionLabel>Integrations</SectionLabel>
           <div className="mt-3 flex flex-col gap-2">
             {events.length ? events.slice(0, 10).map((e, i) => {
               const ok = e.status === "delivered" || e.status === "success";
