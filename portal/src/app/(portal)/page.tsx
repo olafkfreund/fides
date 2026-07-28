@@ -21,6 +21,7 @@ type Coverage = { controls: { control: string; coverage: number }[] };
 type IntEvent = { event_type: string; status: string };
 
 const num = (n: number | null | undefined) => (n == null ? "—" : n.toLocaleString());
+const hhmmss = (iso: string) => { const d = new Date(iso); return isNaN(d.getTime()) ? "" : d.toTimeString().slice(0, 8); };
 
 const FAM_COLORS = ["#edb200", "#49AEDC", "#35C08A", "#F2823C", "#E5484D", "#A78BFA"];
 
@@ -125,6 +126,15 @@ export default function Overview() {
 
   const secureEnvs = envs.filter((e) => !e.drifts?.length && !e.shadowChanges?.length).length;
   const pct = s?.compliancePct ?? 0;
+  // Collapse the repetitive integration stream into one row per event type with a count.
+  const eventGroups = Object.values(
+    events.reduce<Record<string, { type: string; count: number; ok: boolean }>>((m, e) => {
+      const g = (m[e.event_type] ??= { type: e.event_type, count: 0, ok: true });
+      g.count++;
+      if (e.status !== "delivered" && e.status !== "success") g.ok = false;
+      return m;
+    }, {}),
+  ).sort((a, b) => b.count - a.count);
 
   return (
     <div
@@ -228,13 +238,14 @@ export default function Overview() {
           </div>
           <div className="mt-3 flex max-h-[420px] flex-col overflow-auto">
             {s?.recent?.length ? s.recent.map((e, i) => (
-              <div key={e.name + e.at} className={`grid grid-cols-[auto_1fr_auto] items-center gap-3 border-b border-dashed border-border py-2.5 last:border-0 ${i === 0 && flashTop ? "animate-pulse" : ""}`}>
+              <div key={e.name + e.at} className={`grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-3 border-b border-dashed border-border py-2.5 last:border-0 ${i === 0 && flashTop ? "animate-pulse" : ""}`}>
                 <span className={`size-2.5 rounded-full border-2 ${e.compliant ? "border-green-400" : "border-red-400"}`} />
                 <div className="min-w-0">
                   <div className="truncate font-mono text-[12.5px]">{e.name}</div>
-                  <div className="font-mono text-[10.5px] text-muted-foreground">{e.kind}</div>
+                  <div className="truncate font-mono text-[10.5px] text-muted-foreground">{e.kind}</div>
                 </div>
-                <span className={`rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${e.compliant ? "border-green-500/40 bg-green-500/10 text-green-400" : "border-red-500/40 bg-red-500/10 text-red-400"}`}>{e.compliant ? "pass" : "fail"}</span>
+                <span className="hidden shrink-0 font-mono text-[10.5px] tabular-nums text-muted-foreground sm:block">{hhmmss(e.at)}</span>
+                <span className={`shrink-0 rounded border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] ${e.compliant ? "border-green-500/40 bg-green-500/10 text-green-400" : "border-red-500/40 bg-red-500/10 text-red-400"}`}>{e.compliant ? "pass" : "fail"}</span>
               </div>
             )) : <p className="py-4 font-mono text-xs text-muted-foreground">Connecting to the attestation stream…</p>}
           </div>
@@ -242,17 +253,15 @@ export default function Overview() {
 
         <Panel>
           <SectionLabel>Integrations</SectionLabel>
-          <div className="mt-3 flex flex-col gap-2">
-            {events.length ? events.slice(0, 10).map((e, i) => {
-              const ok = e.status === "delivered" || e.status === "success";
-              return (
-                <div key={i} className="flex items-center gap-2.5 font-mono text-[11.5px]">
-                  <Zap className="size-3.5 shrink-0 text-primary" />
-                  <span className="truncate text-muted-foreground">{e.event_type}</span>
-                  <span className={`ml-auto shrink-0 text-[9.5px] uppercase tracking-[0.13em] ${ok ? "text-green-400" : e.status === "failed" ? "text-red-400" : "text-amber-400"}`}>{e.status}</span>
-                </div>
-              );
-            }) : <p className="text-sm text-muted-foreground">No integration events yet.</p>}
+          <div className="mt-3 flex flex-col gap-2.5">
+            {eventGroups.length ? eventGroups.map((g) => (
+              <div key={g.type} className="flex items-center gap-2.5 font-mono text-[11.5px]">
+                <Zap className="size-3.5 shrink-0 text-primary" />
+                <span className="truncate text-muted-foreground">{g.type}</span>
+                {g.count > 1 && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[9.5px] tabular-nums text-muted-foreground">×{g.count}</span>}
+                <span className={`ml-auto shrink-0 text-[9.5px] uppercase tracking-[0.13em] ${g.ok ? "text-green-400" : "text-red-400"}`}>{g.ok ? "delivered" : "issues"}</span>
+              </div>
+            )) : <p className="text-sm text-muted-foreground">No integration events yet.</p>}
           </div>
         </Panel>
       </div>
