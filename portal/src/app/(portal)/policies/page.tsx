@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus, Trash2, Save, Sparkles, Info, Loader2, Wand2, ShieldCheck, Maximize2, Minimize2 } from "lucide-react";
 import { apiGet, apiPost, api } from "@/lib/api";
+import { PageHeader, Panel } from "@/components/dash";
 
 // Monaco is client-only; load it with ssr:false so the static export doesn't try
 // to prerender it.
@@ -87,8 +88,7 @@ export default function Policies() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Policies</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Deterministic compliance gates evaluated with jq rules.</p>
+      <PageHeader title="Policies" subtitle="Deterministic compliance gates evaluated with jq rules." />
 
       <div className="mt-4 flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0 text-primary" />
@@ -96,7 +96,7 @@ export default function Policies() {
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-[280px_1fr]">
-        <div className="rounded-xl border border-border bg-card p-3">
+        <Panel>
           <button onClick={() => { setMode("new"); setSel(null); }} className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground">
             <Plus className="size-4" /> New Policy
           </button>
@@ -106,9 +106,9 @@ export default function Policies() {
               {p.target && <div className="truncate text-xs text-muted-foreground">{p.target}</div>}
             </button>
           )) : <p className="p-3 text-sm text-muted-foreground">No policies yet.</p>}
-        </div>
+        </Panel>
 
-        <div className="rounded-xl border border-border bg-card p-5">
+        <Panel>
           {mode === "new" ? (
             <>
               <h2 className="text-sm font-semibold">New policy</h2>
@@ -167,7 +167,7 @@ export default function Policies() {
               </div>
             </>
           ) : <p className="text-sm text-muted-foreground">Select a policy, or create a new one.</p>}
-        </div>
+        </Panel>
       </div>
     </div>
   );

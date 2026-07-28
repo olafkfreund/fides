@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { PageHeader, Panel, StatTile, Chip } from "@/components/dash";
 
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; trail_id: string; created_at?: string };
 type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algorithm?: string; content_hash?: string; artifact_sha256?: string };
@@ -55,16 +56,15 @@ export default function Attestations() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Attestations</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Evidence recorded against build trails.</p>
+      <PageHeader title="Attestations" subtitle="Evidence recorded against build trails." />
 
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-border bg-card p-5"><div className="text-xs uppercase tracking-wide text-muted-foreground">Total</div><div className="mt-2 text-2xl font-semibold">{atts.length}</div></div>
-        <div className="rounded-xl border border-border bg-card p-5"><div className="text-xs uppercase tracking-wide text-muted-foreground">Compliant</div><div className="mt-2 text-2xl font-semibold text-green-400">{atts.length ? Math.round((compliant / atts.length) * 100) : 0}%</div><div className="mt-1 text-xs text-muted-foreground">{compliant} of {atts.length}</div></div>
-        <div className="rounded-xl border border-border bg-card p-5"><div className="text-xs uppercase tracking-wide text-muted-foreground">Evidence Types</div><div className="mt-2 text-2xl font-semibold">{types.length}</div></div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <StatTile label="Total" value={String(atts.length)} />
+        <StatTile label="Compliant" value={`${atts.length ? Math.round((compliant / atts.length) * 100) : 0}%`} sub={`${compliant} of ${atts.length}`} color="text-green-400" />
+        <StatTile label="Evidence Types" value={String(types.length)} />
       </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card p-5">
+      <Panel label="Ledger" className="mt-6">
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <input className={`${control} w-56`} value={name} onChange={(e) => setName(e.target.value)} placeholder="Find by name…" />
           <input className={`${control} w-48`} value={type} onChange={(e) => setType(e.target.value)} placeholder="Type (junit, snyk…)" />
@@ -87,8 +87,8 @@ export default function Attestations() {
                       <div className="truncate text-sm font-medium">{a.name}</div>
                       <div className="truncate font-mono text-xs text-muted-foreground">trail {a.trail_id.slice(0, 8)} · {(a.created_at || "").replace("T", " ").slice(0, 19)}</div>
                     </div>
-                    <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{a.type_name}</span>
-                    <span className={`w-24 text-right text-xs font-medium ${a.is_compliant ? "text-green-400" : "text-red-400"}`}>{a.is_compliant ? "Compliant" : "Non-compliant"}</span>
+                    <Chip tone="muted">{a.type_name}</Chip>
+                    <span className="w-24 text-right"><Chip tone={a.is_compliant ? "ok" : "bad"}>{a.is_compliant ? "pass" : "fail"}</Chip></span>
                   </button>
                   {d && (
                     <div className="mt-2 space-y-2 pl-11">
@@ -107,7 +107,7 @@ export default function Attestations() {
             })}
           </div>
         ) : <p className="text-sm text-muted-foreground">No attestations match.</p>}
-      </div>
+      </Panel>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
     </div>

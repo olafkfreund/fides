@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, ChevronDown, ShieldCheck, ShieldAlert } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
+import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Flow = { id: string; name: string; description?: string; created_at?: string; updated_at?: string; tags?: Record<string, string> | string[] | null };
 type Trail = { id: string; name: string; git_commit?: string; git_branch?: string; created_at?: string; attestations: number; compliant: boolean };
@@ -19,7 +20,6 @@ function tagList(tags: Flow["tags"]): string[] {
 }
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
-const panel = "rounded-xl border border-border bg-card p-5";
 
 export default function Flows() {
   const [flows, setFlows] = useState<Flow[]>([]);
@@ -84,24 +84,18 @@ export default function Flows() {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Flows &amp; Trails</h1>
-      <p className="mt-1 text-sm text-muted-foreground">Delivery pipelines and their build trails. Click a flow to see its trails.</p>
+      <PageHeader title="Flows &amp; Trails" subtitle="Delivery pipelines and their build trails. Click a flow to see its trails." />
 
-      <div className="mt-6 flex flex-col gap-5">
-        <div className={panel}>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">New Flow</h2>
+      <div className="flex flex-col gap-5">
+        <Panel label="New Flow">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <input className={input} value={nName} onChange={(e) => setNName(e.target.value)} placeholder="flow name" />
             <input className={input} value={nDesc} onChange={(e) => setNDesc(e.target.value)} placeholder="description" />
             <button onClick={createFlow} disabled={!nName} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">Create flow</button>
           </div>
-        </div>
+        </Panel>
 
-        <div className={panel}>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Flows</h2>
-            <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={ffilter} onChange={(e) => setFfilter(e.target.value)} placeholder="Filter by name…" />
-          </div>
+        <Panel label="Flows" right={<input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={ffilter} onChange={(e) => setFfilter(e.target.value)} placeholder="Filter by name…" />}>
           {shown.length === 0 && <p className="text-sm text-muted-foreground">No flows.</p>}
           <div className="flex flex-col gap-2">
             {shown.map((f) => {
@@ -120,7 +114,7 @@ export default function Flows() {
                       {f.description && <div className="mt-0.5 pl-5 text-sm text-muted-foreground">{f.description}</div>}
                       {tagList(f.tags).length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1.5 pl-5">
-                          {tagList(f.tags).map((t) => <span key={t} className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{t}</span>)}
+                          {tagList(f.tags).map((t) => <Chip key={t} tone="muted">{t}</Chip>)}
                         </div>
                       )}
                     </div>
@@ -180,12 +174,12 @@ export default function Flows() {
                                 {gate[t.id] && (
                                   <div className="mt-2 rounded-md border border-border bg-background p-2 text-xs">
                                     <div className="flex flex-wrap items-center gap-2">
-                                      <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].approved ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{gate[t.id].approved ? "RECOMMEND APPROVE" : "HOLD"}</span>
-                                      <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].risk_level === "high" ? "text-red-400" : gate[t.id].risk_level === "medium" ? "text-amber-400" : "text-green-400"}`}>risk {gate[t.id].risk_score} · {gate[t.id].risk_level}</span>
+                                      <Chip tone={gate[t.id].approved ? "ok" : "bad"}>{gate[t.id].approved ? "RECOMMEND APPROVE" : "HOLD"}</Chip>
+                                      <Chip tone={gate[t.id].risk_level === "high" ? "bad" : gate[t.id].risk_level === "medium" ? "warn" : "ok"}>risk {gate[t.id].risk_score} · {gate[t.id].risk_level}</Chip>
                                       {gate[t.id].approvals && (
-                                        <span className={`rounded px-2 py-0.5 font-medium ${gate[t.id].approvals!.human_approvers > 0 ? "text-green-400" : "text-amber-400"}`}>
+                                        <Chip tone={gate[t.id].approvals!.human_approvers > 0 ? "ok" : "warn"}>
                                           {gate[t.id].approvals!.human_approvers} approval{gate[t.id].approvals!.human_approvers === 1 ? "" : "s"}{gate[t.id].approvals!.four_eyes ? " · four-eyes ✓" : ""}
-                                        </span>
+                                        </Chip>
                                       )}
                                     </div>
                                     <div className="mt-1 text-muted-foreground">{gate[t.id].summary}</div>
@@ -205,7 +199,7 @@ export default function Flows() {
               );
             })}
           </div>
-        </div>
+        </Panel>
 
         {err && <p className="text-sm text-red-400">{err}</p>}
       </div>
