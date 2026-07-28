@@ -20,8 +20,9 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Match the version required by go.mod.
-          go-version: '1.26.x'
+          # Pin the patched toolchain: go1.26.5 fixes crypto/tls GO-2026-5856
+          # (govulncheck gate). Bump as newer stdlib advisories land.
+          go-version: '1.26.5'
           check-latest: true
 
       - name: Verify dependencies
@@ -84,7 +85,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.x'
+          go-version: '1.26.5'
           check-latest: true
 
       # Proves the Postgres RLS policies (schema-rls.sql) enforce tenant
