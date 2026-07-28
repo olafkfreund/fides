@@ -6,7 +6,7 @@ import {
   PieChart, Pie, Cell, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from "recharts";
 import { apiGet } from "@/lib/api";
-import { PageHeader, Panel, StatTile } from "@/components/dash";
+import { PageHeader, Panel, StatTile, Donut } from "@/components/dash";
 
 type Metrics = {
   total_requests: number;
@@ -86,6 +86,18 @@ export default function Telemetry() {
         <StatTile label="Avg Latency" value={m ? `${m.average_latency_ms.toFixed(1)} ms` : "…"} color="text-primary" />
         <StatTile label="Uptime" value={m ? fmtUptime(m.uptime_seconds) : "…"} sub={m ? `${m.memory_allocated_mb.toFixed(1)} MB heap` : undefined} />
       </div>
+
+      {m && (
+        <Panel label="Health" className="mt-6">
+          <div className="flex flex-wrap items-center gap-x-10 gap-y-4">
+            <Donut value={1 - m.error_rate / 100} color={m.error_rate > 1 ? "#F2823C" : "#35C08A"} label={`${(100 - m.error_rate).toFixed(1)}%`} sublabel="success rate" />
+            <div className="font-mono text-[13px] leading-relaxed text-muted-foreground">
+              <div><span className="text-foreground tabular-nums">{m.total_requests.toLocaleString()}</span> requests · <span className="text-foreground tabular-nums">{m.total_errors}</span> errors</div>
+              <div><span className="text-foreground tabular-nums">{m.average_latency_ms.toFixed(1)} ms</span> avg latency</div>
+            </div>
+          </div>
+        </Panel>
+      )}
 
       {freqData.length > 0 && (
         <Panel label="Deployment Frequency — weekly, per environment (last 12 weeks)" className="mt-6">

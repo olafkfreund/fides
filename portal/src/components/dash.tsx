@@ -139,12 +139,12 @@ export function DistBars({ items, color = "var(--primary)", limit = 8 }: { items
   return (
     <div className="flex flex-col gap-2">
       {shown.map((i) => (
-        <div key={i.label} className="flex items-center gap-3 text-xs">
-          <span className="w-40 shrink-0 truncate font-mono text-muted-foreground" title={i.label}>{i.label}</span>
+        <div key={i.label} className="group flex items-center gap-3 text-xs" title={`${i.label}: ${i.value}`}>
+          <span className="w-40 shrink-0 truncate font-mono text-muted-foreground group-hover:text-foreground">{i.label}</span>
           <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
-            <div className="h-full rounded-full" style={{ width: `${Math.max(2, (i.value / max) * 100)}%`, background: color }} />
+            <div className="h-full rounded-full transition-[filter] group-hover:brightness-125" style={{ width: `${Math.max(2, (i.value / max) * 100)}%`, background: color }} />
           </div>
-          <span className="w-8 shrink-0 text-right font-mono tabular-nums text-muted-foreground">{i.value}</span>
+          <span className="w-8 shrink-0 text-right font-mono tabular-nums text-muted-foreground group-hover:text-foreground">{i.value}</span>
         </div>
       ))}
       {rest.length > 0 && <div className="pl-[172px] text-[11px] text-muted-foreground">+ {rest.length} more ({restSum})</div>}
