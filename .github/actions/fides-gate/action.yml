@@ -1,0 +1,194 @@
+name: 'Fides Gate'
+description: 'Gate a CI pipeline on Fides compliance & provenance verdicts (change-gate, verify-image, verify-chain, env-verify).'
+author: 'Fides'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  command:
+    description: 'Which gate to run: change-gate | verify-image | verify-chain | env-verify'
+    required: true
+  server-url:
+    description: 'Fides server URL (also settable via the FIDES_SERVER_URL env var).'
+    required: false
+    default: ''
+  api-token:
+    description: 'Fides API token. Pass a secret, e.g. ${{ secrets.FIDES_API_TOKEN }}.'
+    required: false
+    default: ''
+  version:
+    description: "Fides CLI release to download (a tag like v0.3.0, or 'latest')."
+    required: false
+    default: 'latest'
+  cli-repo:
+    description: 'owner/repo that publishes the fides CLI release archives.'
+    required: false
+    default: 'olafkfreund/fides'
+  cli-repo-token:
+    description: 'Token for GitHub API calls when resolving/downloading the release (defaults to the job token).'
+    required: false
+    default: ${{ github.token }}
+  # --- gate-specific inputs (only the ones your chosen command needs) ---
+  trail:
+    description: 'Trail UUID (change-gate, verify-chain; optional for verify-image).'
+    required: false
+    default: ''
+  sha256:
+    description: 'Image digest, sha256 hex (verify-image).'
+    required: false
+    default: ''
+  signer:
+    description: 'Expected keyless identity / SAN (verify-image).'
+    required: false
+    default: ''
+  issuer:
+    description: 'Expected OIDC issuer (verify-image, optional).'
+    required: false
+    default: ''
+  key:
+    description: 'Path to a PEM public key for key-based verification (verify-image, optional).'
+    required: false
+    default: ''
+  env:
+    description: 'Environment id (env-verify).'
+    required: false
+    default: ''
+  mcp-server:
+    description: 'Runtime MCP server name (env-verify).'
+    required: false
+    default: ''
+  tool:
+    description: 'Runtime MCP tool (env-verify).'
+    required: false
+    default: ''
+  rule:
+    description: "Runtime rule expression, e.g. '.pods[].status == \"Ready\"' (env-verify)."
+    required: false
+    default: ''
+  args:
+    description: 'Extra raw arguments appended verbatim to the fides command (escape hatch).'
+    required: false
+    default: ''
+  warn-only:
+    description: "If 'true', a gate violation (exit 2) is reported as a warning instead of failing the job."
+    required: false
+    default: 'false'
+
+outputs:
+  verdict:
+    description: 'pass | violation | error'
+    value: ${{ steps.gate.outputs.verdict }}
+  exit-code:
+    description: 'Raw exit code from the fides CLI.'
+    value: ${{ steps.gate.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - id: gate
+      shell: bash
+      env:
+        FIDES_SERVER_URL: ${{ inputs.server-url }}
+        FIDES_API_TOKEN: ${{ inputs.api-token }}
+        GH_TOKEN: ${{ inputs.cli-repo-token }}
+        IN_COMMAND: ${{ inputs.command }}
+        IN_VERSION: ${{ inputs.version }}
+        IN_CLI_REPO: ${{ inputs.cli-repo }}
+        IN_TRAIL: ${{ inputs.trail }}
+        IN_SHA256: ${{ inputs.sha256 }}
+        IN_SIGNER: ${{ inputs.signer }}
+        IN_ISSUER: ${{ inputs.issuer }}
+        IN_KEY: ${{ inputs.key }}
+        IN_ENV: ${{ inputs.env }}
+        IN_MCP_SERVER: ${{ inputs.mcp-server }}
+        IN_TOOL: ${{ inputs.tool }}
+        IN_RULE: ${{ inputs.rule }}
+        IN_ARGS: ${{ inputs.args }}
+        IN_WARN_ONLY: ${{ inputs.warn-only }}
+      run: |
+        set -euo pipefail
+
+        # 1. Resolve runner OS/arch to a release archive suffix.
+        case "${RUNNER_OS}" in
+          Linux)  goos=linux ;;
+          macOS)  goos=darwin ;;
+          *) echo "::error::fides-gate does not support RUNNER_OS=${RUNNER_OS} (linux/macOS only)"; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64)   goarch=amd64 ;;
+          ARM64) goarch=arm64 ;;
+          *) echo "::error::fides-gate does not support RUNNER_ARCH=${RUNNER_ARCH}"; exit 1 ;;
+        esac
+
+        # 2. Resolve version ('latest' -> newest release tag).
+        ver="${IN_VERSION}"
+        if [ "${ver}" = "latest" ]; then
+          ver="$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "https://api.github.com/repos/${IN_CLI_REPO}/releases/latest" | jq -r '.tag_name')"
+        fi
+        if [ -z "${ver}" ] || [ "${ver}" = "null" ]; then
+          echo "::error::could not resolve fides CLI version"; exit 1
+        fi
+
+        # 3. Download + checksum-verify + extract the CLI.
+        base="fides_${ver}_${goos}_${goarch}"
+        url="https://github.com/${IN_CLI_REPO}/releases/download/${ver}"
+        tmp="$(mktemp -d)"
+        curl -fsSL "${url}/${base}.tar.gz"        -o "${tmp}/${base}.tar.gz"
+        curl -fsSL "${url}/${base}.tar.gz.sha256" -o "${tmp}/${base}.tar.gz.sha256"
+        ( cd "${tmp}" && sha256sum -c "${base}.tar.gz.sha256" )
+        tar -xzf "${tmp}/${base}.tar.gz" -C "${tmp}"
+        fides="${tmp}/${base}/fides"
+        chmod +x "${fides}"
+
+        # 4. Build the gate command.
+        argv=()
+        case "${IN_COMMAND}" in
+          change-gate)  argv=(change-gate --trail "${IN_TRAIL}") ;;
+          verify-chain) argv=(verify-chain --trail "${IN_TRAIL}") ;;
+          verify-image)
+            argv=(verify-image --sha256 "${IN_SHA256}")
+            [ -n "${IN_SIGNER}" ] && argv+=(--signer "${IN_SIGNER}")
+            [ -n "${IN_ISSUER}" ] && argv+=(--issuer "${IN_ISSUER}")
+            [ -n "${IN_KEY}" ]    && argv+=(--key "${IN_KEY}")
+            [ -n "${IN_TRAIL}" ]  && argv+=(--trail "${IN_TRAIL}")
+            ;;
+          env-verify)
+            argv=(env verify --env "${IN_ENV}" --server "${IN_MCP_SERVER}" --tool "${IN_TOOL}" --rule "${IN_RULE}")
+            ;;
+          *) echo "::error::unknown command '${IN_COMMAND}' (change-gate|verify-image|verify-chain|env-verify)"; exit 1 ;;
+        esac
+        # shellcheck disable=SC2206
+        [ -n "${IN_ARGS}" ] && argv+=(${IN_ARGS})
+
+        # 5. Run, interpret the exit code (0 pass / 2 violation / other error).
+        echo "::group::fides ${argv[*]}"
+        set +e
+        out="$("${fides}" "${argv[@]}" 2>&1)"; code=$?
+        set -e
+        echo "${out}"
+        echo "::endgroup::"
+
+        echo "exit_code=${code}" >> "${GITHUB_OUTPUT}"
+        {
+          echo "### Fides Gate — \`${IN_COMMAND}\`"
+          echo ""
+          echo '```'
+          echo "${out}"
+          echo '```'
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        case "${code}" in
+          0) echo "verdict=pass" >> "${GITHUB_OUTPUT}"; echo "✅ Fides gate passed." ;;
+          2)
+            echo "verdict=violation" >> "${GITHUB_OUTPUT}"
+            if [ "${IN_WARN_ONLY}" = "true" ]; then
+              echo "::warning::Fides gate reported a violation (warn-only, not failing)."
+            else
+              echo "::error::Fides gate blocked: ${IN_COMMAND} verdict is a violation."
+              exit 1
+            fi
+            ;;
+          *) echo "verdict=error" >> "${GITHUB_OUTPUT}"; echo "::error::fides ${IN_COMMAND} failed to run (exit ${code})."; exit "${code}" ;;
+        esac
