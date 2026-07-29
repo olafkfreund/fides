@@ -2,6 +2,8 @@
 layout: default
 title: "Fides × ServiceNow — Why They're Better Together"
 description: "How Fides complements ServiceNow: the evidence layer beneath change management."
+redirect_from:
+  - /servicenow-pitch.html
 ---
 
 # Fides × ServiceNow — Why They're Better Together

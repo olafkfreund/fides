@@ -1,3 +1,9 @@
+---
+layout: default
+redirect_from:
+  - /mcp-server.html
+---
+
 # Fides MCP Server (`fides-mcp`)
 
 Fides ships a **Model Context Protocol** server, `fides-mcp`, so AI tools like

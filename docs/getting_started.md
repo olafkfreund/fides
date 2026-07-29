@@ -1,3 +1,9 @@
+---
+layout: default
+redirect_from:
+  - /getting_started.html
+---
+
 # Fides: Getting Started Guide & Pipeline Scenarios
 
 This document guides you through setting up **Fides** locally, using the CLI, and integrating it into production CI/CD workflows for both **GitHub Actions** and **GitLab CI**.
