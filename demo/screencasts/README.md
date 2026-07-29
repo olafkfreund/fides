@@ -13,6 +13,8 @@ render them on demand.
 | `02-ci-gate.tape` | The gate commands and the `0/2` exit-code convention CI keys off (GitHub & GitLab) |
 | `03-controls-coverage.tape` | Adopt a framework → coverage → enforce → OSCAL export |
 | `04-dashboard.tape` | DORA metrics + the live `fides dashboard` TUI |
+| `05-supply-chain-runtime.tape` | SBOM/SLSA ingest, `search components`, `impact`/`vex`, `anchor`, snapshots, `env diff`, allow-list |
+| `06-advanced-new.tape` | `attest authorship`, feature-flag governance, EU AI Act `model`, `remediation`, OSCAL/CRA reports, ServiceNow grounding |
 
 ### Render
 

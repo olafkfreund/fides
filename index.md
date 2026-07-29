@@ -16,6 +16,25 @@ Fides is a self-hosted, multi-cloud compatible compliance tracking system. It re
 
 ---
 
+## See it in action
+
+A guided tour of the Fides portal — the live **Assurance Console**, **Artifacts & SBOM**,
+**Attestation** evidence, **Controls & Coverage** across six frameworks, **AI Audits**, and
+**DORA telemetry**:
+
+![Fides portal tour](docs/images/portal/portal-tour.gif)
+
+The `fides` CLI — record → verify → gate, governance frameworks, EU AI Act model
+provenance, runtime snapshots, and ServiceNow:
+
+![Fides CLI feature reference](docs/images/cli/00-cli-overview.gif)
+
+| Assurance Console | Controls & Coverage | AI Audits |
+|---|---|---|
+| ![Overview](docs/images/portal/00-overview.jpg) | ![Controls](docs/images/portal/06-controls.jpg) | ![AI Audits](docs/images/portal/07-ai-audits.jpg) |
+
+---
+
 ## 1. Architectural Blueprint & Overview
 
 Fides tracks and validates software deliverables from source code commits to running environments, establishing a secure, verifiable software supply chain.

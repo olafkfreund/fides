@@ -6,6 +6,34 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 
 ---
 
+## See it in action
+
+### The portal — a live tour
+
+![Fides portal tour](docs/images/portal/portal-tour.gif)
+
+*The Fides portal, page by page: the real-time **Assurance Console**, **Artifacts & SBOM**, **Attestation** evidence, **Controls & Coverage** across six frameworks, LLM **AI Audits**, and **DORA telemetry** — all served same-origin by the Go server.*
+
+### The CLI — every feature at a glance
+
+![Fides CLI feature reference](docs/images/cli/00-cli-overview.gif)
+
+*`fides` spans record → verify → gate (`trail`/`artifact`/`attest` → `verify-chain` → `assert`/`change-gate`), governance controls & regulated frameworks, EU AI Act **model provenance**, runtime **snapshots**, and **ServiceNow**.*
+
+### Portal, page by page
+
+| Assurance Console | Artifacts & SBOM | Attestations |
+|---|---|---|
+| [![Overview](docs/images/portal/00-overview.jpg)](docs/images/portal/00-overview.jpg) | [![Artifacts](docs/images/portal/02-artifacts.jpg)](docs/images/portal/02-artifacts.jpg) | [![Attestations](docs/images/portal/03-attestations.jpg)](docs/images/portal/03-attestations.jpg) |
+
+| Controls & Coverage | AI Audits | Telemetry |
+|---|---|---|
+| [![Controls](docs/images/portal/06-controls.jpg)](docs/images/portal/06-controls.jpg) | [![AI Audits](docs/images/portal/07-ai-audits.jpg)](docs/images/portal/07-ai-audits.jpg) | [![Telemetry](docs/images/portal/08-telemetry.jpg)](docs/images/portal/08-telemetry.jpg) |
+
+More screenshots (Flows, Environments, Policies, Settings, Help) live in [`docs/images/portal/`](docs/images/portal/).
+
+---
+
 ## Core Features
 
 * **Supply Chain Provenance**: Statically compile and trace artifacts by their cryptographic SHA256 digest, verifying the path from Git commits to running runtimes.
