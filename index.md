@@ -3,10 +3,10 @@
 Fides is a self-hosted, multi-cloud compatible compliance tracking system. It records and evaluates every state change in the software delivery lifecycle (SDLC) in real-time, acting as an audit-ready single source of truth to satisfy strict compliance frameworks such as SOC 2, ISO 27001, and FDA 21 CFR Part 11.
 
 > [!TIP]
-> Ready to install? See the **[Installation guide](/installation.html)** — release
+> Ready to install? See the **[Installation guide](/docs/installation.html)** — release
 > binaries, the Nix flake, and the `services.fides` NixOS module. For deep-dive
 > walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits,
-> read the **[Fides Integration & Setup Guide](/guide.html)**.
+> read the **[Fides Integration & Setup Guide](/docs/guide.html)**.
 
 > [!NOTE]
 > **New — [Fides × ServiceNow showcase](/servicenow-showcase.html)**: the bidirectional,
@@ -49,7 +49,7 @@ Fides tracks and validates software deliverables from source code commits to run
 * **Fides Core API Server**: Orchestrates data models, manages vaults and storage systems, evaluates policy rules, and serves the portal, the governance APIs, and the AI endpoints (e.g. `POST /api/v1/ai/lint-policy`).
 * **LLM Verification Gateway (`Fides-AI`)**: Leverages natural language models (Ollama, llama.cpp, Google Gemini) to check licenses, scan for credentials, assess compliance risks, and power the portal's "Check & fix" policy linter and scored AI audit reports.
 * **Management Web Portal**: Next.js static export served by the Go server — clickable dashboard KPI cards, redesigned Controls & Coverage, a Monaco policy editor, SBOM/attestation drill-down, AI audits, telemetry charts, and a voice-enabled AI Assistant.
-* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance data as **15 tools** **and the Fides docs as resources** to AI clients like **Claude Code**, Cursor, and Claude Desktop. See the [MCP server guide](/mcp-server.html).
+* **Model Context Protocol (MCP) Server (`fides-mcp`)**: Exposes compliance data as **15 tools** **and the Fides docs as resources** to AI clients like **Claude Code**, Cursor, and Claude Desktop. See the [MCP server guide](/docs/mcp-server.html).
 * **In-browser WebMCP**: The portal registers Fides tools directly in the browser via the native `document.modelContext` API (with the `@mcp-b/global` polyfill fallback), so browser agents and local LLMs can drive Fides from the same session the auditor is using.
 
 ### High-Level Architecture
@@ -310,7 +310,7 @@ Fides maps evidence to the controls of the frameworks regulated enterprises answ
 
 > [!TIP]
 > New to why Fides and ServiceNow are better together? Read the
-> **[Fides × ServiceNow pitch](/servicenow-pitch.html)** — how Fides becomes the
+> **[Fides × ServiceNow pitch](/docs/servicenow-pitch.html)** — how Fides becomes the
 > evidence layer beneath ServiceNow change management.
 
 * **Framework catalogs** — adopt SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, or SOX in one command (`fides control import --framework`). Each control declares the evidence types it requires.
@@ -435,9 +435,9 @@ per-environment allow-lists, environment policies with tags, search & snapshot
 diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics,
 and Slack notifications — see:
 
-* **[Installation guide](/installation.html)** — release binaries, Nix flake, NixOS module
+* **[Installation guide](/docs/installation.html)** — release binaries, Nix flake, NixOS module
 * **[Feature guide with real examples](/docs/features.md)**
 * **[Full CLI reference](/docs/cli-reference.md)**
 * **[Segregation of duties — supplying the three identities](/docs/segregation-of-duties.md)** (committer / approver / deployer, worked end-to-end)
 * **[ServiceNow integration](/docs/servicenow-integration.md)** (admin page at `/servicenow`)
-* **[Fides × ServiceNow — why they're better together](/servicenow-pitch.html)** (sales & partner pitch)
+* **[Fides × ServiceNow — why they're better together](/docs/servicenow-pitch.html)** (sales & partner pitch)
