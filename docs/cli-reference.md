@@ -53,7 +53,9 @@ non-compliance — previously `1`.)
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
 | `fides env diff --env <id> --reevaluate-change CHGxxxx [--from --to]` | Post-approval drift re-evaluation: diffs snapshots and, if drift is detected, escalates the ServiceNow change's risk + posts a work note (exits 2 on drift) |
+| `fides env verify --env <id> --server <mcp-name> [--tool get_pods] --rule <jq> [--rule …] [--rules-file <f>]` | Ask the runtime MCP sensor about the live environment and gate on jq rules (exits 2 if non-compliant). `--rule` is repeatable |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
+| `fides remediation propose\|list\|get\|approve\|reject\|apply [...]` | Policy-driven auto-remediation: propose a fix, then approve/reject/apply it |
 
 ## Controls, frameworks & change gate
 | Command | Purpose |
@@ -96,6 +98,8 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides vex --cve <CVE-ID> --status <not_affected\|affected\|fixed\|under_investigation> [--product <sha256>] [--justification <text>]` | Record a VEX statement; `not_affected` suppresses the CVE from `fides impact` (`--product`: empty = org-wide, an artifact sha256, or a component purl to suppress across every artifact containing it) |
 | `fides metrics [--days N]` | DORA delivery metrics (deployment frequency, change-failure rate, **lead time**, **MTTR**) |
 | `fides metrics deployment-frequency [--weeks N]` | Weekly deployment frequency per environment |
+| `fides metrics compliance-correlation [--days N]` | Correlate compliance verdicts against delivery outcomes over the window |
+| `fides dashboard` | Interactive live TUI of server stats (checks, artifacts, coverage) — no flags |
 
 ## Integration & admin config
 | Command | Purpose |

@@ -2,7 +2,7 @@
 
 Fides (named after the Roman goddess of trust and oaths) is a self-hosted, multi-cloud compatible compliance tracking system. It records and evaluates every state change in the software delivery lifecycle (SDLC) in real-time, acting as an audit-ready single source of truth to satisfy strict compliance frameworks such as SOC 2, ISO 27001, and FDA 21 CFR Part 11.
 
-For detailed architecture diagrams, database schemas, and integration designs, see the **[architecture_proposal.md](file:///mnt/data/Source-home/Calitti/evidance-vault/architecture_proposal.md)** document.
+For detailed architecture diagrams, database schemas, and integration designs, see the **[architecture_proposal.md](docs/architecture_proposal.md)** document.
 
 ---
 
@@ -59,7 +59,7 @@ The statically compiled `fides` CLI drives the full evidence lifecycle from any 
 ## Installation
 
 Three ways to get the `fides-server`, `fides`, `fides-mcp`, and `fides-mcp-sensor`
-binaries — see the full **[Installation guide](installation.md)** for details:
+binaries — see the full **[Installation guide](docs/installation.md)** for details:
 
 * **Release downloads** — pre-built archives for Linux and macOS (amd64 + arm64),
   with SHA-256 checksums, on the
@@ -74,7 +74,7 @@ binaries — see the full **[Installation guide](installation.md)** for details:
 * **From source** — `go build ./cmd/cli` (Go 1.26+); see the Quick Start below.
 
 For the full self-hosted stack (Postgres + object store), use the Helm chart
-(`charts/fides`) or the [Getting Started guide](getting_started.md).
+(`charts/fides`) or the [Getting Started guide](docs/getting_started.md).
 
 ---
 
@@ -94,13 +94,13 @@ For the full self-hosted stack (Postgres + object store), use the Helm chart
    ```bash
    psql -h localhost -U veritrail_user -d veritrail -f schema.sql
    ```
-4. Read the **[getting_started.md](file:///mnt/data/Source-home/Calitti/evidance-vault/getting_started.md)** guide to set up Fides gates inside **GitHub Actions** and **GitLab CI/CD**.
+4. Read the **[getting_started.md](docs/getting_started.md)** guide to set up Fides gates inside **GitHub Actions** and **GitLab CI/CD**.
 
 ---
 
 ## Model Context Protocol (MCP) Server
 
-Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, artifacts, attestations, controls coverage, and deployment metrics as LLM-executable **tools** — and the Fides documentation as MCP **resources** (`fides://docs/*`) that an assistant can read on demand. It integrates with **Claude Code**, Claude Desktop, Cursor, and other AI clients for conversational interaction with your builds, audits, and pipelines. The binary is also shipped in the server image at `/usr/local/bin/fides-mcp`. See the full guide: [mcp-server.md](mcp-server.md).
+Fides includes a built-in Model Context Protocol (MCP) server `fides-mcp` that exposes compliance monitoring, pipeline flows, policies, artifacts, attestations, controls coverage, and deployment metrics as LLM-executable **tools** — and the Fides documentation as MCP **resources** (`fides://docs/*`) that an assistant can read on demand. It integrates with **Claude Code**, Claude Desktop, Cursor, and other AI clients for conversational interaction with your builds, audits, and pipelines. The binary is also shipped in the server image at `/usr/local/bin/fides-mcp`. See the full guide: [mcp-server.md](docs/mcp-server.md).
 
 ### Configuration for Claude Desktop
 Add the following configuration to your `claude_desktop_config.json` (located at `~/.config/Claude/claude_desktop_config.json` on Linux/macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):

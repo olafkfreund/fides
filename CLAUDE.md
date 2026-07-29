@@ -95,9 +95,7 @@ source again** — it does not exist here.
   Docker container).
 - Deploy target: EKS `sarc-aws` (eu-west-2, account 796973489124), namespace
   `fides`; AWS profile `Synechron`. CI deploys via GitHub OIDC.
-- Docs: GitHub Pages is Jekyll from root `*.md` + `_config.yml`; portal docs are
-  the `web/*.md` files served by the Go server. Keep them in sync.
-
-## Roadmap
-GitHub epic **#60** (ServiceNow UI + Kosli parity). Remaining: **#84**
-(controls/coverage framework + Terraform provider).
+- Docs: GitHub Pages is Jekyll from root + `docs/*.md` + `_config.yml`. Guides
+  live in `docs/` — only `README.md`, `index.md`, `CLAUDE.md`, `CONTRIBUTING.md`
+  stay at repo root. Portal docs are the `web/*.md` files served by the Go
+  server. Keep the `docs/` and `web/` copies in sync.

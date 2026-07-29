@@ -28,6 +28,8 @@ Verify the installation:
 ./fides --help
 ```
 
+> **Tip:** Once the server is running, open the **web portal** at `http://localhost:8080` to watch trails, artifacts, and control coverage appear live as you run the CLI below. The same actions are available conversationally through the built-in AI Assistant / `fides-mcp` MCP server.
+
 ---
 
 ## 2. Bootstrapping Your First Flow (CLI Walkthrough)
@@ -62,6 +64,65 @@ curl -X POST http://localhost:8080/api/v1/attestation-types \
   -d "{\"org_id\": \"$ORG_ID\", \"name\": \"snyk-scan\", \"description\": \"Snyk Vulnerability Scan Rule\", \"jq_rules\": [\".vulnerabilities.critical == 0\"]}"
 ```
 
+### Step 3: Open a Trail and Report the Build Artifact
+Every build is a **trail**. Start one, then register the artifact it produced
+(its SHA256 is the fingerprint everything else hangs off):
+```bash
+export TRAIL_ID="build-$(date +%s)"
+
+# Begin the build trail (records the commit-metadata identity for
+# segregation-of-duties; --committed-at auto-derives from --commit via git)
+fides trail start --flow $FLOW_ID --trail $TRAIL_ID \
+  --repository "https://github.com/payments-team/auth-service" \
+  --commit "$(git rev-parse HEAD)" --committer "$(git config user.email)"
+
+# Register the artifact (from a file, or pass --sha256 <hex> directly)
+fides artifact report --org $ORG_ID --trail $TRAIL_ID \
+  --file ./image.tar --name "auth-service" --type docker
+# Capture the returned SHA256 for the gate steps below
+export DIGEST="sha256:..."
+```
+
+### Step 4: Attest, Verify, and Gate a Change
+With the trail open and the artifact reported, attach evidence, prove the chain
+is intact, and ask for a release verdict:
+```bash
+# Attach evidence (many types supported: junit, snyk, trivy, sbom-cyclonedx,
+# secret-scan, sast, iac, ...)
+fides attest --trail $TRAIL_ID --artifact-sha $DIGEST \
+  --name "snyk-vulnerabilities" --type "snyk-scan" --payload snyk-summary.json
+
+# Verify the tamper-evident chain for the whole trail (exit 2 if broken)
+fides verify-chain --trail $TRAIL_ID
+
+# Deterministic policy gate for the artifact (exit 2 if non-compliant)
+fides assert --sha256 $DIGEST --policy "production-release-rules"
+
+# Evidence- and risk-backed verdict for the trail (exit 2 on HOLD); with
+# ServiceNow configured, the verdict is written back onto the matching Change
+# Request
+fides change-gate --trail $TRAIL_ID
+```
+
+### Step 5: Adopt & Enforce Regulated Controls
+Import a framework catalog, review coverage, and enforce a control on an environment — the CLI equivalent of the portal's **Controls & Coverage** page (grouped, drill-down, one-click **Enforce**):
+```bash
+# Import a control catalog (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX, SLSA, CRA)
+fides control import --framework SOC2
+
+# See each control's evidence + environment coverage
+fides control coverage
+
+# Enforce a control (by key) on an environment so releases are gated on it
+fides control enforce --key CC7.2 --env $ENV_ID
+
+# Generate an audit-ready, per-framework report (--format oscal for NIST OSCAL)
+fides report --framework SOC2
+
+# DORA-style delivery metrics
+fides metrics deployment-frequency --weeks 4
+```
+
 ---
 
 ## 3. Real-World Scenario: GitHub Actions Integration
@@ -83,6 +144,7 @@ env:
   FIDES_ENCRYPTION_KEY: ${{ secrets.FIDES_ENCRYPTION_KEY }}
   ORG_ID: "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
   FLOW_ID: "f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122"
+  PROD_ENV_ID: "e2c1a9d4-7b3f-4c8e-9a1b-2f6d8e0c4a7b"
   TRAIL_ID: ${{ github.sha }}
 
 jobs:
@@ -180,7 +242,7 @@ jobs:
       # 9. Snapshot Runtime to record state change
       - name: Update Runtime Snapshot
         run: |
-          fides snapshot k8s "production-k8s-cluster" --namespace "production"
+          fides snapshot k8s --env "$PROD_ENV_ID" --namespace "production"
 ```
 
 ---
@@ -204,6 +266,7 @@ variables:
   FIDES_ENCRYPTION_KEY: $SECURE_FIDES_ENCRYPTION_KEY # Stored in GitLab Protected Variables
   ORG_ID: "5d57b8c7-4328-4e1b-93df-4161b9a918a3"
   FLOW_ID: "f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122"
+  PROD_ENV_ID: "e2c1a9d4-7b3f-4c8e-9a1b-2f6d8e0c4a7b"
   TRAIL_ID: $CI_COMMIT_SHA
 
 image: alpine:3.18
@@ -271,7 +334,7 @@ deploy-prod:
   script:
     - aws ecs update-service --cluster prod-cluster --service auth-service --force-new-deployment
     # Record runtime state in Fides
-    - fides snapshot ecs "production-ecs-cluster" --container "auth-service"
+    - fides snapshot ecs --env "$PROD_ENV_ID" --cluster "production-ecs-cluster"
 ```
 
 ---
@@ -328,15 +391,3 @@ Fides prioritizes the secure flow of evidence. To prevent eavesdropping or tampe
    - Provide the `--encrypt` flag when running `fides attest`.
    - The CLI will automatically encrypt the payload, flag the request as encrypted, and transmit the ciphertext.
    - The Fides server will decrypt the payload on receipt using the matching key, validate policies, and store the resulting compliance data.
-
----
-
-## New Capabilities
-
-Recent releases added evidence parsers, a tamper-evident attestation chain,
-service accounts with rotatable keys, per-environment allow-lists, environment
-policies with tags, search & snapshot diff, audit packages, ECS/Lambda
-snapshots, logical environments, DORA metrics, Slack notifications, and a
-ServiceNow admin page at `/servicenow`.
-
-See **[features.md](features.md)** for real examples, **[cli-reference.md](cli-reference.md)** for the full command list, and **[segregation-of-duties.md](segregation-of-duties.md)** for supplying the committer / approver / deployer identities end-to-end.

@@ -69,7 +69,7 @@ same alert instead of creating new ones.
 ## 5. ITSM change-control gate
 
 1. Seed the `servicenow-change` attestation type (see
-   `servicenow-change-type.example.sql`) with jq rules, e.g. approved + in
+   `db/servicenow-change-type.example.sql`) with jq rules, e.g. approved + in
    implement/scheduled + not on hold + risk ≠ high.
 2. In CI, before deploying, call the gate:
 

@@ -2,16 +2,16 @@
 
 This document outlines the detailed architecture for **Fides**, a self-hosted, multi-cloud compatible compliance, provenance, and evidence-tracking system. Fides is designed to capture, secure, evaluate, and verify the software supply chain, security scans, and runtime state. It acts as an audit-ready single source of truth to meet strict compliance standards (SOC 2, ISO 27001, and FDA 21 CFR Part 11).
 
-> **Implementation status (2026-07):** This document is the system architecture and design rationale. The platform has since implemented (and in several areas surpassed) this design — a deep **ServiceNow** integration (CMDB/ITOM/ITSM/MCP), built-in evidence parsers, a **tamper-evident attestation hash chain**, **service accounts** with rotatable API keys, **environment policies** with tag conditions, per-environment **allow-lists**, an **event/outbox dispatcher** (webhooks, commit-status, ServiceNow, Slack), a **Kubernetes admission webhook**, **AWS Secrets Manager** (IRSA), **logical environments**, **audit packages**, search/diff, **DORA metrics**, and startup schema migrations. For the canonical surface see **[docs/features.md](docs/features.md)** and **[docs/cli-reference.md](docs/cli-reference.md)**; the live schema is **`schema.sql`** (31 tables).
+> **Implementation status (2026-07):** This document is the system architecture and design rationale. The platform has since implemented (and in several areas surpassed) this design — a deep **ServiceNow** integration (CMDB/ITOM/ITSM/MCP), built-in evidence parsers, a **tamper-evident attestation hash chain**, **service accounts** with rotatable API keys, **environment policies** with tag conditions, per-environment **allow-lists**, an **event/outbox dispatcher** (webhooks, commit-status, ServiceNow, Slack), a **Kubernetes admission webhook**, **AWS Secrets Manager** (IRSA), **logical environments**, **audit packages**, search/diff, **DORA metrics**, and startup schema migrations. For the canonical surface see **[docs/features.md](features.md)** and **[docs/cli-reference.md](cli-reference.md)**; the live schema is **`schema.sql`** (31 tables).
 
 ---
 
-## 1. Product Review: How Kosli Works
+## 1. Product Review: The Established Supply-Chain Provenance Model
 
-Kosli solves a critical problem in modern, fast-paced DevOps: **securing the software supply chain and automating compliance auditing**. Instead of using manual checklists, static spreadsheets, or scrolling through weeks of CI/CD logs to reconstruct what was built, tested, and deployed, Kosli tracks and evaluates every state change in real-time.
+The established supply-chain provenance model solves a critical problem in modern, fast-paced DevOps: **securing the software supply chain and automating compliance auditing**. Instead of using manual checklists, static spreadsheets, or scrolling through weeks of CI/CD logs to reconstruct what was built, tested, and deployed, such tools track and evaluate every state change in real-time.
 
 ### Core Concepts & Building Blocks
-Based on the documentation, Kosli organizes its data using the following concepts:
+These tools typically organize their data using the following concepts:
 
 1. **Organization (Tenant)**: The high-level boundary for users, permissions, and resources.
 2. **Flow**: A logical pipeline representing a repeatable software process (e.g., a service's CI/CD pipeline, infrastructure-as-code deployment).
@@ -23,7 +23,7 @@ Based on the documentation, Kosli organizes its data using the following concept
    - **Attachments**: Compressed raw logs or report files (stored in the **Evidence Vault**).
 6. **Attestation Type**: A template that defines how the attestation is validated using JSON Schema and/or `jq` rules (e.g., `.critical == 0` for vulnerability scans).
 7. **Environment**: A digital representation of a deployment target (Kubernetes cluster, ECS service, AWS S3 bucket, Lambda, Docker host, server filesystem).
-8. **Environment Snapshot**: A point-in-time capture of the artifacts currently running in an Environment. Kosli correlates running image digests with the build Trails/Flows that produced them.
+8. **Environment Snapshot**: A point-in-time capture of the artifacts currently running in an Environment. The system correlates running image digests with the build Trails/Flows that produced them.
 9. **Environment Policy**: Enforceable compliance rules linked to environments (e.g., *"All artifacts running in production must have unit-tests, an SBOM, and a security scan with 0 critical findings"*).
 10. **Audit Package**: An on-demand tarball containing the metadata and files for a Trail, Artifact, or Attestation, designed to be handed directly to compliance auditors.
 
@@ -626,7 +626,7 @@ volumes:
 
 The statically compiled cross-platform CLI tool handles operations in CI/CD pipeline jobs and runtime environment monitoring.
 
-Authentication is via environment variables (`FIDES_SERVER_URL`, `FIDES_API_TOKEN` — a static token or a service-account key), not a `login` command. Full reference: **[docs/cli-reference.md](docs/cli-reference.md)**.
+Authentication is via environment variables (`FIDES_SERVER_URL`, `FIDES_API_TOKEN` — a static token or a service-account key), not a `login` command. Full reference: **[docs/cli-reference.md](cli-reference.md)**.
 
 | Command Group | Command Syntax | Description |
 | :--- | :--- | :--- |

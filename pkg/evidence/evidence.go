@@ -1,7 +1,7 @@
 // Package evidence parses common CI/security report formats (JUnit, Snyk,
 // Trivy, SARIF) into a normalized attestation payload with a deterministic
 // compliance verdict, so Fides can ingest first-class evidence instead of only
-// generic JSON (closing the gap with Kosli's built-in attestation types).
+// generic JSON (providing built-in attestation types).
 package evidence
 
 import (
