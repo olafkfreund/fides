@@ -100,7 +100,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: [build-and-test, rls-integration]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Only the canonical repo deploys — the synechron/Fides mirror has no trusted
+    # OIDC role, so this job would fail there. Guard on the repository so the
+    # mirror's push builds/tests but skips deploy.
+    if: github.repository == 'olafkfreund/fides' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
       id-token: write   # required for GitHub OIDC -> AWS role assumption
       contents: read

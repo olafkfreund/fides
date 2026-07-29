@@ -160,4 +160,4 @@ ServiceNow monetizes most."*
 ---
 
 *Ready to go deeper? See the [ServiceNow integration guide](/docs/servicenow-integration.md),
-the live admin page at `/servicenow`, or the [full user guide](/guide.html).*
+the live admin page at `/servicenow`, or the [full user guide](/docs/guide.html).*

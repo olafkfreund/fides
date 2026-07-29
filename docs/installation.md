@@ -7,8 +7,8 @@ give you the same four binaries: `fides-server`, `fides` (CLI), `fides-mcp`, and
 
 The binaries need a PostgreSQL database and an evidence/object store to run the
 full server — for a complete self-hosted stack see the
-**[Getting Started guide](/getting_started.html)**, the
-**[Integration & Setup Guide](/guide.html)**, or the Helm chart
+**[Getting Started guide](/docs/getting_started.html)**, the
+**[Integration & Setup Guide](/docs/guide.html)**, or the Helm chart
 (`charts/fides`, see [Setup & Seeding](setup.md)).
 
 ---
@@ -110,7 +110,7 @@ FIDES_ENCRYPTION_KEY=…            # 32 random bytes, base64: head -c 32 /dev/u
 
 The unit runs hardened (systemd sandboxing; writable paths limited to its state
 directory, `/var/lib/fides` by default) and applies its database migrations on
-boot. See the [Integration & Setup Guide](/guide.html) for the full
+boot. See the [Integration & Setup Guide](/docs/guide.html) for the full
 `FIDES_*` / storage / AI environment reference.
 
 ---
@@ -130,6 +130,6 @@ go build -o fides-mcp    ./cmd/mcp
 
 ## Next steps
 
-* **[Getting Started](/getting_started.html)** — run the full stack locally with Docker Compose and walk the CLI.
-* **[Integration & Setup Guide](/guide.html)** — production deployment, secret vaults, CI/CD templates.
+* **[Getting Started](/docs/getting_started.html)** — run the full stack locally with Docker Compose and walk the CLI.
+* **[Integration & Setup Guide](/docs/guide.html)** — production deployment, secret vaults, CI/CD templates.
 * **[CLI reference](cli-reference.md)** · **[MCP server](mcp-server.md)**
