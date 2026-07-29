@@ -1,3 +1,9 @@
+---
+layout: default
+redirect_from:
+  - /architecture_proposal.html
+---
+
 # Fides: Open Source compliance, Provenance & Evidence Tracking System
 
 This document outlines the detailed architecture for **Fides**, a self-hosted, multi-cloud compatible compliance, provenance, and evidence-tracking system. Fides is designed to capture, secure, evaluate, and verify the software supply chain, security scans, and runtime state. It acts as an audit-ready single source of truth to meet strict compliance standards (SOC 2, ISO 27001, and FDA 21 CFR Part 11).

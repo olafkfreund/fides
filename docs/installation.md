@@ -1,3 +1,9 @@
+---
+layout: default
+redirect_from:
+  - /installation.html
+---
+
 # Installing Fides
 
 There are three ways to install the Fides binaries — pre-built **release

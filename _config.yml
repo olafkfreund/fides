@@ -1,3 +1,8 @@
 title: Fides Compliance & Provenance
 description: Trust, Provenance & Evidence Tracking System
 theme: jekyll-theme-minimal
+
+# Redirect the old root URLs to their new docs/ locations (pages moved in #361).
+# jekyll-redirect-from is on the GitHub Pages plugin allow-list.
+plugins:
+  - jekyll-redirect-from

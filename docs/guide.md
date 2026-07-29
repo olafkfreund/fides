@@ -1,3 +1,9 @@
+---
+layout: default
+redirect_from:
+  - /guide.html
+---
+
 # Fides: Comprehensive Installation, Configuration & Integration Guide
 
 This guide provides deep-dive walkthroughs, configuration examples, and production-ready code templates for deploying, configuring, and using Fides in real-world scenarios.
