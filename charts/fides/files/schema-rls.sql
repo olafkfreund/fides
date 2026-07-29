@@ -49,7 +49,6 @@ DECLARE
     'controls',
     'trail_approvals',
     'logical_environments',
-    'service_accounts',
     'remediation_actions',
     'change_control_links',
     'deployment_anchors'
@@ -58,6 +57,13 @@ DECLARE
   -- outbox that the background events dispatcher drains across ALL tenants on a
   -- non-request connection (no app.current_org), so RLS would hide every row and
   -- break delivery. Tenant-facing reads of it are scoped by org_id in the query.
+  --
+  -- service_accounts and service_account_keys are ALSO deliberately excluded (see
+  -- the DISABLE/DROP block at the end of this file). The authentication path looks
+  -- a key up by its public prefix on a non-request connection, BEFORE the tenant
+  -- is known, so RLS (no app.current_org yet) would hide every row and no
+  -- portal-issued API key could ever authenticate. Isolation for these tables is
+  -- enforced in-query: every management handler filters by org_id.
 BEGIN
   FOREACH t IN ARRAY tenant_tables LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
@@ -90,8 +96,7 @@ DECLARE
     {"tbl": "environment_mcp_servers", "fk": "environment_id", "parent": "environments"},
     {"tbl": "environment_allowlist",   "fk": "environment_id", "parent": "environments"},
     {"tbl": "environment_policies",    "fk": "environment_id", "parent": "environments"},
-    {"tbl": "logical_environment_members", "fk": "logical_id", "parent": "logical_environments"},
-    {"tbl": "service_account_keys",    "fk": "service_account_id", "parent": "service_accounts"}
+    {"tbl": "logical_environment_members", "fk": "logical_id", "parent": "logical_environments"}
   ]'::jsonb;
 BEGIN
   FOR rec IN SELECT * FROM jsonb_to_recordset(child_tables) AS x(tbl text, fk text, parent text) LOOP
@@ -113,3 +118,14 @@ DROP POLICY IF EXISTS tenant_isolation ON organizations;
 CREATE POLICY tenant_isolation ON organizations
   USING (id = fides_current_org())
   WITH CHECK (id = fides_current_org());
+
+-- Exclude the service-account tables from RLS, and self-heal deployments that
+-- applied an earlier version of this file (which put them under tenant_isolation
+-- and broke API-key authentication — the pre-auth lookup runs with no
+-- app.current_org set). Isolation for these tables is enforced in-query by every
+-- management handler (WHERE org_id = ...); the auth lookup is intentionally
+-- cross-tenant, keyed on the public prefix.
+ALTER TABLE service_account_keys DISABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON service_account_keys;
+ALTER TABLE service_accounts DISABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON service_accounts;
