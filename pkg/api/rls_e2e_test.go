@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"fides/pkg/auth"
+	"fides/pkg/crypto"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -118,6 +120,31 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 	}
 	if got := listFlowNames(tokenB); len(got) != 1 || got[0] != "flow-b" {
 		t.Fatalf("OrgB should see only flow-b via RLS, got %v", got)
+	}
+
+	// Regression: a service-account API key must authenticate under RLS. The
+	// pre-auth lookup (authServiceAccountKey) runs on the app pool with no
+	// app.current_org set, so if service_accounts/service_account_keys are
+	// RLS-protected the row is invisible and every issued key 401s. This is the
+	// exact bug the schema-rls.sql exclusion fixes.
+	saID := uuid.New()
+	mustExec(`INSERT INTO service_accounts (id, org_id, name, role) VALUES ($1,$2,'ci','Auditor')`, saID, orgA)
+	full, prefix, secret, err := generateAPIKey()
+	if err != nil {
+		t.Fatalf("generateAPIKey: %v", err)
+	}
+	hash, err := crypto.HashPassword(secret)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	mustExec(`INSERT INTO service_account_keys (service_account_id, prefix, key_hash) VALUES ($1,$2,$3)`, saID, prefix, hash)
+
+	p := srv.authServiceAccountKey(context.Background(), full)
+	if p == nil {
+		t.Fatal("service-account key must authenticate under RLS (pre-auth lookup hidden by RLS)")
+	}
+	if p.OrgID != orgA || p.Role != auth.RoleAuditor {
+		t.Fatalf("wrong principal from key auth: org=%v role=%s (want org=%v role=Auditor)", p.OrgID, p.Role, orgA)
 	}
 }
 
