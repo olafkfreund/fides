@@ -16,21 +16,22 @@ runtimes (docker/k8s/ecs/lambda), and is **AI-native** (MCP + WebMCP + in-cluste
 
 | Category | Leaders | Where Fides sits |
 |---|---|---|
-| **DevOps change gate + provenance** (our lane) | **Kosli** (benchmark), JFrog AppTrust | **Direct competitor — near parity + AI-native edge** |
+| **DevOps change gate + provenance** (our lane) | **Closed-source SaaS provenance leaders**, JFrog AppTrust | **Direct competitor — near parity + AI-native edge** |
 | Supply-chain security / SLSA attestation | Chainguard, Sigstore/cosign, in-toto, GitHub/GitLab attestations, Aqua, Snyk, Anchore | We *consume/verify*, we don't sign images — **gap** |
 | Continuous compliance / GRC automation | Vanta, Drata, Secureframe, ServiceNow IRM, AuditBoard, LogicGate | We overlap on evidence+frameworks; they own the auditor UX |
 | DORA / delivery intelligence | Jellyfish, Swarmia, Harness, Octopus | We have DORA metrics; they own the analytics UX |
 | Policy-as-code / admission | Kyverno, OPA/Gatekeeper, Wiz | We have env policies + admission pkg; they own K8s admission |
 
-**Our true head-to-head is Kosli.** Everything else is adjacent — either a component we
+**Our true head-to-head is the incumbent closed-source SaaS provenance leader.** Everything else is adjacent — either a component we
 should integrate (Sigstore, Kyverno) or a different buyer (Vanta/Drata for the CISO checklist).
 
-## 3. Kosli vs Fides (the benchmark)
+## 3. The competitive benchmark vs Fides
 
-Kosli = "governance infrastructure for AI-assisted delivery in regulated industries."
-Backed by Deutsche Bank, embedded in FINOS. Evidence vault, cryptographic artifact
-fingerprinting, automated change gates, runtime env monitoring, hybrid/mainframe support,
-"Kosli Answers" (AI compliance Q&A). Opaque enterprise SaaS pricing.
+The leading closed-source SaaS competitor positions itself as "governance infrastructure
+for AI-assisted delivery in regulated industries." Bank-backed and embedded in FINOS.
+Evidence vault, cryptographic artifact fingerprinting, automated change gates, runtime
+env monitoring, hybrid/mainframe support, an AI compliance Q&A feature. Opaque enterprise
+SaaS pricing.
 
 **Fides is at or near parity on the core:** hash-chained evidence, SHA256 artifact identity,
 evidence-based change gates, runtime snapshots, framework catalogs, Git/Slack/ServiceNow.
@@ -38,13 +39,13 @@ evidence-based change gates, runtime snapshots, framework catalogs, Git/Slack/Se
 **Where Fides is genuinely differentiated:**
 1. **AI-native governance** — MCP server (15 tools + docs-as-resources), in-browser WebMCP,
    in-cluster MCP sensor. Agents can *query compliance and record provenance directly*.
-   Kosli has AI Q&A; we have an **agent-actionable control plane**. This is our sharpest edge.
+   They have AI Q&A; we have an **agent-actionable control plane**. This is our sharpest edge.
 2. **Numerical 0–100 risk score** on the change gate (vs binary pass/fail).
 3. **Self-hostable / own-your-data** — Postgres + embedded migrations + Helm; viable for
-   air-gapped/on-prem. Kosli is SaaS-only. (Maps directly to a named market white-space.)
+   air-gapped/on-prem. The incumbents are SaaS-only. (Maps directly to a named market white-space.)
 4. **LLM-drafted policies** (`fides policy generate --framework ... --description`).
 
-**Where Kosli/others are ahead (our gaps):**
+**Where competitors are ahead (our gaps):**
 - Brand/credibility (DB + FINOS); hybrid/mainframe reach; polished evidence-vault UX.
 - **JFrog AppTrust (Sept 2025)** is running the *same* "DevGovOps → ServiceNow" play we are,
   with an evidence-provider ecosystem (GitHub, Sonar, Aqua…). Validates our thesis, but they move fast.
@@ -86,11 +87,12 @@ These are now baseline expectations across the market:
 6. **Auto-remediation with approval gates** (white-space): policy violation → proposed fix →
    `fides approve` → apply. Start low-risk (tags, allowlist, drift re-sync).
 7. **Evidence-vault UX parity** — the portal (Go-served admin pages) should present a
-   Kosli-grade evidence timeline per trail/artifact, not just CLI/JSON.
+   a best-in-class evidence timeline per trail/artifact, not just CLI/JSON.
 
 ### Tier 3 — positioning
-8. **Publish pricing / open-core story.** Kosli's opacity is a named weakness; our self-hostable
-   architecture is a wedge. An OSS/free tier attacks the "open-source Kosli alternative" white-space.
+8. **Publish pricing / open-core story.** Competitors' opaque, SaaS-only pricing is a named weakness;
+   our self-hostable architecture is a wedge. An OSS/free tier attacks the "open-source alternative to
+   closed-source SaaS provenance tools" white-space.
 9. **EU AI Act model-provenance play** — reuse trails/attestations to record model version →
    inference → decision with long retention. New buyer, same engine.
 
@@ -150,5 +152,5 @@ one-tool-per-regulation.* Fides generates audit-ready evidence for all of them f
 ## 8. Recommended focus (the short list)
 1. **SLSA/cosign verify + SBOM ingestion + OSCAL export** — close table-stakes, unlock CRA/SSDF/FedRAMP.
 2. **Ship the ServiceNow spoke** (signed evidence → CR, change↔control link, CMDB anchor) — beat JFrog AppTrust to the "DevGovOps" story with tamper-evidence they don't have.
-3. **Lean into AI-native (MCP) + self-hostable** as the two things Kosli structurally can't copy quickly.
+3. **Lean into AI-native (MCP) + self-hostable** as the two things closed-source SaaS competitors structurally can't copy quickly.
 4. **DORA↔compliance correlation** as the wedge feature no one else has.

@@ -551,12 +551,12 @@ AI agents can run queries conversational style inside cursor/claude interface:
 Recent releases added a broad set of capabilities. See the dedicated, example-rich
 references:
 
-* **[Feature guide with real examples](docs/features.md)** — evidence parsers, tamper-evidence chain, service accounts, allow-lists, environment policies, search/diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics, Slack.
-* **[Full CLI reference](docs/cli-reference.md)** — every `fides` command and flag.
-* **[Segregation of duties](docs/segregation-of-duties.md)** — how the committer, approver, and deployer identities are supplied (CLI + API), with a worked `compliant: true` example. Note: identities register under `/api/v1/tenant/users`, not `/api/v1/users`.
-* **[ServiceNow integration](docs/servicenow-integration.md)** — CMDB / ITOM / ITSM / MCP, plus the Go-served admin page at `/servicenow`.
-* **[AWS Secrets Manager](docs/aws-secrets-manager.md)** — IRSA-based secret resolution.
-* **[Environment MCP compliance](docs/environment-mcp-compliance.md)** — live runtime verification via a real MCP server.
+* **[Feature guide with real examples](features.md)** — evidence parsers, tamper-evidence chain, service accounts, allow-lists, environment policies, search/diff, audit packages, ECS/Lambda snapshots, logical environments, DORA metrics, Slack.
+* **[Full CLI reference](cli-reference.md)** — every `fides` command and flag.
+* **[Segregation of duties](segregation-of-duties.md)** — how the committer, approver, and deployer identities are supplied (CLI + API), with a worked `compliant: true` example. Note: identities register under `/api/v1/tenant/users`, not `/api/v1/users`.
+* **[ServiceNow integration](servicenow-integration.md)** — CMDB / ITOM / ITSM / MCP, plus the Go-served admin page at `/servicenow`.
+* **[AWS Secrets Manager](aws-secrets-manager.md)** — IRSA-based secret resolution.
+* **[Environment MCP compliance](environment-mcp-compliance.md)** — live runtime verification via a real MCP server.
 
 ### Quick examples
 

@@ -106,7 +106,7 @@ func nullHours(v sql.NullFloat64) *float64 {
 }
 
 // handleDeploymentFrequency returns per-environment weekly deployment counts
-// (snapshots) for the last N weeks, for the Kosli-style frequency chart.
+// (snapshots) for the last N weeks, for the weekly deployment-frequency chart.
 func (s *Server) handleDeploymentFrequency(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {

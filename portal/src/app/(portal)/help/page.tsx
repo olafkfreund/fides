@@ -7,6 +7,9 @@ import { PageHeader, Panel } from "@/components/dash";
 // Docs are the Go-served web/*.md files (root-relative, public).
 const DOCS = [
   { title: "Getting Started", path: "/getting_started.md" },
+  { title: "Small & Large Teams", path: "/teams.md" },
+  { title: "User Stories", path: "/user-stories.md" },
+  { title: "CI/CD Gate (GitHub & GitLab)", path: "/ci-gate.md" },
   { title: "Setup & Seeding", path: "/setup.md" },
   { title: "Features", path: "/features.md" },
   { title: "CLI Reference", path: "/cli-reference.md" },

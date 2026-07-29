@@ -9,7 +9,7 @@ The binaries need a PostgreSQL database and an evidence/object store to run the
 full server — for a complete self-hosted stack see the
 **[Getting Started guide](/getting_started.html)**, the
 **[Integration & Setup Guide](/guide.html)**, or the Helm chart
-(`charts/fides`, see [Setup & Seeding](docs/setup.md)).
+(`charts/fides`, see [Setup & Seeding](setup.md)).
 
 ---
 
@@ -132,4 +132,4 @@ go build -o fides-mcp    ./cmd/mcp
 
 * **[Getting Started](/getting_started.html)** — run the full stack locally with Docker Compose and walk the CLI.
 * **[Integration & Setup Guide](/guide.html)** — production deployment, secret vaults, CI/CD templates.
-* **[CLI reference](docs/cli-reference.md)** · **[MCP server](/mcp-server.html)**
+* **[CLI reference](cli-reference.md)** · **[MCP server](mcp-server.md)**

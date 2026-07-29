@@ -103,8 +103,8 @@ entry."*
 ## 4. Why the ServiceNow partner team should champion Fides
 
 - **Expands ServiceNow's footprint into DevOps / platform engineering** — the
-  exact teams ServiceNow struggles to reach, where GitLab, Harness, and Kosli
-  are circling. Fides makes ServiceNow the destination for DevSecOps evidence.
+  exact teams ServiceNow struggles to reach, where GitLab, Harness, and similar
+  tools are circling. Fides makes ServiceNow the destination for DevSecOps evidence.
 - **Drives ITOM & CMDB consumption** — Fides pumps high-quality, high-volume,
   verified data into the two modules ServiceNow most wants customers using.
   More data → more value → more expansion.

@@ -8,17 +8,17 @@
 
 ## Why publish this at all
 
-Our head-to-head competitor, **Kosli**, runs **opaque, SaaS-only, enterprise
+Our head-to-head competitors run **opaque, SaaS-only, enterprise
 "call us" pricing**. That opacity is a named weakness, and our **self-hostable,
 OSS-core** architecture is the wedge. Publishing a transparent price list plus a
 genuinely free, self-hostable tier directly attacks two market white-spaces:
 
 1. **"Pricing opacity"** — we post real numbers; buyers can self-qualify.
-2. **"The open-source Kosli alternative"** — a free, Apache-2.0 core they can run
-   air-gapped today, with a clear paid upgrade path.
+2. **"The open-source alternative to closed-source SaaS provenance tools"** — a free,
+   Apache-2.0 core they can run air-gapped today, with a clear paid upgrade path.
 
-Positioning line: **"The open, self-hostable evidence & change-gate layer — Kosli
-without the black box."**
+Positioning line: **"The open, self-hostable evidence & change-gate layer —
+provenance without the black box."**
 
 ## The open-core boundary
 
@@ -62,7 +62,7 @@ support they already budget for.
 - Self-hosted (Docker / Helm / Nix); single organization.
 - Community support (GitHub issues/discussions).
 - **Price: $0.**
-- **Goal:** be the default "open-source Kosli alternative." Land developers and
+- **Goal:** be the default "open-source alternative to closed-source SaaS provenance tools." Land developers and
   OSS projects; convert the ones that grow into regulated needs.
 
 ### Team — for a growing engineering org
@@ -81,8 +81,8 @@ support they already budget for.
   auto-remediation with approval gates, per-framework auditor report packs,
   air-gapped/on-prem hardening, and 24×7 + SLA. Audit-support add-on available.
 - **Price: `[PLACEHOLDER — custom / annual; publish a "starting at $X/yr" anchor
-  so we're still less opaque than Kosli]`.**
-- **Goal:** the regulated-enterprise buyer who today evaluates Kosli/Chainloop —
+  so we're still less opaque than the SaaS incumbents]`.**
+- **Goal:** the regulated-enterprise buyer who today evaluates closed-source SaaS provenance tools / Chainloop —
   won on tamper-evidence + self-hostable + deep ServiceNow.
 
 ## Licensing model (open-core)
@@ -100,7 +100,7 @@ value on **enterprise features + hosting + support**, not on the license.
 
 ## How we compare (the table we put on the website)
 
-| | **Fides Community** | **Fides Enterprise** | **Kosli** |
+| | **Fides Community** | **Fides Enterprise** | **Closed-source SaaS** |
 |---|---|---|---|
 | Price transparency | Public | Public anchor + custom | **Opaque ("contact us")** |
 | Self-host / air-gapped | ✅ Free | ✅ Supported | ❌ SaaS-only |
@@ -112,7 +112,7 @@ value on **enterprise features + hosting + support**, not on the license.
 ## Open questions for you
 
 1. **Numbers:** confirm the Team per-developer price and whether Enterprise gets
-   a public "starting at" anchor (recommended — it still beats Kosli's opacity).
+   a public "starting at" anchor (recommended — it still beats competitors' opacity).
 2. **License:** Model A (Apache-2.0) vs Model B (BSL)?
 3. **ServiceNow boundary:** keep the governed MCP client + basic write-back in
    the free core (current draft), or move all of ServiceNow to Enterprise?
@@ -120,5 +120,5 @@ value on **enterprise features + hosting + support**, not on the license.
    `/pricing` in-portal? (Say the word and I'll wire it once the numbers land.)
 
 ## Related
-- `docs/market-analysis-2026.md` §5 Tier-3 (#8) and §3 (Kosli benchmark).
+- `docs/market-analysis-2026.md` §5 Tier-3 (#8) and §3 (competitive benchmark).
 - Epic #217 (delivery-intelligence moat & new-buyer plays) — this is its last child.
