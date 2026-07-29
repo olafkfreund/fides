@@ -15,6 +15,7 @@ render them on demand.
 | `04-dashboard.tape` | DORA metrics + the live `fides dashboard` TUI |
 | `05-supply-chain-runtime.tape` | SBOM/SLSA ingest, `search components`, `impact`/`vex`, `anchor`, snapshots, `env diff`, allow-list |
 | `06-advanced-new.tape` | `attest authorship`, feature-flag governance, EU AI Act `model`, `remediation`, OSCAL/CRA reports, ServiceNow grounding |
+| `07-live-data.tape` | Read-only live tour: frameworks/coverage, control timeline, flows/trails, evidence search, DORA metrics (safe against a real server) |
 
 ### Render
 

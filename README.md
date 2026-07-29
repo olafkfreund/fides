@@ -20,6 +20,10 @@ For detailed architecture diagrams, database schemas, and integration designs, s
 
 *`fides` spans record → verify → gate (`trail`/`artifact`/`attest` → `verify-chain` → `assert`/`change-gate`), governance controls & regulated frameworks, EU AI Act **model provenance**, runtime **snapshots**, and **ServiceNow**.*
 
+Against a live server — control coverage, timelines, flows/trails, evidence search, and DORA metrics:
+
+![Fides CLI on live data](docs/images/cli/07-live-data.gif)
+
 ### Portal, page by page
 
 | Assurance Console | Artifacts & SBOM | Attestations |

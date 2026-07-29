@@ -29,6 +29,10 @@ provenance, runtime snapshots, and ServiceNow:
 
 ![Fides CLI feature reference](docs/images/cli/00-cli-overview.gif)
 
+…and against a live server — coverage, control timelines, flows/trails, evidence search, and DORA metrics:
+
+![Fides CLI on live data](docs/images/cli/07-live-data.gif)
+
 | Assurance Console | Controls & Coverage | AI Audits |
 |---|---|---|
 | ![Overview](docs/images/portal/00-overview.jpg) | ![Controls](docs/images/portal/06-controls.jpg) | ![AI Audits](docs/images/portal/07-ai-audits.jpg) |
