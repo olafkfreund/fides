@@ -85,6 +85,36 @@ func TestEnvLineStatus(t *testing.T) {
 	}
 }
 
+func TestWeeklyTotals(t *testing.T) {
+	rows := []dfRow{
+		{Environment: "prod", Week: "2026-W29", Deployments: 2},
+		{Environment: "stg", Week: "2026-W29", Deployments: 3},
+		{Environment: "prod", Week: "2026-W30", Deployments: 5},
+	}
+	weeks, counts := weeklyTotals(rows)
+	if len(weeks) != 2 || weeks[0] != "2026-W29" || weeks[1] != "2026-W30" {
+		t.Fatalf("weeks = %v, want [2026-W29 2026-W30] (chronological)", weeks)
+	}
+	if counts[0] != 5 || counts[1] != 5 { // W29: 2+3 summed across envs
+		t.Fatalf("counts = %v, want [5 5]", counts)
+	}
+}
+
+func TestSparkline(t *testing.T) {
+	if s := sparkline(nil); s != "" {
+		t.Errorf("empty => %q, want \"\"", s)
+	}
+	// All-zero renders the lowest glyph, not a divide-by-zero.
+	if s := sparkline([]int{0, 0}); s != "▁▁" {
+		t.Errorf("all-zero => %q, want ▁▁", s)
+	}
+	// Max maps to the top glyph, zero to the bottom.
+	s := []rune(sparkline([]int{0, 7}))
+	if s[0] != '▁' || s[1] != '█' {
+		t.Errorf("scaled => %q, want ▁█", string(s))
+	}
+}
+
 type errTest struct{}
 
 func (errTest) Error() string { return "boom" }
