@@ -115,6 +115,18 @@ func TestSparkline(t *testing.T) {
 	}
 }
 
+func TestMoreLine(t *testing.T) {
+	if s := moreLine(20, 12); s != "… and 8 more" {
+		t.Errorf("truncated => %q, want '… and 8 more'", s)
+	}
+	if s := moreLine(5, 5); s != "" {
+		t.Errorf("not truncated => %q, want empty", s)
+	}
+	if s := moreLine(3, 12); s != "" {
+		t.Errorf("shown>total => %q, want empty", s)
+	}
+}
+
 type errTest struct{}
 
 func (errTest) Error() string { return "boom" }
