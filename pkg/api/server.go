@@ -2614,7 +2614,7 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	case flowName != "":
 		answer = fmt.Sprintf("I've created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
 	case lower == "list flows" || lower == "show flows":
-		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows")
+		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows WHERE org_id = $1", orgID)
 		defer rows.Close()
 		answer = "Here are the currently configured compliance flows in Fides:\n\n"
 		for rows.Next() {
@@ -2627,8 +2627,8 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		          FROM attestations att
 		          JOIN trails t ON att.trail_id = t.id
 		          JOIN flows f ON t.flow_id = f.id
-		          WHERE att.is_compliant = false`
-		rows, _ := s.q(ctx).QueryContext(ctx, query)
+		          WHERE att.is_compliant = false AND f.org_id = $1`
+		rows, _ := s.q(ctx).QueryContext(ctx, query, orgID)
 		defer rows.Close()
 		answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
 		found := false
