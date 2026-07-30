@@ -21,8 +21,12 @@ import (
 // MCP server. Read-only. On a non-TTY it prints a JSON snapshot and exits 0 so
 // it degrades cleanly in pipelines instead of hanging.
 //
-// ponytail: Overview + Environments + Metrics tabs. Trails/Policies tabs remain
-// Phase 2 follow-ups — add a name to tabNames + a case in View() when needed.
+// ponytail: Overview + Environments + Metrics + Policies + Artifacts tabs, each
+// over an existing endpoint (no server changes). A dedicated Trails tab is not
+// built: there is no org-wide GET /api/v1/trails list endpoint (trails are
+// per-flow), and #333 forbids new server endpoints — Artifacts (which carry
+// their trail name) covers the trail view. Add a tab = a name in tabNames + a
+// case in View().
 
 // ----- server response shapes (see cmd/mcp/main.go for the same endpoints) -----
 
@@ -52,6 +56,18 @@ type dfRow struct {
 	Deployments int    `json:"deployments"`
 }
 
+// polView / artView are the subset of /api/v1/policies and /api/v1/artifacts we
+// render (see handleListPolicies / handleListArtifacts).
+type polView struct {
+	Name   string `json:"name"`
+	Target string `json:"target"`
+}
+type artView struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	TrailName string `json:"trail_name"`
+}
+
 // ----- async load messages -----
 
 type flowsMsg struct {
@@ -59,8 +75,12 @@ type flowsMsg struct {
 	err error
 }
 type policiesMsg struct {
-	n   int
-	err error
+	policies []polView
+	err      error
+}
+type artifactsMsg struct {
+	artifacts []artView
+	err       error
 }
 type envsMsg struct {
 	envs []envView
@@ -88,8 +108,13 @@ type dashModel struct {
 	flowsLoaded bool
 
 	policies       int
+	policyList     []polView
 	policiesErr    error
 	policiesLoaded bool
+
+	artifacts       []artView
+	artifactsErr    error
+	artifactsLoaded bool
 
 	envs       []envView
 	envsErr    error
@@ -105,7 +130,7 @@ type dashModel struct {
 }
 
 func (m dashModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics)
+	return tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics, m.fetchArtifacts)
 }
 
 // fetch* are tea.Cmds (func() tea.Msg): each hits one endpoint and returns a
@@ -126,9 +151,19 @@ func (m dashModel) fetchPolicies() tea.Msg {
 	if err != nil {
 		return policiesMsg{err: err}
 	}
-	var a []json.RawMessage
+	var p []polView
+	err = json.Unmarshal([]byte(body), &p)
+	return policiesMsg{policies: p, err: err}
+}
+
+func (m dashModel) fetchArtifacts() tea.Msg {
+	body, err := getRequest(m.config, "/api/v1/artifacts")
+	if err != nil {
+		return artifactsMsg{err: err}
+	}
+	var a []artView
 	err = json.Unmarshal([]byte(body), &a)
-	return policiesMsg{n: len(a), err: err}
+	return artifactsMsg{artifacts: a, err: err}
 }
 
 func (m dashModel) fetchEnvs() tea.Msg {
@@ -175,10 +210,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmQuit = true
 			return m, nil
 		case "r":
-			m.flowsLoaded, m.policiesLoaded, m.envsLoaded, m.covLoaded, m.metricsLoaded = false, false, false, false, false
-			m.flowsErr, m.policiesErr, m.envsErr, m.covErr, m.metricsErr = nil, nil, nil, nil, nil
+			m.flowsLoaded, m.policiesLoaded, m.envsLoaded, m.covLoaded, m.metricsLoaded, m.artifactsLoaded = false, false, false, false, false, false
+			m.flowsErr, m.policiesErr, m.envsErr, m.covErr, m.metricsErr, m.artifactsErr = nil, nil, nil, nil, nil, nil
 			m.confirmQuit = false
-			return m, tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics)
+			return m, tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics, m.fetchArtifacts)
 		case "tab", "right", "l":
 			m.tab = (m.tab + 1) % len(tabNames)
 		case "shift+tab", "left", "h":
@@ -192,7 +227,9 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flowsMsg:
 		m.flows, m.flowsErr, m.flowsLoaded = msg.n, msg.err, true
 	case policiesMsg:
-		m.policies, m.policiesErr, m.policiesLoaded = msg.n, msg.err, true
+		m.policyList, m.policies, m.policiesErr, m.policiesLoaded = msg.policies, len(msg.policies), msg.err, true
+	case artifactsMsg:
+		m.artifacts, m.artifactsErr, m.artifactsLoaded = msg.artifacts, msg.err, true
 	case envsMsg:
 		m.envs, m.envsErr, m.envsLoaded = msg.envs, msg.err, true
 	case coverageMsg:
@@ -213,6 +250,10 @@ func (m dashModel) View() string {
 		body = m.environments()
 	case 2:
 		body = m.metricsPanel()
+	case 3:
+		body = m.policiesPanel()
+	case 4:
+		body = m.artifactsPanel()
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.tabStrip(),
@@ -227,7 +268,7 @@ func (m dashModel) View() string {
 
 // tabNames is the single source of truth for the tab strip and navigation, so
 // tabStrip/Update/View can't drift on how many tabs exist.
-var tabNames = []string{"Overview", "Environments", "Metrics"}
+var tabNames = []string{"Overview", "Environments", "Metrics", "Policies", "Artifacts"}
 
 var (
 	colTitle  = lipgloss.Color("39")
@@ -511,6 +552,84 @@ func intBar(label string, val, max, barW int) string {
 	fill := lipgloss.NewStyle().Foreground(colGood).Render(strings.Repeat("█", filled))
 	empty := lipgloss.NewStyle().Foreground(colEmpty).Render(strings.Repeat("░", barW-filled))
 	return fmt.Sprintf("%-12s %s%s %3d", truncate(label, 12), fill, empty, val)
+}
+
+// listPanel is the shared box/title/loading/error/empty scaffold for simple
+// bounded-list tabs. rows(limit) returns at most `limit` rendered lines; a
+// "… and N more" note is appended when total exceeds what was shown.
+func (m dashModel) listPanel(title string, loaded bool, loadErr error, emptyMsg string, total int, rows func(limit int) []string) string {
+	w := m.w
+	if w == 0 {
+		w = 100
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).
+		Padding(0, 1).Width(w - 2)
+	head := lipgloss.NewStyle().Foreground(colTitle).Bold(true).Render(title)
+
+	const limit = 12
+	var lines []string
+	switch {
+	case loadErr != nil:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colBad).Render("error: "+loadErr.Error()))
+	case !loaded:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("loading…"))
+	case total == 0:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render(emptyMsg))
+	default:
+		lines = rows(limit)
+		if more := moreLine(total, len(lines)); more != "" {
+			lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render(more))
+		}
+	}
+	return box.Render(head + "\n\n" + strings.Join(lines, "\n"))
+}
+
+// moreLine returns a "… and N more" note when a list was truncated, else "".
+func moreLine(total, shown int) string {
+	if total > shown {
+		return fmt.Sprintf("… and %d more", total-shown)
+	}
+	return ""
+}
+
+func (m dashModel) policiesPanel() string {
+	return m.listPanel("Policies", m.policiesLoaded, m.policiesErr, "no policies defined", len(m.policyList),
+		func(limit int) []string {
+			var lines []string
+			for i, p := range m.policyList {
+				if i >= limit {
+					break
+				}
+				target := p.Target
+				if target == "" {
+					target = "—"
+				}
+				name := lipgloss.NewStyle().Foreground(colBig).Bold(true).Render(fmt.Sprintf("%-24s", truncate(p.Name, 24)))
+				lines = append(lines, name+" "+lipgloss.NewStyle().Foreground(colDim).Render("→ "+truncate(target, 40)))
+			}
+			return lines
+		})
+}
+
+func (m dashModel) artifactsPanel() string {
+	return m.listPanel("Artifacts (newest first)", m.artifactsLoaded, m.artifactsErr, "no artifacts recorded", len(m.artifacts),
+		func(limit int) []string {
+			var lines []string
+			for i, a := range m.artifacts {
+				if i >= limit {
+					break
+				}
+				name := lipgloss.NewStyle().Foreground(colBig).Bold(true).Render(fmt.Sprintf("%-28s", truncate(a.Name, 28)))
+				typ := lipgloss.NewStyle().Foreground(colDim).Render(fmt.Sprintf("%-8s", a.Type))
+				trail := ""
+				if a.TrailName != "" {
+					trail = lipgloss.NewStyle().Foreground(colDim).Render("→ " + truncate(a.TrailName, 24))
+				}
+				lines = append(lines, name+" "+typ+" "+trail)
+			}
+			return lines
+		})
 }
 
 func (m dashModel) footer() string {
