@@ -21,9 +21,8 @@ import (
 // MCP server. Read-only. On a non-TTY it prints a JSON snapshot and exits 0 so
 // it degrades cleanly in pipelines instead of hanging.
 //
-// ponytail: Overview + Environments tabs (the Environments data is already
-// fetched for the Overview count). Trails/Metrics/Policies tabs remain Phase 2
-// follow-ups — add a name to tabNames + a case in View() when needed.
+// ponytail: Overview + Environments + Metrics tabs. Trails/Policies tabs remain
+// Phase 2 follow-ups — add a name to tabNames + a case in View() when needed.
 
 // ----- server response shapes (see cmd/mcp/main.go for the same endpoints) -----
 
@@ -45,6 +44,14 @@ type covResp struct {
 	Controls          []covControl `json:"controls"`
 }
 
+// dfRow is one (environment, ISO-week) deployment count from
+// /api/v1/metrics/deployment-frequency (see pkg/api/metrics.go).
+type dfRow struct {
+	Environment string `json:"environment"`
+	Week        string `json:"week"`
+	Deployments int    `json:"deployments"`
+}
+
 // ----- async load messages -----
 
 type flowsMsg struct {
@@ -62,6 +69,10 @@ type envsMsg struct {
 type coverageMsg struct {
 	cov covResp
 	err error
+}
+type metricsMsg struct {
+	rows []dfRow
+	err  error
 }
 
 // ----- model -----
@@ -87,10 +98,14 @@ type dashModel struct {
 	cov       covResp
 	covErr    error
 	covLoaded bool
+
+	metrics       []dfRow
+	metricsErr    error
+	metricsLoaded bool
 }
 
 func (m dashModel) Init() tea.Cmd {
-	return tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage)
+	return tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics)
 }
 
 // fetch* are tea.Cmds (func() tea.Msg): each hits one endpoint and returns a
@@ -136,6 +151,16 @@ func (m dashModel) fetchCoverage() tea.Msg {
 	return coverageMsg{cov: c, err: err}
 }
 
+func (m dashModel) fetchMetrics() tea.Msg {
+	body, err := getRequest(m.config, "/api/v1/metrics/deployment-frequency?weeks=12")
+	if err != nil {
+		return metricsMsg{err: err}
+	}
+	var rows []dfRow
+	err = json.Unmarshal([]byte(body), &rows)
+	return metricsMsg{rows: rows, err: err}
+}
+
 func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -150,10 +175,10 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.confirmQuit = true
 			return m, nil
 		case "r":
-			m.flowsLoaded, m.policiesLoaded, m.envsLoaded, m.covLoaded = false, false, false, false
-			m.flowsErr, m.policiesErr, m.envsErr, m.covErr = nil, nil, nil, nil
+			m.flowsLoaded, m.policiesLoaded, m.envsLoaded, m.covLoaded, m.metricsLoaded = false, false, false, false, false
+			m.flowsErr, m.policiesErr, m.envsErr, m.covErr, m.metricsErr = nil, nil, nil, nil, nil
 			m.confirmQuit = false
-			return m, tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage)
+			return m, tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage, m.fetchMetrics)
 		case "tab", "right", "l":
 			m.tab = (m.tab + 1) % len(tabNames)
 		case "shift+tab", "left", "h":
@@ -172,6 +197,8 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.envs, m.envsErr, m.envsLoaded = msg.envs, msg.err, true
 	case coverageMsg:
 		m.cov, m.covErr, m.covLoaded = msg.cov, msg.err, true
+	case metricsMsg:
+		m.metrics, m.metricsErr, m.metricsLoaded = msg.rows, msg.err, true
 	}
 	return m, nil
 }
@@ -181,8 +208,11 @@ func (m dashModel) View() string {
 		m.w = 100
 	}
 	body := m.overview()
-	if m.tab == 1 {
+	switch m.tab {
+	case 1:
 		body = m.environments()
+	case 2:
+		body = m.metricsPanel()
 	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.tabStrip(),
@@ -197,7 +227,7 @@ func (m dashModel) View() string {
 
 // tabNames is the single source of truth for the tab strip and navigation, so
 // tabStrip/Update/View can't drift on how many tabs exist.
-var tabNames = []string{"Overview", "Environments"}
+var tabNames = []string{"Overview", "Environments", "Metrics"}
 
 var (
 	colTitle  = lipgloss.Color("39")
@@ -379,6 +409,108 @@ func boundedDetail(e envView) []string {
 		out = append(out[:limit], fmt.Sprintf("… and %d more", extra))
 	}
 	return out
+}
+
+// metrics renders the Metrics tab: DORA deployment frequency over the last 12
+// weeks — a sparkline of weekly totals plus a per-week bar breakdown.
+func (m dashModel) metricsPanel() string {
+	w := m.w
+	if w == 0 {
+		w = 100
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).
+		Padding(0, 1).Width(w - 2)
+	title := lipgloss.NewStyle().Foreground(colTitle).Bold(true).Render("Deployment Frequency (DORA) — last 12 weeks")
+
+	var lines []string
+	switch {
+	case m.metricsErr != nil:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colBad).Render("error: "+m.metricsErr.Error()))
+	case !m.metricsLoaded:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("loading…"))
+	case len(m.metrics) == 0:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("no deployments recorded"))
+	default:
+		weeks, counts := weeklyTotals(m.metrics)
+		total, max := 0, 0
+		for _, c := range counts {
+			total += c
+			if c > max {
+				max = c
+			}
+		}
+		lines = append(lines,
+			fmt.Sprintf("%d deployments across %d weeks", total, len(weeks)),
+			"",
+			lipgloss.NewStyle().Foreground(colTitle).Render(sparkline(counts)),
+			"")
+		barW := w - 30
+		if barW < 10 {
+			barW = 10
+		}
+		for i, wk := range weeks {
+			lines = append(lines, intBar(wk, counts[i], max, barW))
+		}
+	}
+	return box.Render(title + "\n\n" + strings.Join(lines, "\n"))
+}
+
+// weeklyTotals collapses per-(env,week) rows into ordered weekly totals. Input
+// rows are week-ordered (see the endpoint's ORDER BY), so first-seen order is
+// chronological.
+func weeklyTotals(rows []dfRow) (weeks []string, counts []int) {
+	pos := map[string]int{}
+	for _, r := range rows {
+		i, ok := pos[r.Week]
+		if !ok {
+			i = len(weeks)
+			pos[r.Week] = i
+			weeks = append(weeks, r.Week)
+			counts = append(counts, 0)
+		}
+		counts[i] += r.Deployments
+	}
+	return weeks, counts
+}
+
+var sparkChars = []rune("▁▂▃▄▅▆▇█")
+
+// sparkline maps values to block glyphs scaled to the series max (all-zero or
+// empty series render as the lowest glyph / empty string).
+func sparkline(vals []int) string {
+	if len(vals) == 0 {
+		return ""
+	}
+	max := 0
+	for _, v := range vals {
+		if v > max {
+			max = v
+		}
+	}
+	var b strings.Builder
+	for _, v := range vals {
+		idx := 0
+		if max > 0 {
+			idx = v * (len(sparkChars) - 1) / max
+		}
+		b.WriteRune(sparkChars[idx])
+	}
+	return b.String()
+}
+
+// intBar renders "2026-W30     ████████░░░░   7".
+func intBar(label string, val, max, barW int) string {
+	filled := 0
+	if max > 0 {
+		filled = val * barW / max
+	}
+	if filled > barW {
+		filled = barW
+	}
+	fill := lipgloss.NewStyle().Foreground(colGood).Render(strings.Repeat("█", filled))
+	empty := lipgloss.NewStyle().Foreground(colEmpty).Render(strings.Repeat("░", barW-filled))
+	return fmt.Sprintf("%-12s %s%s %3d", truncate(label, 12), fill, empty, val)
 }
 
 func (m dashModel) footer() string {
