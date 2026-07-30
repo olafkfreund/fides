@@ -54,6 +54,37 @@ func TestStatVal(t *testing.T) {
 	}
 }
 
+func TestBoundedDetailCaps(t *testing.T) {
+	e := envView{
+		Drifts:        []string{"d1", "d2", "d3"},
+		ShadowChanges: []string{"s1", "s2", "s3"},
+	}
+	got := boundedDetail(e) // 6 entries, cap 4 => 4 + "… and 2 more"
+	if len(got) != 5 {
+		t.Fatalf("boundedDetail len = %d, want 5", len(got))
+	}
+	if got[0] != "drift: d1" { // drifts come before shadows
+		t.Fatalf("first detail = %q, want 'drift: d1'", got[0])
+	}
+	if last := got[4]; !strings.Contains(last, "2 more") {
+		t.Fatalf("last line = %q, want overflow marker", last)
+	}
+	// Under the cap: no overflow marker.
+	if n := len(boundedDetail(envView{Drifts: []string{"only"}})); n != 1 {
+		t.Fatalf("single-drift len = %d, want 1", n)
+	}
+}
+
+func TestEnvLineStatus(t *testing.T) {
+	if s := envLine(envView{Name: "prod", Type: "k8s"}); !strings.Contains(s, "compliant") {
+		t.Errorf("clean env => %q, want compliant", s)
+	}
+	drift := envLine(envView{Name: "stg", Type: "k8s", Drifts: []string{"x"}, ShadowChanges: []string{"y", "z"}})
+	if !strings.Contains(drift, "1 drift") || !strings.Contains(drift, "2 shadow") {
+		t.Errorf("drift env => %q, want '1 drift, 2 shadow'", drift)
+	}
+}
+
 type errTest struct{}
 
 func (errTest) Error() string { return "boom" }

@@ -19,8 +19,9 @@ import (
 // MCP server. Read-only. On a non-TTY it prints a JSON snapshot and exits 0 so
 // it degrades cleanly in pipelines instead of hanging.
 //
-// ponytail: MVP is the Overview tab only. Environments/Trails/Metrics tabs are
-// tracked as Phase 2 follow-ups — add them as TabSpec-style entries when needed.
+// ponytail: Overview + Environments tabs (the Environments data is already
+// fetched for the Overview count). Trails/Metrics/Policies tabs remain Phase 2
+// follow-ups — add a name to tabNames + a case in View() when needed.
 
 // ----- server response shapes (see cmd/mcp/main.go for the same endpoints) -----
 
@@ -151,8 +152,14 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.flowsErr, m.policiesErr, m.envsErr, m.covErr = nil, nil, nil, nil
 			m.confirmQuit = false
 			return m, tea.Batch(m.fetchFlows, m.fetchPolicies, m.fetchEnvs, m.fetchCoverage)
-		case "tab", "1":
-			m.tab = 0 // only Overview for now
+		case "tab", "right", "l":
+			m.tab = (m.tab + 1) % len(tabNames)
+		case "shift+tab", "left", "h":
+			m.tab = (m.tab - 1 + len(tabNames)) % len(tabNames)
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			if n := int(msg.String()[0] - '1'); n < len(tabNames) {
+				m.tab = n
+			}
 		}
 		m.confirmQuit = false
 	case flowsMsg:
@@ -171,16 +178,24 @@ func (m dashModel) View() string {
 	if m.w == 0 {
 		m.w = 100
 	}
+	body := m.overview()
+	if m.tab == 1 {
+		body = m.environments()
+	}
 	return lipgloss.JoinVertical(lipgloss.Left,
 		m.tabStrip(),
 		"",
-		m.overview(),
+		body,
 		"",
 		m.footer(),
 	)
 }
 
 // ----- rendering -----
+
+// tabNames is the single source of truth for the tab strip and navigation, so
+// tabStrip/Update/View can't drift on how many tabs exist.
+var tabNames = []string{"Overview", "Environments"}
 
 var (
 	colTitle  = lipgloss.Color("39")
@@ -198,9 +213,8 @@ func (m dashModel) tabStrip() string {
 	brand := lipgloss.NewStyle().
 		Background(lipgloss.Color("205")).Foreground(lipgloss.Color("231")).
 		Bold(true).Padding(0, 1).Render("Fides")
-	tabs := []string{"Overview"}
-	parts := make([]string, 0, len(tabs))
-	for i, t := range tabs {
+	parts := make([]string, 0, len(tabNames))
+	for i, t := range tabNames {
 		lbl := fmt.Sprintf("[%d] %s", i+1, t)
 		if i == m.tab {
 			parts = append(parts, lipgloss.NewStyle().Foreground(colActive).Bold(true).Render(lbl))
@@ -300,6 +314,69 @@ func coverageBar(label string, pct float64, barW int) string {
 	fill := lipgloss.NewStyle().Foreground(covColor(pct)).Render(strings.Repeat("█", filled))
 	empty := lipgloss.NewStyle().Foreground(colEmpty).Render(strings.Repeat("░", barW-filled))
 	return fmt.Sprintf("%-24s %s%s %3.0f%%", truncate(label, 24), fill, empty, pct*100)
+}
+
+// environments renders the Environments tab: one line per env with its
+// compliance status, plus a bounded drift/shadow-change drill-down. Reuses the
+// data fetchEnvs already loaded for the Overview — no extra endpoint.
+func (m dashModel) environments() string {
+	w := m.w
+	if w == 0 {
+		w = 100
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).BorderForeground(colBorder).
+		Padding(0, 1).Width(w - 2)
+	title := lipgloss.NewStyle().Foreground(colTitle).Bold(true).Render("Environments")
+
+	var lines []string
+	switch {
+	case m.envsErr != nil:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colBad).Render("error: "+m.envsErr.Error()))
+	case !m.envsLoaded:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("loading…"))
+	case len(m.envs) == 0:
+		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("no environments"))
+	default:
+		for _, e := range m.envs {
+			lines = append(lines, envLine(e))
+			for _, d := range boundedDetail(e) {
+				lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render("    "+d))
+			}
+		}
+	}
+	return box.Render(title + "\n\n" + strings.Join(lines, "\n"))
+}
+
+// envLine renders "prod             (k8s)     ✓ compliant" or a ⚠ drift summary.
+func envLine(e envView) string {
+	name := lipgloss.NewStyle().Foreground(colBig).Bold(true).Render(fmt.Sprintf("%-16s", truncate(e.Name, 16)))
+	typ := lipgloss.NewStyle().Foreground(colDim).Render(fmt.Sprintf("%-9s", "("+e.Type+")"))
+	var status string
+	if nd, ns := len(e.Drifts), len(e.ShadowChanges); nd == 0 && ns == 0 {
+		status = lipgloss.NewStyle().Foreground(colGood).Render("✓ compliant")
+	} else {
+		status = lipgloss.NewStyle().Foreground(colMid).Render(fmt.Sprintf("⚠ %d drift, %d shadow", nd, ns))
+	}
+	return fmt.Sprintf("%s %s %s", name, typ, status)
+}
+
+// boundedDetail lists an env's drifts then shadow changes, capped so a noisy
+// env can't blow out the panel.
+func boundedDetail(e envView) []string {
+	const limit = 4
+	var out []string
+	for _, d := range e.Drifts {
+		out = append(out, "drift: "+d)
+	}
+	for _, s := range e.ShadowChanges {
+		out = append(out, "shadow: "+s)
+	}
+	if len(out) > limit {
+		extra := len(out) - limit
+		out = append(out[:limit], fmt.Sprintf("… and %d more", extra))
+	}
+	return out
 }
 
 func (m dashModel) footer() string {
