@@ -1043,10 +1043,13 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Fetch rules for verification
+	// Fetch rules for verification, scoped to the caller's org: attestation_types
+	// is org-scoped (UNIQUE(org_id,name)), so an unscoped lookup could apply
+	// another tenant's JQ rules for a same-named type (#326).
+	orgID, _ := principalOrg(r)
 	var rules []string
-	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName).Scan(pq.Array(&rules))
+	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 AND org_id = $2 LIMIT 1`
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName, orgID).Scan(pq.Array(&rules))
 	if err != nil && err != sql.ErrNoRows {
 		internalError(w, err)
 		return
