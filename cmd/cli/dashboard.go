@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 
+	"fides/pkg/cliout"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
@@ -402,6 +404,7 @@ func dashboardSnapshot(config CLIConfig) {
 		_ = json.Unmarshal([]byte(b), &c)
 		snap["controls"] = c
 	}
-	out, _ := json.MarshalIndent(snap, "", "  ")
-	fmt.Println(string(out))
+	if err := cliout.Render(os.Stdout, "json", snap); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 }

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"fides/pkg/cliout"
 	"fides/pkg/evidence"
 )
 
@@ -80,9 +81,7 @@ func handleSBOMDiff(args []string) {
 	}
 	d := diffSBOM(parseSBOMFile(files[0]), parseSBOMFile(files[1]))
 	if asJSON {
-		out, err := json.MarshalIndent(d, "", "  ")
-		fail(err, "encode diff")
-		fmt.Println(string(out))
+		fail(cliout.Render(os.Stdout, "json", d), "encode diff")
 		return
 	}
 	printSBOMDiff(files[0], files[1], d)
