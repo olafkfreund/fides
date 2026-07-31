@@ -130,6 +130,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/exceptions", s.handleListExceptions)
 	mux.HandleFunc("POST /api/v1/exceptions", s.handleCreateException)
 	mux.HandleFunc("POST /api/v1/exceptions/{id}/revoke", s.handleRevokeException)
+	mux.HandleFunc("GET /api/v1/sdlc", s.handleSDLC)
+	mux.HandleFunc("GET /api/v1/audit-pack", s.handleAuditPack)
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
