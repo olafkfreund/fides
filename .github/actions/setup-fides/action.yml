@@ -1,0 +1,78 @@
+name: Setup Fides CLI
+description: Download the fides CLI, verify its checksum, and add it to PATH (like actions/setup-node).
+author: Fides
+branding:
+  icon: shield
+  color: yellow
+
+inputs:
+  version:
+    description: 'Fides release to install — a tag like v0.3.0, or "latest".'
+    required: false
+    default: latest
+  repo:
+    description: 'owner/repo that publishes the fides CLI release archives.'
+    required: false
+    default: olafkfreund/fides
+  token:
+    description: 'Token for the GitHub release API (defaults to the job token).'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: 'The resolved fides version that was installed.'
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: 'Directory the fides binary was installed into (already on PATH).'
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        IN_VERSION: ${{ inputs.version }}
+        IN_REPO: ${{ inputs.repo }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+
+        case "${RUNNER_OS}" in
+          Linux) os=linux ;;
+          macOS) os=darwin ;;
+          *) echo "::error::setup-fides supports Linux/macOS runners only (got ${RUNNER_OS})"; exit 1 ;;
+        esac
+        case "${RUNNER_ARCH}" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::setup-fides does not support RUNNER_ARCH=${RUNNER_ARCH}"; exit 1 ;;
+        esac
+
+        ver="${IN_VERSION}"
+        if [ "${ver}" = "latest" ]; then
+          ver="$(gh release view --repo "${IN_REPO}" --json tagName -q .tagName)"
+        fi
+        if [ -z "${ver}" ] || [ "${ver}" = "null" ]; then
+          echo "::error::could not resolve a fides release version"; exit 1
+        fi
+
+        base="fides_${ver}_${os}_${arch}"
+        url="https://github.com/${IN_REPO}/releases/download/${ver}"
+        tmp="$(mktemp -d)"
+        curl -fsSL "${url}/${base}.tar.gz"        -o "${tmp}/${base}.tar.gz"
+        curl -fsSL "${url}/${base}.tar.gz.sha256" -o "${tmp}/${base}.tar.gz.sha256"
+        ( cd "${tmp}" && sha256sum -c "${base}.tar.gz.sha256" )   # tamper check
+        tar -xzf "${tmp}/${base}.tar.gz" -C "${tmp}"
+
+        dest="${HOME}/.fides/bin"
+        install -d "${dest}"
+        install -m 0755 "${tmp}/${base}/fides" "${dest}/fides"
+        echo "${dest}" >> "${GITHUB_PATH}"
+        echo "version=${ver}" >> "${GITHUB_OUTPUT}"
+        echo "path=${dest}"   >> "${GITHUB_OUTPUT}"
+        echo "Installed fides ${ver} -> ${dest}/fides"
+
+    - shell: bash
+      run: command -v fides >/dev/null && echo "fides is on PATH ✓"
