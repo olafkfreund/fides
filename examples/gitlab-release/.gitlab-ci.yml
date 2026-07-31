@@ -1,0 +1,73 @@
+# Fides release — golden path (EXAMPLE, GitLab CI)
+#
+# Copy this into your own project's .gitlab-ci.yml. It shows the full Fides flow:
+# start a trail -> record provenance -> attach evidence (SBOM, authorship) ->
+# change-gate -> approved (manual) deploy -> runtime snapshot.
+#
+# Configure once (Project -> Settings -> CI/CD -> Variables):
+#   FIDES_API_TOKEN   (masked)  — a Fides API token
+#   FIDES_SERVER_URL            — e.g. https://fides.example.com
+#   FIDES_FLOW_ID              — the flow UUID (`fides flow list`)
+#   FIDES_ENV_ID              — (optional) environment UUID to snapshot
+
+stages: [build, gate, deploy]
+
+variables:
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+
+# Reusable: download the fides CLI onto PATH.
+.install_fides: &install_fides
+  - apk add --no-cache curl tar
+  - |
+    ver="${FIDES_VERSION:-latest}"
+    if [ "$ver" = "latest" ]; then
+      ver=$(curl -fsSL https://api.github.com/repos/olafkfreund/fides/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)
+    fi
+    base="fides_${ver}_linux_amd64"
+    curl -fsSL "https://github.com/olafkfreund/fides/releases/download/${ver}/${base}.tar.gz" -o /tmp/f.tgz
+    tar -xzf /tmp/f.tgz -C /tmp && cp "/tmp/${base}/fides" /usr/local/bin/fides
+
+build-and-attest:
+  stage: build
+  image: docker:27
+  services: [docker:27-dind]
+  script:
+    - *install_fides
+    # 1) Trail for this commit (committer identity -> segregation of duties).
+    - >
+      fides trail start --flow "$FIDES_FLOW_ID" --trail "$CI_COMMIT_SHA"
+      --repository "$CI_PROJECT_URL" --commit "$CI_COMMIT_SHA"
+      --branch "$CI_COMMIT_REF_NAME" --committer "$GITLAB_USER_EMAIL"
+    # 2) Build + record provenance.
+    - docker build -t "app:$CI_COMMIT_SHA" examples/gitlab-release/app
+    - digest=$(docker image inspect "app:$CI_COMMIT_SHA" -f '{{ .Id }}' | sed 's/sha256://')
+    - fides artifact report --trail "$CI_COMMIT_SHA" --sha256 "$digest" --name app --type docker
+    # 3) Evidence: SBOM + code authorship.
+    - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
+    - syft "app:$CI_COMMIT_SHA" -o cyclonedx-json > sbom.json
+    - fides attest sbom --trail "$CI_COMMIT_SHA" --artifact-sha "$digest" --file sbom.json
+    - fides attest authorship --trail "$CI_COMMIT_SHA"
+
+# 4) Gate on the change-gate verdict. Holds until controls pass AND a human
+#    approver has signed off (a person runs `fides approve --role approver` with a
+#    session token). Exit 2 = FAIL -> this job fails and blocks the pipeline.
+#    (Alternatively `include` the reusable ci/gitlab/fides-gate.yml template.)
+change-gate:
+  stage: gate
+  image: alpine:3.20
+  script:
+    - *install_fides
+    - fides change-gate --trail "$CI_COMMIT_SHA"
+
+# 5) Deploy — manual, so a human (four-eyes) triggers it. Records the deployer
+#    sign-off and baselines the runtime for drift detection.
+deploy:
+  stage: deploy
+  image: alpine:3.20
+  when: manual
+  script:
+    - *install_fides
+    - fides approve --trail "$CI_COMMIT_SHA" --role deployer --reason "deployed by CI pipeline $CI_PIPELINE_ID"
+    - echo "…your deploy step here…"
+    - if [ -n "$FIDES_ENV_ID" ]; then fides snapshot k8s --env "$FIDES_ENV_ID" || echo "snapshot skipped (no cluster access)"; fi
