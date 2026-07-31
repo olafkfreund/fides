@@ -580,7 +580,7 @@ func handleChangeGate(config CLIConfig, args []string) {
 // fides control add|list|coverage|archive|unarchive
 func handleControl(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides control <add|list|coverage|timeline|frameworks|import|enforce|archive|unarchive> [flags]")
+		fmt.Println("Usage: fides control <add|list|catalog|coverage|timeline|frameworks|import|enforce|archive|unarchive> [flags]")
 		os.Exit(1)
 	}
 	switch args[0] {
@@ -631,6 +631,25 @@ func handleControl(config CLIConfig, args []string) {
 	case "frameworks":
 		body, err := getRequest(config, "/api/v1/frameworks")
 		fail(err, "list frameworks")
+		fmt.Println(body)
+	case "catalog":
+		cmd := flag.NewFlagSet("control catalog", flag.ExitOnError)
+		framework := cmd.String("framework", "", "filter by framework (e.g. SOC2, NIST-800-53)")
+		area := cmd.String("area", "", "filter by area (build|release|runtime|change|lifecycle)")
+		typ := cmd.String("type", "", "filter by type (preventive|detective)")
+		cmd.Parse(args[1:])
+		q := neturl.Values{}
+		for k, v := range map[string]string{"framework": *framework, "area": *area, "type": *typ} {
+			if v != "" {
+				q.Set(k, v)
+			}
+		}
+		p := "/api/v1/control-catalog"
+		if len(q) > 0 {
+			p += "?" + q.Encode()
+		}
+		body, err := getRequest(config, p)
+		fail(err, "control catalog")
 		fmt.Println(body)
 	case "import":
 		cmd := flag.NewFlagSet("control import", flag.ExitOnError)
