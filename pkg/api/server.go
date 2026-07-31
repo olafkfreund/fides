@@ -126,6 +126,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/controls/{key}/enforce", s.handleEnforceControl)
 	mux.HandleFunc("GET /api/v1/frameworks", s.handleListFrameworks)
 	mux.HandleFunc("GET /api/v1/control-catalog", s.handleControlCatalog)
+	mux.HandleFunc("GET /api/v1/risk-register", s.handleRiskRegister)
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
