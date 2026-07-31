@@ -357,6 +357,24 @@ func handleAttest(config CLIConfig, args []string) {
 		handleAttestAuthorship(config, args[1:])
 		return
 	}
+	// Branch-protection: read the git host's protection rules and record them as
+	// evidence: `fides attest branch-protection --trail <id> --repo owner/repo [--branch main]`.
+	if len(args) > 0 && args[0] == "branch-protection" {
+		cmd := flag.NewFlagSet("attest branch-protection", flag.ExitOnError)
+		trailID := cmd.String("trail", "", "Trail UUID")
+		repo := cmd.String("repo", "", "owner/repo (github) or group/project (gitlab)")
+		branch := cmd.String("branch", "main", "branch to check")
+		provider := cmd.String("provider", "", "github | gitlab (optional; default = org's first provider)")
+		cmd.Parse(args[1:])
+		if *trailID == "" || *repo == "" {
+			fmt.Println("Usage: fides attest branch-protection --trail <id> --repo <owner/repo> [--branch main] [--provider github|gitlab]")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/verify-branch-protection", map[string]any{
+			"trail_id": *trailID, "repo": *repo, "branch": *branch, "provider": *provider,
+		}, "")
+		return
+	}
 
 	cmd := flag.NewFlagSet("attest", flag.ExitOnError)
 	trailID := cmd.String("trail", "", "Trail UUID")
