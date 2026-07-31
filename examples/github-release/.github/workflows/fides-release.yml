@@ -6,9 +6,13 @@
 # runtime snapshot. It does NOT run inside the fides repo (it lives under
 # examples/, and GitHub only runs workflows at the repo root).
 #
+# This exact flow is proven live in olafkfreund/fides-release-demo against
+# https://fides.freundcloud.org.uk.
+#
 # Configure once in the consuming repo:
 #   Secret   FIDES_API_TOKEN   — a Fides API token
 #   Variable FIDES_SERVER_URL  — e.g. https://fides.example.com
+#   Variable FIDES_ORG_ID      — your Fides org UUID
 #   Variable FIDES_FLOW_ID     — the flow UUID (create a flow once; `fides flow list`)
 #   Variable FIDES_ENV_ID      — (optional) the environment UUID to snapshot
 name: Fides Release (example)
@@ -25,8 +29,6 @@ env:
 jobs:
   build-and-attest:
     runs-on: ubuntu-latest
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,72 +36,67 @@ jobs:
 
       - uses: olafkfreund/fides/.github/actions/setup-fides@main
 
-      # 1) Start a trail for this commit. The committer identity is recorded and
-      #    used by the segregation-of-duties attestation (committer != approver).
+      # 1) Start a trail for this commit and capture its id. The CLI's --trail
+      #    flag takes the trail UUID (not the name), so we resolve it here once.
+      #    The committer identity feeds the segregation-of-duties attestation.
       - name: Start trail
         run: |
-          fides trail start \
+          out=$(fides trail start \
             --flow "${{ vars.FIDES_FLOW_ID }}" \
             --trail "$GITHUB_SHA" \
             --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
             --commit "$GITHUB_SHA" \
             --branch "$GITHUB_REF_NAME" \
-            --committer "$(git log -1 --format='%ae')"
+            --committer "$(git log -1 --format='%ae')")
+          echo "$out"
+          echo "TRAIL_ID=$(echo "$out" | grep -oE '"id":"[^"]+"' | head -1 | sed 's/.*"id":"//; s/"//')" >> "$GITHUB_ENV"
 
       # 2) Build the artifact and record its provenance against the trail.
       - name: Build image
         id: build
         run: |
           docker build -t app:"$GITHUB_SHA" examples/github-release/app
-          digest=$(docker image inspect app:"$GITHUB_SHA" -f '{{ .Id }}' | sed 's/sha256://')
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "DIGEST=$(docker image inspect app:"$GITHUB_SHA" -f '{{ .Id }}' | sed 's/sha256://')" >> "$GITHUB_ENV"
       - name: Record artifact provenance
-        run: fides artifact report --trail "$GITHUB_SHA" --sha256 "${{ steps.build.outputs.digest }}" --name app --type docker
+        run: fides artifact report --org "${{ vars.FIDES_ORG_ID }}" --trail "$TRAIL_ID" --sha256 "$DIGEST" --name app --type docker
 
       # 3) Attach evidence the controls require: SBOM, vulnerability scan, authorship.
       - name: SBOM
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
           syft "app:$GITHUB_SHA" -o cyclonedx-json > sbom.json
-          fides attest sbom --trail "$GITHUB_SHA" --artifact-sha "${{ steps.build.outputs.digest }}" --file sbom.json
+          fides attest sbom --trail "$TRAIL_ID" --artifact-sha "$DIGEST" --file sbom.json
       - name: Vulnerability scan
         run: |
           curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
           trivy image --format json --output trivy.json "app:$GITHUB_SHA" || true
-          fides attest trivy --trail "$GITHUB_SHA" --artifact-sha "${{ steps.build.outputs.digest }}" --file trivy.json
+          fides attest trivy --trail "$TRAIL_ID" --artifact-sha "$DIGEST" --file trivy.json
       - name: Code authorship (AI vs human + reviewer)
-        run: fides attest authorship --trail "$GITHUB_SHA"
+        run: fides attest authorship --trail "$TRAIL_ID"
 
-  # 4) Gate the release on the evidence-backed change-gate verdict. It HOLDS until
-  #    controls pass AND a human approver has signed off (a person runs
-  #    `fides approve --role approver` with a session token, e.g. from the portal —
-  #    that is the four-eyes step, distinct from the CI service account).
-  gate:
-    needs: build-and-attest
-    runs-on: ubuntu-latest
-    steps:
+      # 4) Gate the release on the change-gate verdict. It HOLDS until controls
+      #    pass AND a human approver has signed off (a person runs
+      #    `fides approve --role approver` with a session token — the four-eyes
+      #    step, distinct from the CI service account).
       - name: Fides change-gate
         uses: olafkfreund/fides/.github/actions/fides-gate@main
         with:
           command: change-gate
           server-url: ${{ vars.FIDES_SERVER_URL }}
           api-token: ${{ secrets.FIDES_API_TOKEN }}
-          trail: ${{ github.sha }}
+          trail: ${{ env.TRAIL_ID }}
           # warn-only: 'true'   # advisory during a warn-only rollout
 
-  # 5) Deploy. The GitHub `production` environment's required reviewers add a
-  #    second human gate; the deployer sign-off is recorded as SoD evidence.
+  # 5) Deploy behind the GitHub `production` environment's required reviewers
+  #    (a second human gate). Records the deployer sign-off + a runtime baseline.
   deploy:
-    needs: gate
+    needs: build-and-attest
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: olafkfreund/fides/.github/actions/setup-fides@main
-      - name: Record deployer sign-off
-        run: fides approve --trail "$GITHUB_SHA" --role deployer --reason "deployed by CI run ${{ github.run_id }}"
       - name: Deploy
         run: echo "…your deploy step here…"
-      # 6) Baseline the runtime so drift/shadow changes are detected afterwards.
       - name: Snapshot environment
         if: ${{ vars.FIDES_ENV_ID != '' }}
         run: fides snapshot k8s --env "${{ vars.FIDES_ENV_ID }}" || echo "no cluster access from this runner — snapshot skipped"

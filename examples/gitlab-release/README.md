@@ -23,6 +23,7 @@ build path to your app).
 
 - `FIDES_API_TOKEN` (masked) — a Fides API token
 - `FIDES_SERVER_URL` — e.g. `https://fides.example.com`
+- `FIDES_ORG_ID` — your Fides org UUID
 - `FIDES_FLOW_ID` — flow UUID (`fides flow list`)
 - `FIDES_ENV_ID` — (optional) environment UUID to snapshot
 
