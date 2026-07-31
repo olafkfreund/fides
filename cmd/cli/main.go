@@ -106,6 +106,8 @@ func main() {
 		body, err := getRequest(config, "/api/v1/risk-register")
 		fail(err, "risk register")
 		fmt.Println(body)
+	case "exception":
+		handleException(config, os.Args[2:])
 	case "flow":
 		handleFlow(config, os.Args[2:])
 	case "flag":
@@ -705,6 +707,49 @@ func dockerSnapshotArtifacts(psOutput string, inspect func(id string) (string, e
 }
 
 // Helpers
+
+// handleException: fides exception <create|list|revoke> — governed, time-boxed
+// control waivers the change-gate honours.
+func handleException(config CLIConfig, args []string) {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "create":
+		cmd := flag.NewFlagSet("exception create", flag.ExitOnError)
+		control := cmd.String("control", "", "control key to waive (e.g. SOC2-CC6.1)")
+		reason := cmd.String("reason", "", "justification (required)")
+		days := cmd.Int("days", 0, "expire in N days")
+		expires := cmd.String("expires", "", "explicit expiry, RFC3339 (alternative to --days)")
+		by := cmd.String("approved-by", "", "who approved the waiver")
+		cmd.Parse(args[1:])
+		if *control == "" || *reason == "" || (*days == 0 && *expires == "") {
+			fmt.Println("Usage: fides exception create --control <key> --reason <r> (--days N | --expires <RFC3339>) [--approved-by <who>]")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/exceptions", map[string]any{
+			"control_key": *control, "reason": *reason, "approved_by": *by,
+			"expires_in_days": *days, "expires_at": *expires,
+		}, "Exception recorded")
+	case "list":
+		body, err := getRequest(config, "/api/v1/exceptions")
+		fail(err, "list exceptions")
+		fmt.Println(body)
+	case "revoke":
+		cmd := flag.NewFlagSet("exception revoke", flag.ExitOnError)
+		id := cmd.String("id", "", "exception id")
+		cmd.Parse(args[1:])
+		if *id == "" {
+			fmt.Println("Usage: fides exception revoke --id <exception-id>")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/exceptions/"+*id+"/revoke", map[string]any{}, "Exception revoked")
+	default:
+		fmt.Println("Usage: fides exception <create|list|revoke> ...")
+		os.Exit(1)
+	}
+}
 
 // handleEnvCreate: fides env create --name <n> [--type k8s] [--description <d>]
 // Creates (or upserts by name) an environment to report snapshots into.

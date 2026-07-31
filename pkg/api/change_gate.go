@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -43,9 +44,26 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	}
 	defer crows.Close()
 
+	// Active, in-date control exceptions (waivers) keyed by control_key. A waiver
+	// lets a failing/missing control not block the gate — governed and time-boxed.
+	waivers := map[string]map[string]any{}
+	if xrows, xerr := s.q(ctx).QueryContext(ctx,
+		`SELECT control_key, reason, COALESCE(approved_by, ''), expires_at FROM control_exceptions
+		 WHERE org_id = $1 AND NOT revoked AND expires_at > now()`, orgID); xerr == nil {
+		for xrows.Next() {
+			var key, reason, approvedBy string
+			var expires time.Time
+			if xrows.Scan(&key, &reason, &approvedBy, &expires) == nil {
+				waivers[key] = map[string]any{"control": key, "reason": reason, "approved_by": approvedBy, "expires_at": expires}
+			}
+		}
+		xrows.Close()
+	}
+
 	passed := []string{}
 	failed := []map[string]any{}
 	missing := []map[string]any{}
+	waived := []map[string]any{}
 	for crows.Next() {
 		var key, name string
 		var req pq.StringArray
@@ -66,10 +84,18 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		}
 		entry := map[string]any{"control": key, "name": name, "reasons": reasons}
 		switch {
-		case hasFailed:
-			failed = append(failed, entry)
-		case hasMissing:
-			missing = append(missing, entry)
+		case hasFailed || hasMissing:
+			if w, ok := waivers[key]; ok {
+				wc := map[string]any{"name": name, "waived_reasons": reasons}
+				for k, v := range w {
+					wc[k] = v
+				}
+				waived = append(waived, wc)
+			} else if hasFailed {
+				failed = append(failed, entry)
+			} else {
+				missing = append(missing, entry)
+			}
 		default:
 			passed = append(passed, key)
 		}
@@ -136,6 +162,7 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		"passed":           passed,
 		"failed":           failed,
 		"missing_evidence": missing,
+		"waived":           waived,
 		"attestations":     map[string]int{"total": totalAtt, "non_compliant": nonCompliant},
 		"approvals": map[string]any{
 			"count":           len(approverList) + len(deployerList),
