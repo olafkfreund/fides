@@ -114,6 +114,8 @@ func main() {
 		fmt.Println(body)
 	case "service":
 		handleService(config, os.Args[2:])
+	case "training":
+		handleTraining(config, os.Args[2:])
 	case "audit-pack":
 		body, err := getRequest(config, "/api/v1/audit-pack")
 		fail(err, "audit pack")
@@ -729,6 +731,37 @@ func dockerSnapshotArtifacts(psOutput string, inspect func(id string) (string, e
 }
 
 // Helpers
+
+// handleTraining: fides training <record|list> — security-training audit evidence.
+func handleTraining(config CLIConfig, args []string) {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "record":
+		cmd := flag.NewFlagSet("training record", flag.ExitOnError)
+		person := cmd.String("person", "", "who completed it (required)")
+		course := cmd.String("course", "", "course/topic, e.g. owasp-top-10 (required)")
+		date := cmd.String("date", "", "completion date, RFC3339 (default now)")
+		notes := cmd.String("notes", "", "optional notes")
+		cmd.Parse(args[1:])
+		if *person == "" || *course == "" {
+			fmt.Println("Usage: fides training record --person <who> --course <topic> [--date <RFC3339>] [--notes ...]")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/training", map[string]any{
+			"person": *person, "course": *course, "completed_at": *date, "notes": *notes,
+		}, "Training recorded")
+	case "list":
+		body, err := getRequest(config, "/api/v1/training")
+		fail(err, "list training")
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides training <record|list> ...")
+		os.Exit(1)
+	}
+}
 
 // handleService: fides service <set|list> — service ownership registry + tier.
 func handleService(config CLIConfig, args []string) {

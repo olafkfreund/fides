@@ -63,5 +63,6 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 		"risk_register":     risks,
 		"org_controls":      orgControls,
 		"active_exceptions": activeExceptions,
+		"training":          s.trainingRecords(r, orgID),
 	})
 }
