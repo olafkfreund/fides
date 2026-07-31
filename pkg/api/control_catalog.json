@@ -6,17 +6,31 @@
       "title": "Version Control",
       "type": "preventive",
       "area": "build",
+      "level": 1,
       "summary": "All source, IaC and pipeline definitions live in version control with an auditable history and protected default branch.",
       "requirements": [
         "MUST store all source and infrastructure-as-code in a version control system.",
         "MUST protect the default branch (no direct pushes; changes land via reviewed merge requests).",
         "SHOULD record the exact commit SHA on every build trail."
       ],
-      "mitigates": ["unauthorised_deployment", "supply_chain_compromise"],
-      "fides_evidence": ["trail commit metadata (committer identity)"],
+      "mitigates": [
+        "unauthorised_deployment",
+        "supply_chain_compromise"
+      ],
+      "fides_evidence": [
+        "trail commit metadata (committer identity)"
+      ],
       "framework_refs": [
-        {"framework": "SOC2", "clause": "CC8.1", "note": "Change is authorised and tracked through version control history."},
-        {"framework": "NIST-800-53", "clause": "CM-3", "note": "Configuration change control over source and IaC."}
+        {
+          "framework": "SOC2",
+          "clause": "CC8.1",
+          "note": "Change is authorised and tracked through version control history."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "CM-3",
+          "note": "Configuration change control over source and IaC."
+        }
       ]
     },
     {
@@ -24,17 +38,36 @@
       "title": "Artifact Provenance",
       "type": "detective",
       "area": "build",
+      "level": 1,
       "summary": "Every deployable artifact carries provenance linking it to the commit, pipeline and build that produced it.",
       "requirements": [
         "MUST record a provenance attestation (artifact SHA256 + source commit + build reference) for each artifact.",
         "SHOULD capture whether the build tree was clean or dirty."
       ],
-      "mitigates": ["supply_chain_compromise", "unauthorised_deployment"],
-      "fides_evidence": ["fides artifact report", "slsa-provenance attestation"],
+      "mitigates": [
+        "supply_chain_compromise",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "fides artifact report",
+        "slsa-provenance attestation"
+      ],
       "framework_refs": [
-        {"framework": "SLSA", "clause": "Provenance", "note": "SLSA provenance ties the artifact to its build."},
-        {"framework": "NIST-800-53", "clause": "SI-7", "note": "Cryptographic hashes detect unauthorised modification of software."},
-        {"framework": "SOC2", "clause": "CC8.1", "note": "Attestations confirm the artifact originated from the controlled pipeline."}
+        {
+          "framework": "SLSA",
+          "clause": "Provenance",
+          "note": "SLSA provenance ties the artifact to its build."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "SI-7",
+          "note": "Cryptographic hashes detect unauthorised modification of software."
+        },
+        {
+          "framework": "SOC2",
+          "clause": "CC8.1",
+          "note": "Attestations confirm the artifact originated from the controlled pipeline."
+        }
       ]
     },
     {
@@ -42,15 +75,26 @@
       "title": "Software Bill of Materials",
       "type": "detective",
       "area": "build",
+      "level": 2,
       "summary": "A machine-readable SBOM is produced and recorded for each artifact so its components are known.",
       "requirements": [
         "MUST attach an SBOM (CycloneDX or SPDX) attestation to the artifact.",
         "SHOULD diff SBOMs between builds to surface added or bumped dependencies."
       ],
-      "mitigates": ["vulnerable_software_in_production", "supply_chain_compromise"],
-      "fides_evidence": ["fides attest sbom", "fides sbom diff"],
+      "mitigates": [
+        "vulnerable_software_in_production",
+        "supply_chain_compromise"
+      ],
+      "fides_evidence": [
+        "fides attest sbom",
+        "fides sbom diff"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "SA-10", "note": "Tracks configuration items and component inventory of the software."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "SA-10",
+          "note": "Tracks configuration items and component inventory of the software."
+        }
       ]
     },
     {
@@ -58,16 +102,31 @@
       "title": "Artifact Signing & Verification",
       "type": "preventive",
       "area": "build",
+      "level": 2,
       "summary": "Artifacts are cryptographically signed and their signatures verified before deployment.",
       "requirements": [
         "MUST sign release images/artifacts (e.g. cosign/Sigstore).",
         "MUST verify the signature and expected signer/issuer before deploy."
       ],
-      "mitigates": ["supply_chain_compromise", "unauthorised_deployment"],
-      "fides_evidence": ["fides verify-image", "cosign-verification attestation"],
+      "mitigates": [
+        "supply_chain_compromise",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "fides verify-image",
+        "cosign-verification attestation"
+      ],
       "framework_refs": [
-        {"framework": "SLSA", "clause": "Build integrity", "note": "Signature verification blocks unsigned or tampered artifacts."},
-        {"framework": "NIST-800-53", "clause": "SI-7", "note": "Integrity verification of software before use."}
+        {
+          "framework": "SLSA",
+          "clause": "Build integrity",
+          "note": "Signature verification blocks unsigned or tampered artifacts."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "SI-7",
+          "note": "Integrity verification of software before use."
+        }
       ]
     },
     {
@@ -75,16 +134,31 @@
       "title": "Peer Review (Four-Eyes)",
       "type": "preventive",
       "area": "release",
+      "level": 1,
       "summary": "Every change is reviewed by a person other than its author before it can be released.",
       "requirements": [
         "MUST require at least one approving reviewer distinct from the change author.",
         "MUST prevent the author from approving their own change."
       ],
-      "mitigates": ["insider_threat", "unauthorised_deployment"],
-      "fides_evidence": ["change-gate human-approver requirement", "segregation-of-duties attestation"],
+      "mitigates": [
+        "insider_threat",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "change-gate human-approver requirement",
+        "segregation-of-duties attestation"
+      ],
       "framework_refs": [
-        {"framework": "SOC2", "clause": "CC8.1", "note": "Independent review authorises the change."},
-        {"framework": "NIST-800-53", "clause": "AC-5", "note": "Separation of duties: reviewer must differ from author."}
+        {
+          "framework": "SOC2",
+          "clause": "CC8.1",
+          "note": "Independent review authorises the change."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "AC-5",
+          "note": "Separation of duties: reviewer must differ from author."
+        }
       ]
     },
     {
@@ -92,16 +166,31 @@
       "title": "Deployment Approval Gate",
       "type": "preventive",
       "area": "release",
+      "level": 1,
       "summary": "A deploy proceeds only on an evidence-backed approval verdict from the change-gate.",
       "requirements": [
         "MUST evaluate the change-gate before production deploy and block on a non-approve verdict.",
         "SHOULD surface the risk score and failing/missing controls to the approver."
       ],
-      "mitigates": ["unauthorised_deployment", "audit_and_compliance_failure"],
-      "fides_evidence": ["fides change-gate", "Fides Gate CI action"],
+      "mitigates": [
+        "unauthorised_deployment",
+        "audit_and_compliance_failure"
+      ],
+      "fides_evidence": [
+        "fides change-gate",
+        "Fides Gate CI action"
+      ],
       "framework_refs": [
-        {"framework": "SOC2", "clause": "CC8.1", "note": "Deployment is gated on documented approval."},
-        {"framework": "NIST-800-53", "clause": "CM-3", "note": "Changes are approved before implementation."}
+        {
+          "framework": "SOC2",
+          "clause": "CC8.1",
+          "note": "Deployment is gated on documented approval."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "CM-3",
+          "note": "Changes are approved before implementation."
+        }
       ]
     },
     {
@@ -109,16 +198,30 @@
       "title": "Segregation of Duties",
       "type": "preventive",
       "area": "release",
+      "level": 1,
       "summary": "The committer, approver and deployer of a change are three distinct identities.",
       "requirements": [
         "MUST prove committer != approver != deployer for gated changes.",
         "MUST record each role's identity on the trail."
       ],
-      "mitigates": ["insider_threat", "unauthorised_deployment"],
-      "fides_evidence": ["segregation-of-duties attestation"],
+      "mitigates": [
+        "insider_threat",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "segregation-of-duties attestation"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "AC-5", "note": "Duties are separated across distinct identities."},
-        {"framework": "SOX", "clause": "ITGC change management", "note": "No single person can author, approve and deploy a change."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "AC-5",
+          "note": "Duties are separated across distinct identities."
+        },
+        {
+          "framework": "SOX",
+          "clause": "ITGC change management",
+          "note": "No single person can author, approve and deploy a change."
+        }
       ]
     },
     {
@@ -126,16 +229,30 @@
       "title": "Vulnerability Scanning",
       "type": "detective",
       "area": "build",
+      "level": 2,
       "summary": "Artifacts and dependencies are scanned for known vulnerabilities, with results recorded as evidence.",
       "requirements": [
         "MUST run SCA / container vulnerability scanning in the pipeline.",
         "SHOULD gate on severity thresholds via a policy rule."
       ],
-      "mitigates": ["vulnerable_software_in_production"],
-      "fides_evidence": ["trivy / snyk attestation", "policy JQ rule on severities"],
+      "mitigates": [
+        "vulnerable_software_in_production"
+      ],
+      "fides_evidence": [
+        "trivy / snyk attestation",
+        "policy JQ rule on severities"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "RA-5", "note": "Vulnerabilities are identified and evaluated."},
-        {"framework": "SOC2", "clause": "CC7.1", "note": "Vulnerabilities are detected before release."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "RA-5",
+          "note": "Vulnerabilities are identified and evaluated."
+        },
+        {
+          "framework": "SOC2",
+          "clause": "CC7.1",
+          "note": "Vulnerabilities are detected before release."
+        }
       ]
     },
     {
@@ -143,16 +260,32 @@
       "title": "Runtime Snapshot & Drift Detection",
       "type": "detective",
       "area": "runtime",
+      "level": 2,
       "summary": "Running workloads are snapshotted and diffed so drift and unregistered (shadow) changes are detected.",
       "requirements": [
         "MUST periodically snapshot each environment's running workloads.",
         "SHOULD flag running artifacts with no recorded provenance as shadow changes."
       ],
-      "mitigates": ["configuration_drift", "unauthorised_deployment"],
-      "fides_evidence": ["fides snapshot k8s", "fides-k8s-reporter", "environment snapshot diff"],
+      "mitigates": [
+        "configuration_drift",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "fides snapshot k8s",
+        "fides-k8s-reporter",
+        "environment snapshot diff"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "CM-6", "note": "Detects deviation from the approved configuration."},
-        {"framework": "SOC2", "clause": "CC7.1", "note": "Unauthorised runtime changes are detected."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "CM-6",
+          "note": "Detects deviation from the approved configuration."
+        },
+        {
+          "framework": "SOC2",
+          "clause": "CC7.1",
+          "note": "Unauthorised runtime changes are detected."
+        }
       ]
     },
     {
@@ -160,16 +293,31 @@
       "title": "Change Records",
       "type": "detective",
       "area": "change",
+      "level": 1,
       "summary": "Production changes are recorded against a change-management record with the gate verdict attached.",
       "requirements": [
         "MUST associate a change record (e.g. ServiceNow CR) with production deploys.",
         "SHOULD write the change-gate verdict and risk back onto the record."
       ],
-      "mitigates": ["audit_and_compliance_failure", "unauthorised_deployment"],
-      "fides_evidence": ["ServiceNow CR integration", "change-gate write-back"],
+      "mitigates": [
+        "audit_and_compliance_failure",
+        "unauthorised_deployment"
+      ],
+      "fides_evidence": [
+        "ServiceNow CR integration",
+        "change-gate write-back"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "CM-3", "note": "Changes are documented and traceable."},
-        {"framework": "SOC2", "clause": "CC8.1", "note": "Change records evidence authorisation."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "CM-3",
+          "note": "Changes are documented and traceable."
+        },
+        {
+          "framework": "SOC2",
+          "clause": "CC8.1",
+          "note": "Change records evidence authorisation."
+        }
       ]
     },
     {
@@ -177,16 +325,31 @@
       "title": "Tamper-Evident Evidence Ledger",
       "type": "detective",
       "area": "lifecycle",
+      "level": 3,
       "summary": "Evidence is chained so that any modification of recorded attestations is detectable.",
       "requirements": [
         "MUST hash-chain attestations on each trail (content hash + previous hash).",
         "SHOULD support verifying a trail's chain integrity on demand."
       ],
-      "mitigates": ["audit_and_compliance_failure", "insider_threat"],
-      "fides_evidence": ["fides verify-chain", "attestation content/prev hash chain"],
+      "mitigates": [
+        "audit_and_compliance_failure",
+        "insider_threat"
+      ],
+      "fides_evidence": [
+        "fides verify-chain",
+        "attestation content/prev hash chain"
+      ],
       "framework_refs": [
-        {"framework": "NIST-800-53", "clause": "AU-9", "note": "Protects audit evidence from unauthorised modification."},
-        {"framework": "SOC2", "clause": "CC7.2", "note": "Integrity of the evidence record is assured."}
+        {
+          "framework": "NIST-800-53",
+          "clause": "AU-9",
+          "note": "Protects audit evidence from unauthorised modification."
+        },
+        {
+          "framework": "SOC2",
+          "clause": "CC7.2",
+          "note": "Integrity of the evidence record is assured."
+        }
       ]
     },
     {
@@ -194,16 +357,30 @@
       "title": "Continuous Control Testing",
       "type": "detective",
       "area": "lifecycle",
+      "level": 3,
       "summary": "Control coverage is evaluated continuously against recorded evidence, not just at audit time.",
       "requirements": [
         "MUST map controls to required evidence types and evaluate coverage on an ongoing basis.",
         "SHOULD expose a control timeline showing pass/fail over time."
       ],
-      "mitigates": ["audit_and_compliance_failure"],
-      "fides_evidence": ["controls coverage", "control timeline"],
+      "mitigates": [
+        "audit_and_compliance_failure"
+      ],
+      "fides_evidence": [
+        "controls coverage",
+        "control timeline"
+      ],
       "framework_refs": [
-        {"framework": "SOC2", "clause": "CC4.1", "note": "Controls are monitored on an ongoing basis."},
-        {"framework": "NIST-800-53", "clause": "CA-7", "note": "Continuous monitoring of control effectiveness."}
+        {
+          "framework": "SOC2",
+          "clause": "CC4.1",
+          "note": "Controls are monitored on an ongoing basis."
+        },
+        {
+          "framework": "NIST-800-53",
+          "clause": "CA-7",
+          "note": "Continuous monitoring of control effectiveness."
+        }
       ]
     }
   ]

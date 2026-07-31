@@ -112,6 +112,8 @@ func main() {
 		body, err := getRequest(config, "/api/v1/sdlc")
 		fail(err, "sdlc view")
 		fmt.Println(body)
+	case "service":
+		handleService(config, os.Args[2:])
 	case "audit-pack":
 		body, err := getRequest(config, "/api/v1/audit-pack")
 		fail(err, "audit pack")
@@ -727,6 +729,38 @@ func dockerSnapshotArtifacts(psOutput string, inspect func(id string) (string, e
 }
 
 // Helpers
+
+// handleService: fides service <set|list> — service ownership registry + tier.
+func handleService(config CLIConfig, args []string) {
+	sub := ""
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "set":
+		cmd := flag.NewFlagSet("service set", flag.ExitOnError)
+		name := cmd.String("name", "", "service name (required)")
+		owner := cmd.String("owner", "", "owner")
+		onCall := cmd.String("on-call", "", "on-call contact")
+		audit := cmd.String("audit", "", "audit-responsible contact")
+		tier := cmd.Int("tier", 1, "criticality tier 1..3 (scales which controls apply)")
+		cmd.Parse(args[1:])
+		if *name == "" {
+			fmt.Println("Usage: fides service set --name <s> [--owner --on-call --audit] [--tier 1..3]")
+			os.Exit(1)
+		}
+		post(config, "/api/v1/services", map[string]any{
+			"service": *name, "owner": *owner, "on_call": *onCall, "audit_contact": *audit, "tier": *tier,
+		}, "Service saved")
+	case "list":
+		body, err := getRequest(config, "/api/v1/services")
+		fail(err, "list services")
+		fmt.Println(body)
+	default:
+		fmt.Println("Usage: fides service <set|list> ...")
+		os.Exit(1)
+	}
+}
 
 // handleException: fides exception <create|list|revoke> — governed, time-boxed
 // control waivers the change-gate honours.
