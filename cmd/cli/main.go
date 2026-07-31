@@ -102,6 +102,10 @@ func main() {
 		handleMetrics(config, os.Args[2:])
 	case "control":
 		handleControl(config, os.Args[2:])
+	case "risk":
+		body, err := getRequest(config, "/api/v1/risk-register")
+		fail(err, "risk register")
+		fmt.Println(body)
 	case "flow":
 		handleFlow(config, os.Args[2:])
 	case "flag":

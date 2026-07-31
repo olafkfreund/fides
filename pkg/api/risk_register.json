@@ -1,0 +1,104 @@
+{
+  "version": "1.0",
+  "risks": [
+    {
+      "key": "supply_chain_compromise",
+      "title": "Supply-chain compromise",
+      "description": "A malicious or tampered component enters the software supply chain and reaches production.",
+      "attack_vectors": [
+        "Compromised dependency or base image",
+        "Tampered build artifact between build and deploy",
+        "Unsigned or substituted artifact accepted by the deploy"
+      ],
+      "consequences": ["Backdoored production software", "Data exfiltration", "Loss of customer trust"]
+    },
+    {
+      "key": "unauthorised_deployment",
+      "title": "Unauthorised deployment",
+      "description": "A change reaches production without the required review, approval or provenance.",
+      "attack_vectors": [
+        "Direct push bypassing review",
+        "Self-approval by the change author",
+        "Deploy of an artifact with no recorded build provenance"
+      ],
+      "consequences": ["Unreviewed code in production", "Segregation-of-duties failure", "Audit finding"]
+    },
+    {
+      "key": "vulnerable_software_in_production",
+      "title": "Vulnerable software in production",
+      "description": "Software with known, exploitable vulnerabilities is released and left running.",
+      "attack_vectors": [
+        "Unscanned dependencies or images",
+        "Known-CVE component shipped despite policy",
+        "No re-evaluation of running artifacts as new CVEs land"
+      ],
+      "consequences": ["Exploitable production systems", "Breach", "Emergency remediation cost"]
+    },
+    {
+      "key": "insider_threat",
+      "title": "Insider threat",
+      "description": "A privileged individual abuses access to introduce or approve a malicious change.",
+      "attack_vectors": [
+        "Author approves and deploys their own change",
+        "Tampering with recorded evidence",
+        "Excessive standing privileges"
+      ],
+      "consequences": ["Sabotage", "Fraud", "Undetected malicious change"]
+    },
+    {
+      "key": "configuration_drift",
+      "title": "Configuration drift",
+      "description": "The running environment diverges from its approved, recorded configuration.",
+      "attack_vectors": [
+        "Out-of-band manual change to a running workload",
+        "Shadow deployment never recorded as provenance",
+        "Undetected image/tag change in place"
+      ],
+      "consequences": ["Untracked production state", "Failed audit", "Incident hard to diagnose"]
+    },
+    {
+      "key": "audit_and_compliance_failure",
+      "title": "Audit & compliance failure",
+      "description": "Evidence of control operation is missing, incomplete or tamperable at audit time.",
+      "attack_vectors": [
+        "Evidence not captured continuously",
+        "Records modifiable after the fact",
+        "No mapping from controls to framework clauses"
+      ],
+      "consequences": ["Failed SOC2/ISO audit", "Regulatory penalty", "Remediation and re-audit cost"]
+    },
+    {
+      "key": "credential_and_secret_exposure",
+      "title": "Credential & secret exposure",
+      "description": "Secrets are leaked through source, logs, images or misconfigured stores.",
+      "attack_vectors": [
+        "Secret committed to version control",
+        "Secret baked into an image or printed to logs",
+        "Over-broad access to a secret store"
+      ],
+      "consequences": ["Account takeover", "Lateral movement", "Data breach"]
+    },
+    {
+      "key": "environment_breach",
+      "title": "Environment breach",
+      "description": "An attacker gains a foothold in a runtime environment and operates undetected.",
+      "attack_vectors": [
+        "Exploited running vulnerability",
+        "Unmonitored workload changes",
+        "Weak network or identity boundaries"
+      ],
+      "consequences": ["Persistent access", "Data loss", "Service disruption"]
+    },
+    {
+      "key": "unauthorised_system_access",
+      "title": "Unauthorised system access",
+      "description": "A person or service obtains access beyond what their role requires.",
+      "attack_vectors": [
+        "Excessive or stale permissions",
+        "Shared or unrotated credentials",
+        "No separation of duties on sensitive actions"
+      ],
+      "consequences": ["Privilege abuse", "Undetected change", "Compliance failure"]
+    }
+  ]
+}
