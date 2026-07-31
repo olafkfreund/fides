@@ -175,3 +175,7 @@ Pin to a released tag (`@v0.3.0`) for reproducibility. Referencing the action by
 subpath (`olafkfreund/fides/.github/actions/fides-gate@<tag>`) works today without
 the Marketplace. To publish as an official Marketplace action, mirror this
 directory into a dedicated `fides-gate` repo with `action.yml` at its root.
+
+---
+
+See also: [Fides in CI — quickstart](ci-quickstart.md) for the full pipeline (provenance → evidence → gate → deploy → snapshot) and copy-paste examples.
