@@ -108,6 +108,14 @@ func main() {
 		fmt.Println(body)
 	case "exception":
 		handleException(config, os.Args[2:])
+	case "sdlc":
+		body, err := getRequest(config, "/api/v1/sdlc")
+		fail(err, "sdlc view")
+		fmt.Println(body)
+	case "audit-pack":
+		body, err := getRequest(config, "/api/v1/audit-pack")
+		fail(err, "audit pack")
+		fmt.Println(body)
 	case "flow":
 		handleFlow(config, os.Args[2:])
 	case "flag":
