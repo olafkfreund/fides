@@ -7,7 +7,6 @@
 # Configure once (Project -> Settings -> CI/CD -> Variables):
 #   FIDES_API_TOKEN   (masked)  — a Fides API token
 #   FIDES_SERVER_URL            — e.g. https://fides.example.com
-#   FIDES_ORG_ID               — your Fides org UUID
 #   FIDES_FLOW_ID             — the flow UUID (`fides flow list`)
 #   FIDES_ENV_ID             — (optional) environment UUID to snapshot
 
@@ -16,17 +15,14 @@ stages: [build, gate, deploy]
 variables:
   DOCKER_HOST: tcp://docker:2375
   DOCKER_TLS_CERTDIR: ""
+  FIDES_VERSION: v0.4.0 # `trail start -q` + org-from-token need >= v0.4.0
 
 # Reusable: download the fides CLI onto PATH.
 .install_fides: &install_fides
   - apk add --no-cache curl tar
   - |
-    ver="${FIDES_VERSION:-latest}"
-    if [ "$ver" = "latest" ]; then
-      ver=$(curl -fsSL https://api.github.com/repos/olafkfreund/fides/releases/latest | grep -m1 '"tag_name"' | cut -d'"' -f4)
-    fi
-    base="fides_${ver}_linux_amd64"
-    curl -fsSL "https://github.com/olafkfreund/fides/releases/download/${ver}/${base}.tar.gz" -o /tmp/f.tgz
+    base="fides_${FIDES_VERSION}_linux_amd64"
+    curl -fsSL "https://github.com/olafkfreund/fides/releases/download/${FIDES_VERSION}/${base}.tar.gz" -o /tmp/f.tgz
     tar -xzf /tmp/f.tgz -C /tmp && cp "/tmp/${base}/fides" /usr/local/bin/fides
 
 build-and-attest:
@@ -35,19 +31,16 @@ build-and-attest:
   services: [docker:27-dind]
   script:
     - *install_fides
-    # 1) Trail for this commit; capture its UUID (the CLI's --trail takes the id,
-    #    not the name) and export it to later stages via a dotenv artifact.
+    # 1) Trail for this commit; `-q` prints just the id. Export it to later stages.
     - >
-      out=$(fides trail start --flow "$FIDES_FLOW_ID" --trail "$CI_COMMIT_SHA"
+      TRAIL_ID=$(fides trail start --flow "$FIDES_FLOW_ID" --trail "$CI_COMMIT_SHA"
       --repository "$CI_PROJECT_URL" --commit "$CI_COMMIT_SHA"
-      --branch "$CI_COMMIT_REF_NAME" --committer "$GITLAB_USER_EMAIL")
-    - echo "$out"
-    - TRAIL_ID=$(echo "$out" | grep -oE '"id":"[^"]+"' | head -1 | sed 's/.*"id":"//; s/"//')
+      --branch "$CI_COMMIT_REF_NAME" --committer "$GITLAB_USER_EMAIL" -q)
     - echo "TRAIL_ID=$TRAIL_ID" > trail.env
-    # 2) Build + record provenance.
+    # 2) Build + record provenance (org comes from the token).
     - docker build -t "app:$CI_COMMIT_SHA" examples/gitlab-release/app
     - digest=$(docker image inspect "app:$CI_COMMIT_SHA" -f '{{ .Id }}' | sed 's/sha256://')
-    - fides artifact report --org "$FIDES_ORG_ID" --trail "$TRAIL_ID" --sha256 "$digest" --name app --type docker
+    - fides artifact report --trail "$TRAIL_ID" --sha256 "$digest" --name app --type docker
     # 3) Evidence: SBOM + code authorship.
     - curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
     - syft "app:$CI_COMMIT_SHA" -o cyclonedx-json > sbom.json
@@ -58,8 +51,6 @@ build-and-attest:
       dotenv: trail.env
 
 # 4) Gate on the change-gate verdict (TRAIL_ID inherited from the dotenv report).
-#    Holds until controls pass AND a human approver has signed off with a session
-#    token. (Alternatively `include` the reusable ci/gitlab/fides-gate.yml.)
 change-gate:
   stage: gate
   image: alpine:3.20
@@ -68,8 +59,7 @@ change-gate:
     - *install_fides
     - fides change-gate --trail "$TRAIL_ID"
 
-# 5) Deploy — manual, so a human (four-eyes) triggers it. Records the deployer
-#    sign-off and baselines the runtime for drift detection.
+# 5) Deploy — manual, so a human (four-eyes) triggers it.
 deploy:
   stage: deploy
   image: alpine:3.20

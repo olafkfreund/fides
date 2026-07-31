@@ -215,6 +215,8 @@ func handleTrail(config CLIConfig, args []string) {
 	msg := cmd.String("message", "", "Git commit message")
 	committer := cmd.String("committer", "", "Committer identity (email/username) from commit metadata — recorded as a trail tag and used by the segregation-of-duties attestation")
 	committedAt := cmd.String("committed-at", "", "Commit timestamp (RFC3339) for true code-to-prod lead time; auto-derived from git when --commit is set")
+	quiet := cmd.Bool("quiet", false, "print only the created trail's id (handy for: TRAIL_ID=$(fides trail start ... -q))")
+	cmd.BoolVar(quiet, "q", false, "alias for --quiet")
 
 	cmd.Parse(args[1:])
 
@@ -253,18 +255,28 @@ func handleTrail(config CLIConfig, args []string) {
 		os.Exit(1)
 	}
 
+	if *quiet {
+		var t struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal([]byte(respBody), &t)
+		fmt.Println(t.ID)
+		return
+	}
 	fmt.Printf("Successfully initialized trail: %s\n", respBody)
 }
 
 // 2. Artifact Reporting
 func handleArtifact(config CLIConfig, args []string) {
 	if len(args) < 1 || args[0] != "report" {
-		fmt.Println("Usage: fides artifact report --org <org_id> --trail <trail_id> --sha256 <fingerprint> --name <artifact_name> --type <docker/binary>")
+		fmt.Println("Usage: fides artifact report --trail <trail_id> (--sha256 <fingerprint> | --file <path>) --name <name> [--type docker|binary]")
 		os.Exit(1)
 	}
 
 	cmd := flag.NewFlagSet("artifact report", flag.ExitOnError)
-	orgID := cmd.String("org", "", "Org UUID")
+	// --org is optional and ignored server-side: the tenant is taken from the API
+	// token (the server never trusts a body org — H2/IDOR). Kept for compatibility.
+	orgID := cmd.String("org", "", "Org UUID (optional; ignored — org comes from the token)")
 	trailID := cmd.String("trail", "", "Trail UUID")
 	sha := cmd.String("sha256", "", "SHA256 fingerprint of artifact")
 	name := cmd.String("name", "", "Artifact name")
@@ -273,8 +285,8 @@ func handleArtifact(config CLIConfig, args []string) {
 
 	cmd.Parse(args[1:])
 
-	if *orgID == "" || (*sha == "" && *file == "") || *name == "" {
-		fmt.Println("Error: --org, --name, and either --sha256 or --file are required")
+	if (*sha == "" && *file == "") || *name == "" {
+		fmt.Println("Error: --name and either --sha256 or --file are required")
 		cmd.Usage()
 		os.Exit(1)
 	}
