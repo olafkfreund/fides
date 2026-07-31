@@ -583,7 +583,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var list []*models.Organization
+	list := []*models.Organization{}
 	for rows.Next() {
 		var o models.Organization
 		if err := rows.Scan(&o.ID, &o.Name, &o.Description, &o.CreatedAt); err != nil {
@@ -686,7 +686,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var list []*models.Flow
+	list := []*models.Flow{}
 	for rows.Next() {
 		var f models.Flow
 		var tagsBytes []byte
@@ -851,7 +851,7 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		SBOM       []interface{} `json:"sbom"`
 	}
 
-	var list []*ArtifactView
+	list := []*ArtifactView{}
 	for rows.Next() {
 		var av ArtifactView
 		var tagsBytes []byte
@@ -1529,7 +1529,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	// pinned connection, so we must drain this cursor before running any
 	// sub-query — otherwise the nested query disrupts the outer cursor and only
 	// the first row is returned.
-	var list []*EnvironmentView
+	list := []*EnvironmentView{}
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
@@ -1761,7 +1761,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		YAML   string `json:"yaml"`
 	}
 
-	var list []*PolicyView
+	list := []*PolicyView{}
 	for rows.Next() {
 		var p PolicyView
 		var rulesBytes []byte
@@ -1843,7 +1843,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 		CreatedAt       time.Time `json:"createdAt"`
 	}
 
-	var list []*AssessmentView
+	list := []*AssessmentView{}
 	for rows.Next() {
 		var av AssessmentView
 		if err := rows.Scan(&av.ID, &av.AttestationName, &av.ModelProvider, &av.ModelName, &av.AssessmentRaw, &av.ComplianceScore, &av.CreatedAt); err != nil {
@@ -2845,7 +2845,7 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var list []models.TenantWebhook
+	list := []models.TenantWebhook{}
 	for rows.Next() {
 		var wh models.TenantWebhook
 		var types pq.StringArray
@@ -3334,7 +3334,7 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 
-	var list []models.TenantGitProvider
+	list := []models.TenantGitProvider{}
 	for rows.Next() {
 		var gp models.TenantGitProvider
 		if err := rows.Scan(&gp.ID, &gp.OrgID, &gp.Provider, &gp.Host, &gp.APIBase, &gp.TokenPath, &gp.InboundSecretPath, &gp.Enabled, &gp.CreatedAt, &gp.UpdatedAt); err != nil {
@@ -3400,7 +3400,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 	}
 	defer rows.Close()
 
-	var list []models.EnvironmentMCPServer
+	list := []models.EnvironmentMCPServer{}
 	for rows.Next() {
 		var srv models.EnvironmentMCPServer
 		var args pq.StringArray
