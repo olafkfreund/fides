@@ -1,0 +1,19 @@
+apiVersion: v2
+name: fides-k8s-reporter
+description: >-
+  Periodically snapshot the running workloads in a Kubernetes cluster (or a
+  single namespace) and report them to a Fides server, so Fides can track
+  config/runtime drift and shadow changes against recorded provenance.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/olafkfreund/fides
+sources:
+  - https://github.com/olafkfreund/fides
+keywords:
+  - fides
+  - compliance
+  - provenance
+  - kubernetes
+  - drift
+  - snapshot

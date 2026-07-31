@@ -1,0 +1,18 @@
+Fides k8s reporter installed as CronJob "{{ include "reporter.fullname" . }}"
+in namespace "{{ .Release.Namespace }}".
+
+  Schedule:   {{ .Values.cronSchedule }}
+  Scope:      {{ .Values.serviceAccount.permissionScope }}{{ if .Values.fides.namespace }} (namespace: {{ .Values.fides.namespace }}){{ end }}
+  Reports to: {{ .Values.fides.serverUrl }}  (environment {{ .Values.fides.environmentId }})
+
+1. Make sure the API-token Secret exists (this chart does NOT create it):
+
+   kubectl -n {{ .Release.Namespace }} create secret generic {{ .Values.fides.apiToken.secretName }} \
+     --from-literal={{ .Values.fides.apiToken.secretKey }}='<your-fides-api-token>'
+
+2. Trigger a one-off run now instead of waiting for the schedule:
+
+   kubectl -n {{ .Release.Namespace }} create job --from=cronjob/{{ include "reporter.fullname" . }} {{ include "reporter.name" . }}-manual
+   kubectl -n {{ .Release.Namespace }} logs job/{{ include "reporter.name" . }}-manual -f
+
+3. View the snapshots in Fides: the environment's timeline / `fides env diff --env {{ .Values.fides.environmentId }}`.

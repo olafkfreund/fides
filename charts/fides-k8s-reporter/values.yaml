@@ -1,0 +1,72 @@
+# Fides Kubernetes reporter — a CronJob that runs `fides snapshot k8s` and
+# reports running workloads to a Fides server.
+
+image:
+  # Build with `docker build -f Dockerfile.reporter -t <repo>:<tag> .` (fides CLI
+  # + kubectl). Publish to a registry your cluster can pull, or k3d image import.
+  repository: ghcr.io/olafkfreund/fides-k8s-reporter
+  pullPolicy: IfNotPresent
+  tag: "" # defaults to the chart appVersion
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # cluster    -> ClusterRole: read pods in ALL namespaces (`fides snapshot k8s`).
+  # namespace  -> Role: read pods only in the release namespace. REQUIRES
+  #               fides.namespace to be set (the CLI then queries just that ns).
+  permissionScope: cluster
+  annotations: {}
+  name: ""
+
+# CronJob scheduling.
+cronSchedule: "*/10 * * * *"
+concurrencyPolicy: Replace
+successfulJobsHistoryLimit: 3
+failedJobsHistoryLimit: 1
+startingDeadlineSeconds: 60
+
+# Fides server connection + target.
+fides:
+  # Base URL of the Fides server, e.g. https://fides.freundcloud.org.uk (required).
+  serverUrl: ""
+  # The Fides environment UUID to report snapshots into (required). Create it
+  # first: `fides env create --name <cluster> --type k8s` (or via the portal).
+  environmentId: ""
+  # Optional: report only this namespace (least privilege). Leave empty to
+  # snapshot the whole cluster. Must be set when serviceAccount.permissionScope
+  # is "namespace".
+  namespace: ""
+  # API token (a Fides service-account / session token). Provide it as a Secret
+  # you create out-of-band; this chart never templates the token itself.
+  apiToken:
+    secretName: fides-reporter-token
+    secretKey: token
+
+resources:
+  requests:
+    memory: "64Mi"
+  limits:
+    memory: "256Mi"
+    cpu: "100m"
+
+# Hardened by default; kubectl + fides need no elevated privileges.
+securityContext:
+  allowPrivilegeEscalation: false
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  readOnlyRootFilesystem: true
+  seccompProfile:
+    type: RuntimeDefault
+  capabilities:
+    drop: ["ALL"]
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# Extra env vars appended to the reporter container (e.g. HTTP_PROXY).
+extraEnvVars: []

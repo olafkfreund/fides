@@ -1,0 +1,81 @@
+{{- include "reporter.validate" . -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "reporter.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reporter.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.cronSchedule | quote }}
+  concurrencyPolicy: {{ .Values.concurrencyPolicy }}
+  startingDeadlineSeconds: {{ .Values.startingDeadlineSeconds }}
+  successfulJobsHistoryLimit: {{ .Values.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          {{- with .Values.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          labels:
+            {{- include "reporter.labels" . | nindent 12 }}
+            {{- range $k, $v := .Values.podLabels }}
+            {{ $k }}: {{ $v | quote }}
+            {{- end }}
+        spec:
+          serviceAccountName: {{ include "reporter.serviceAccountName" . }}
+          restartPolicy: OnFailure
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: reporter
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              args:
+                - snapshot
+                - k8s
+                - --env
+                - {{ .Values.fides.environmentId | quote }}
+                {{- if .Values.fides.namespace }}
+                - --namespace
+                - {{ .Values.fides.namespace | quote }}
+                {{- end }}
+              env:
+                - name: FIDES_SERVER_URL
+                  value: {{ .Values.fides.serverUrl | quote }}
+                - name: FIDES_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.fides.apiToken.secretName | quote }}
+                      key: {{ .Values.fides.apiToken.secretKey | quote }}
+                # kubectl writes its discovery cache under $HOME; keep it on the
+                # writable emptyDir so readOnlyRootFilesystem can stay true.
+                - name: HOME
+                  value: /tmp
+                {{- with .Values.extraEnvVars }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              resources:
+                {{- toYaml .Values.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
