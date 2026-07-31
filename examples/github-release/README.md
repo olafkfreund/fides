@@ -30,7 +30,6 @@ The install + gate use the reusable actions:
 1. **Secret** `FIDES_API_TOKEN` — a Fides API token.
 2. **Variables**:
    - `FIDES_SERVER_URL` — e.g. `https://fides.example.com`
-   - `FIDES_ORG_ID` — your Fides org UUID.
    - `FIDES_FLOW_ID` — the flow UUID. Create a flow once (portal, or `fides flow create`) and copy its id from `fides flow list`.
    - `FIDES_ENV_ID` — (optional) the environment UUID to snapshot (`fides env create --name prod --type k8s`).
 3. (Recommended) Import a control framework so the gate has controls to evaluate:

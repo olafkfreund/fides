@@ -12,7 +12,6 @@
 # Configure once in the consuming repo:
 #   Secret   FIDES_API_TOKEN   — a Fides API token
 #   Variable FIDES_SERVER_URL  — e.g. https://fides.example.com
-#   Variable FIDES_ORG_ID      — your Fides org UUID
 #   Variable FIDES_FLOW_ID     — the flow UUID (create a flow once; `fides flow list`)
 #   Variable FIDES_ENV_ID      — (optional) the environment UUID to snapshot
 name: Fides Release (example)
@@ -35,30 +34,25 @@ jobs:
           fetch-depth: 0 # full history so the committer identity is available
 
       - uses: olafkfreund/fides/.github/actions/setup-fides@main
+        with:
+          version: v0.4.0 # `trail start -q` and org-from-token need >= v0.4.0
 
-      # 1) Start a trail for this commit and capture its id. The CLI's --trail
-      #    flag takes the trail UUID (not the name), so we resolve it here once.
-      #    The committer identity feeds the segregation-of-duties attestation.
+      # 1) Start a trail for this commit and capture its id (`-q` prints just the
+      #    id). The committer identity feeds the segregation-of-duties attestation.
       - name: Start trail
         run: |
-          out=$(fides trail start \
-            --flow "${{ vars.FIDES_FLOW_ID }}" \
-            --trail "$GITHUB_SHA" \
-            --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
-            --commit "$GITHUB_SHA" \
-            --branch "$GITHUB_REF_NAME" \
-            --committer "$(git log -1 --format='%ae')")
-          echo "$out"
-          echo "TRAIL_ID=$(echo "$out" | grep -oE '"id":"[^"]+"' | head -1 | sed 's/.*"id":"//; s/"//')" >> "$GITHUB_ENV"
+          echo "TRAIL_ID=$(fides trail start \
+            --flow '${{ vars.FIDES_FLOW_ID }}' --trail "$GITHUB_SHA" \
+            --repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" --committer "$(git log -1 --format='%ae')" -q)" >> "$GITHUB_ENV"
 
-      # 2) Build the artifact and record its provenance against the trail.
+      # 2) Build the artifact and record its provenance (org comes from the token).
       - name: Build image
-        id: build
         run: |
           docker build -t app:"$GITHUB_SHA" examples/github-release/app
           echo "DIGEST=$(docker image inspect app:"$GITHUB_SHA" -f '{{ .Id }}' | sed 's/sha256://')" >> "$GITHUB_ENV"
       - name: Record artifact provenance
-        run: fides artifact report --org "${{ vars.FIDES_ORG_ID }}" --trail "$TRAIL_ID" --sha256 "$DIGEST" --name app --type docker
+        run: fides artifact report --trail "$TRAIL_ID" --sha256 "$DIGEST" --name app --type docker
 
       # 3) Attach evidence the controls require: SBOM, vulnerability scan, authorship.
       - name: SBOM
@@ -75,9 +69,8 @@ jobs:
         run: fides attest authorship --trail "$TRAIL_ID"
 
       # 4) Gate the release on the change-gate verdict. It HOLDS until controls
-      #    pass AND a human approver has signed off (a person runs
-      #    `fides approve --role approver` with a session token — the four-eyes
-      #    step, distinct from the CI service account).
+      #    pass AND a human approver has signed off (`fides approve --role approver`
+      #    with a session token — the four-eyes step, distinct from the CI token).
       - name: Fides change-gate
         uses: olafkfreund/fides/.github/actions/fides-gate@main
         with:
@@ -87,14 +80,15 @@ jobs:
           trail: ${{ env.TRAIL_ID }}
           # warn-only: 'true'   # advisory during a warn-only rollout
 
-  # 5) Deploy behind the GitHub `production` environment's required reviewers
-  #    (a second human gate). Records the deployer sign-off + a runtime baseline.
+  # 5) Deploy behind the GitHub `production` environment's required reviewers.
   deploy:
     needs: build-and-attest
     runs-on: ubuntu-latest
     environment: production
     steps:
       - uses: olafkfreund/fides/.github/actions/setup-fides@main
+        with:
+          version: v0.4.0
       - name: Deploy
         run: echo "…your deploy step here…"
       - name: Snapshot environment
