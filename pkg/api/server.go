@@ -179,6 +179,7 @@ func (s *Server) Routes() http.Handler {
 	// Compliance and Drift API
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
+	mux.HandleFunc("POST /api/v1/environments", s.handleCreateEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
@@ -639,6 +640,48 @@ func (s *Server) handleCreateFlow(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(flow)
+}
+
+type createEnvironmentReq struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"` // docker | k8s | ecs | lambda | s3 | server
+	Description string `json:"description"`
+}
+
+// handleCreateEnvironment creates (or upserts by name) an environment for the
+// caller's org. Idempotent on (org_id, name) so re-running a setup script or the
+// reporter bootstrap is safe. Tenant scope comes from the principal (H2/IDOR).
+func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req createEnvironmentReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Type) == "" {
+		http.Error(w, "name and type are required", http.StatusBadRequest)
+		return
+	}
+	var id uuid.UUID
+	err := s.q(r.Context()).QueryRowContext(r.Context(),
+		`INSERT INTO environments (id, org_id, name, type, description)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (org_id, name) DO UPDATE SET type = EXCLUDED.type, description = EXCLUDED.description
+		 RETURNING id`,
+		uuid.New(), orgID, req.Name, req.Type, req.Description).Scan(&id)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]any{
+		"id": id, "name": req.Name, "type": req.Type, "description": req.Description,
+	})
 }
 
 type updateFlowReq struct {
