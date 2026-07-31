@@ -14,7 +14,7 @@ inputs:
     required: false
     default: ''
   api-token:
-    description: 'Fides API token. Pass a secret, e.g. ${{ secrets.FIDES_API_TOKEN }}.'
+    description: 'Fides API token. Pass a repo/org secret, e.g. secrets.FIDES_API_TOKEN.'
     required: false
     default: ''
   version:
