@@ -1,0 +1,5 @@
+.git
+*.tmpl
+*.orig
+*.bak
+.DS_Store

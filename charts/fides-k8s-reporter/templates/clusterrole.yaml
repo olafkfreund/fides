@@ -1,0 +1,13 @@
+{{- if eq .Values.serviceAccount.permissionScope "cluster" }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "reporter.fullname" . }}
+  labels:
+    {{- include "reporter.labels" . | nindent 4 }}
+rules:
+  # Read-only: the reporter only lists running pods to snapshot their images.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+{{- end }}

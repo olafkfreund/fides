@@ -1,0 +1,24 @@
+# Fides Kubernetes reporter image: the `fides` CLI + kubectl, for the
+# k8s-reporter CronJob (charts/fides-k8s-reporter). The CronJob runs
+#   fides snapshot k8s --env <environment-id> [--namespace <ns>]
+# which shells out to kubectl to read running pods and reports the running
+# image digests to the Fides server (POST /api/v1/snapshots). Fides diffs
+# successive snapshots into drift / shadow-change reports.
+FROM golang:alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache git ca-certificates
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o fides ./cmd/cli
+
+FROM alpine:3.18
+RUN apk add --no-cache ca-certificates
+# kubectl, pinned to the cluster's minor version (adjust via --build-arg).
+ARG KUBECTL_VERSION=v1.31.5
+ARG TARGETARCH=amd64
+RUN apk add --no-cache --virtual .dl curl \
+ && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+ && chmod +x /usr/local/bin/kubectl \
+ && apk del .dl
+COPY --from=builder /app/fides /usr/local/bin/fides
+USER 65532:65532
+ENTRYPOINT ["fides"]

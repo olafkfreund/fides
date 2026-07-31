@@ -505,8 +505,16 @@ func handleSnapshot(config CLIConfig, args []string) {
 			os.Exit(0)
 		}
 	} else if runtimeType == "k8s" {
+		// Least privilege: with --namespace, query only that namespace
+		// (`kubectl get pods -n <ns>`, needs a namespaced Role) instead of the
+		// cluster-wide `-A` (which needs a ClusterRole). The k8s-reporter chart
+		// (charts/fides-k8s-reporter) sets --namespace for its namespaced scope.
+		k8sArgs := []string{"get", "pods", "-A", "-o", "json"}
+		if *namespace != "" {
+			k8sArgs = []string{"get", "pods", "-n", *namespace, "-o", "json"}
+		}
 		fmt.Println("Ingesting running Kubernetes namespaces dynamically...")
-		cmdK8s := exec.Command("kubectl", "get", "pods", "-A", "-o", "json")
+		cmdK8s := exec.Command("kubectl", k8sArgs...)
 		var out bytes.Buffer
 		cmdK8s.Stdout = &out
 		err := cmdK8s.Run()
