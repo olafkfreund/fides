@@ -124,12 +124,16 @@ func main() {
 			sub = os.Args[2]
 		}
 		switch sub {
+		case "create":
+			handleEnvCreate(config, os.Args[3:])
+		case "list":
+			handleEnvList(config, os.Args[3:])
 		case "diff":
 			handleEnvDiff(config, os.Args[3:])
 		case "verify":
 			handleEnvVerify(config, os.Args[3:])
 		default:
-			fmt.Println("Usage: fides env <diff|verify> --env <id> ...")
+			fmt.Println("Usage: fides env <create|list|diff|verify> ...")
 			os.Exit(1)
 		}
 	case "help", "--help", "-h":
@@ -697,6 +701,30 @@ func dockerSnapshotArtifacts(psOutput string, inspect func(id string) (string, e
 }
 
 // Helpers
+
+// handleEnvCreate: fides env create --name <n> [--type k8s] [--description <d>]
+// Creates (or upserts by name) an environment to report snapshots into.
+func handleEnvCreate(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("env create", flag.ExitOnError)
+	name := cmd.String("name", "", "environment name")
+	typ := cmd.String("type", "k8s", "runtime type: docker|k8s|ecs|lambda|server")
+	desc := cmd.String("description", "", "description")
+	cmd.Parse(args)
+	if *name == "" {
+		fmt.Println("Usage: fides env create --name <name> [--type k8s] [--description <d>]")
+		os.Exit(1)
+	}
+	body, err := postRequest(config, "/api/v1/environments", map[string]any{"name": *name, "type": *typ, "description": *desc})
+	fail(err, "create environment")
+	fmt.Println(body)
+}
+
+// handleEnvList: fides env list — the org's environments.
+func handleEnvList(config CLIConfig, _ []string) {
+	body, err := getRequest(config, "/api/v1/environments")
+	fail(err, "list environments")
+	fmt.Println(body)
+}
 
 func postRequest(config CLIConfig, path string, data interface{}) (string, error) {
 	body, err := json.Marshal(data)
