@@ -23,6 +23,7 @@ const NAV: NavItem[] = [
   { href: "/environments", label: "Environments", icon: Server },
   { href: "/policies", label: "Policies", icon: Scale },
   { href: "/controls", label: "Controls", icon: ListChecks },
+  { href: "/controls/catalog", label: "Control Catalog", icon: ListChecks },
   { href: "/ai-audits", label: "AI Audits", icon: MessageSquare },
   { href: "/telemetry", label: "Telemetry", icon: Gauge },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
