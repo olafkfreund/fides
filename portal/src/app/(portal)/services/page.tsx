@@ -54,7 +54,7 @@ export default function Services() {
         <h1 className="text-2xl font-semibold">Services</h1>
         <p className="text-muted-foreground text-sm">
           Ownership registry — who owns, is on-call for, and is audit-responsible for each service.
-          The <span className="text-primary">tier</span> (1–3) scales which controls apply (a control's
+          The <span className="text-primary">tier</span> (1–3) scales which controls apply (controls with
           <span className="font-mono"> level ≤ tier</span>).
         </p>
       </div>
