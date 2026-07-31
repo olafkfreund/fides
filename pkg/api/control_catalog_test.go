@@ -69,3 +69,29 @@ func TestControlCatalogFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestControlCatalogTierFilter(t *testing.T) {
+	s := &Server{}
+	rec := httptest.NewRecorder()
+	s.handleControlCatalog(rec, httptest.NewRequest(http.MethodGet, "/api/v1/control-catalog?tier=1", nil))
+	var out controlCatalog
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Controls) == 0 {
+		t.Fatal("tier=1 returned no controls")
+	}
+	for _, c := range out.Controls {
+		if c.Level > 1 {
+			t.Errorf("%s level %d returned for tier=1", c.Code, c.Level)
+		}
+	}
+	// tier=3 returns the full set.
+	rec3 := httptest.NewRecorder()
+	s.handleControlCatalog(rec3, httptest.NewRequest(http.MethodGet, "/api/v1/control-catalog?tier=3", nil))
+	var out3 controlCatalog
+	_ = json.Unmarshal(rec3.Body.Bytes(), &out3)
+	if len(out3.Controls) != len(parsedControlCatalog.Controls) {
+		t.Errorf("tier=3 = %d controls, want all %d", len(out3.Controls), len(parsedControlCatalog.Controls))
+	}
+}

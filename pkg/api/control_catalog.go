@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -26,8 +27,9 @@ type catalogFrameworkRef struct {
 type catalogControl struct {
 	Code          string                `json:"code"`
 	Title         string                `json:"title"`
-	Type          string                `json:"type"` // preventive | detective
-	Area          string                `json:"area"` // build | release | runtime | change | lifecycle
+	Type          string                `json:"type"`  // preventive | detective
+	Area          string                `json:"area"`  // build | release | runtime | change | lifecycle
+	Level         int                   `json:"level"` // criticality tier at which it applies (1..3)
 	Summary       string                `json:"summary"`
 	Requirements  []string              `json:"requirements"`
 	Mitigates     []string              `json:"mitigates"`
@@ -59,9 +61,18 @@ func (s *Server) handleControlCatalog(w http.ResponseWriter, r *http.Request) {
 	fw := strings.ToLower(r.URL.Query().Get("framework"))
 	area := strings.ToLower(r.URL.Query().Get("area"))
 	typ := strings.ToLower(r.URL.Query().Get("type"))
+	tier := 0 // ?tier=N -> only controls whose level <= N (tier-appropriate set)
+	if v := r.URL.Query().Get("tier"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			tier = n
+		}
+	}
 
 	out := controlCatalog{Version: parsedControlCatalog.Version, Controls: []catalogControl{}}
 	for _, c := range parsedControlCatalog.Controls {
+		if tier > 0 && c.Level > tier {
+			continue
+		}
 		if area != "" && strings.ToLower(c.Area) != area {
 			continue
 		}

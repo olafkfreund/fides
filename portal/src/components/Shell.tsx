@@ -27,6 +27,7 @@ const NAV: NavItem[] = [
   { href: "/risks", label: "Risk Register", icon: ShieldCheck },
   { href: "/exceptions", label: "Exceptions", icon: Scale },
   { href: "/sdlc", label: "Secure SDLC", icon: BookOpen },
+  { href: "/services", label: "Services", icon: Server },
   { href: "/ai-audits", label: "AI Audits", icon: MessageSquare },
   { href: "/telemetry", label: "Telemetry", icon: Gauge },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
