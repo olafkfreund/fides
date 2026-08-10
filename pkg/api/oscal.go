@@ -1,6 +1,7 @@
 package api
 
 import (
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -130,7 +131,7 @@ func buildOSCALAssessmentResults(framework string, controls []reportControl) osc
 			if _, seen := obsUUIDByType[t]; seen {
 				continue
 			}
-			if containsString(c.MissingTypes, t) {
+			if slices.Contains(c.MissingTypes, t) {
 				continue // not compliant evidence, no observation to attach
 			}
 			obsUUID := uuid.New().String()
@@ -196,13 +197,4 @@ func buildOSCALAssessmentResults(framework string, controls []reportControl) osc
 			},
 		},
 	}
-}
-
-func containsString(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }

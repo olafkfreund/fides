@@ -70,98 +70,6 @@ type Attestation struct {
 	CreatedAt           time.Time `json:"created_at" db:"created_at"`
 }
 
-type EvidenceAttachment struct {
-	ID            uuid.UUID `json:"id" db:"id"`
-	AttestationID uuid.UUID `json:"attestation_id" db:"attestation_id"`
-	FileName      string    `json:"file_name" db:"file_name"`
-	FileSize      int64     `json:"file_size" db:"file_size"`
-	FileHash      string    `json:"file_hash" db:"file_hash"`
-	StoragePath   string    `json:"storage_path" db:"storage_path"`
-	ContentType   string    `json:"content_type" db:"content_type"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-}
-
-// DeploymentAnchor records that a signed deployment attestation (image
-// digest, commit, build log ref, runtime snapshot ref) was anchored to a
-// ServiceNow CMDB CI on change close / deploy, proving the deployed artifact
-// matched change intent. See pkg/servicenow.AnchorDeploymentAttestation.
-type DeploymentAnchor struct {
-	ID                 uuid.UUID  `json:"id" db:"id"`
-	OrgID              uuid.UUID  `json:"org_id" db:"org_id"`
-	TrailID            uuid.UUID  `json:"trail_id" db:"trail_id"`
-	AttestationID      *uuid.UUID `json:"attestation_id" db:"attestation_id"`
-	CISysID            string     `json:"ci_sys_id" db:"ci_sys_id"`
-	CIName             string     `json:"ci_name" db:"ci_name"`
-	ChangeNumber       string     `json:"change_number" db:"change_number"`
-	ImageDigest        string     `json:"image_digest" db:"image_digest"`
-	CommitSHA          string     `json:"commit_sha" db:"commit_sha"`
-	BuildLogRef        string     `json:"build_log_ref" db:"build_log_ref"`
-	RuntimeSnapshotRef string     `json:"runtime_snapshot_ref" db:"runtime_snapshot_ref"`
-	ContentHash        string     `json:"content_hash" db:"content_hash"`
-	Compliant          bool       `json:"compliant" db:"compliant"`
-	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
-}
-
-type LLMAssessment struct {
-	ID                    uuid.UUID `json:"id" db:"id"`
-	AttestationID         uuid.UUID `json:"attestation_id" db:"attestation_id"`
-	ModelProvider         string    `json:"model_provider" db:"model_provider"`
-	ModelName             string    `json:"model_name" db:"model_name"`
-	PromptTemplateVersion string    `json:"prompt_template_version" db:"prompt_template_version"`
-	AssessmentRaw         string    `json:"assessment_raw" db:"assessment_raw"`
-	ComplianceScore       int       `json:"compliance_score" db:"compliance_score"`
-	Findings              string    `json:"findings" db:"findings"` // JSON string list of issues
-	CreatedAt             time.Time `json:"created_at" db:"created_at"`
-}
-
-type Environment struct {
-	ID          uuid.UUID `json:"id" db:"id"`
-	OrgID       uuid.UUID `json:"org_id" db:"org_id"`
-	Name        string    `json:"name" db:"name"`
-	Type        string    `json:"type" db:"type"` // docker, k8s, etc
-	Description string    `json:"description" db:"description"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-}
-
-type EnvironmentSnapshot struct {
-	ID            uuid.UUID `json:"id" db:"id"`
-	EnvironmentID uuid.UUID `json:"environment_id" db:"environment_id"`
-	CreatedAt     time.Time `json:"created_at" db:"created_at"`
-}
-
-type SnapshotArtifact struct {
-	ID             uuid.UUID  `json:"id" db:"id"`
-	SnapshotID     uuid.UUID  `json:"snapshot_id" db:"snapshot_id"`
-	ArtifactSHA256 *string    `json:"artifact_sha256" db:"artifact_sha256"`
-	ServiceName    string     `json:"service_name" db:"service_name"`
-	RuntimeDigest  string     `json:"runtime_digest" db:"runtime_digest"`
-	StartedAt      *time.Time `json:"started_at" db:"started_at"`
-	StoppedAt      *time.Time `json:"stopped_at" db:"stopped_at"`
-}
-
-type Policy struct {
-	ID          uuid.UUID `json:"id" db:"id"`
-	OrgID       uuid.UUID `json:"org_id" db:"org_id"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	Rules       string    `json:"rules" db:"rules"` // YAML/JSON config rules string
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-}
-
-type SystemAuditLog struct {
-	ID         int64     `json:"id" db:"id"`
-	OrgID      uuid.UUID `json:"org_id" db:"org_id"`
-	Actor      string    `json:"actor" db:"actor"`
-	ActionType string    `json:"action_type" db:"action_type"`
-	TargetType string    `json:"target_type" db:"target_type"`
-	TargetID   uuid.UUID `json:"target_id" db:"target_id"`
-	OldState   string    `json:"old_state" db:"old_state"` // JSON string
-	NewState   string    `json:"new_state" db:"new_state"` // JSON string
-	RequestIP  string    `json:"request_ip" db:"request_ip"`
-	UserAgent  string    `json:"user_agent" db:"user_agent"`
-	Timestamp  time.Time `json:"timestamp" db:"timestamp"`
-}
-
 type TenantAuthConfig struct {
 	ID               uuid.UUID `json:"id" db:"id"`
 	OrgID            uuid.UUID `json:"org_id" db:"org_id"`
@@ -274,28 +182,6 @@ type TenantGitProvider struct {
 	Enabled           bool      `json:"enabled" db:"enabled"`
 	CreatedAt         time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at" db:"updated_at"`
-}
-
-// RemediationAction is a policy-driven auto-remediation proposal, gated by an
-// approval record before it can be applied. Domain is restricted to low-risk
-// targets: "env_tag", "allowlist_entry", "drift_resync" (pkg/remediation).
-// Status flows proposed -> approved|rejected -> applied.
-type RemediationAction struct {
-	ID            uuid.UUID  `json:"id" db:"id"`
-	OrgID         uuid.UUID  `json:"org_id" db:"org_id"`
-	Domain        string     `json:"domain" db:"domain"`
-	Status        string     `json:"status" db:"status"`
-	EnvironmentID *uuid.UUID `json:"environment_id,omitempty" db:"environment_id"`
-	PolicyID      *uuid.UUID `json:"policy_id,omitempty" db:"policy_id"`
-	Reason        string     `json:"reason" db:"reason"`
-	Params        string     `json:"params" db:"params"` // JSON string, action-specific
-	ProposedBy    string     `json:"proposed_by" db:"proposed_by"`
-	ApprovedBy    string     `json:"approved_by,omitempty" db:"approved_by"`
-	AppliedBy     string     `json:"applied_by,omitempty" db:"applied_by"`
-	RejectedBy    string     `json:"rejected_by,omitempty" db:"rejected_by"`
-	ResultDetail  string     `json:"result_detail,omitempty" db:"result_detail"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type TenantServiceNowSettings struct {

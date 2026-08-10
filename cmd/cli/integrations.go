@@ -9,6 +9,7 @@ import (
 	neturl "net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -19,12 +20,7 @@ import (
 
 // isEvidenceFormat reports whether name is a supported evidence report format.
 func isEvidenceFormat(name string) bool {
-	for _, f := range evidence.SupportedFormats {
-		if f == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(evidence.SupportedFormats, name)
 }
 
 // evidenceTypeName maps a parse format to the canonical attestation type_name

@@ -2,8 +2,9 @@ package api
 
 import (
 	"context"
+	"maps"
 	"net/http"
-	"sort"
+	"slices"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -216,11 +217,7 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 	for p := range riskByPeriod {
 		periodSet[p] = true
 	}
-	periods := make([]string, 0, len(periodSet))
-	for p := range periodSet {
-		periods = append(periods, p)
-	}
-	sort.Strings(periods)
+	periods := slices.Sorted(maps.Keys(periodSet))
 
 	raw := make([]PeriodRaw, 0, len(periods))
 	for _, p := range periods {

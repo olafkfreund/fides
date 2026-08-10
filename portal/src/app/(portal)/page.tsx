@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Package, ShieldCheck, CheckCircle2, Zap } from "lucide-react";
 import { apiGet } from "@/lib/api";
-import { Panel, SectionLabel, Ring, StatTile } from "@/components/dash";
+import { Panel, SectionLabel, Donut, StatTile } from "@/components/dash";
 
 // Live snapshot from the console summary endpoint (counts + recent checks).
 type Summary = {
@@ -161,10 +161,10 @@ export default function Overview() {
         <Panel className="lg:col-span-2">
           <SectionLabel>Compliance Posture</SectionLabel>
           <div className="mt-4 flex flex-wrap items-center gap-6">
-            <Ring value={pct / 100} size={190} stroke={13} color="#35C08A">
+            <Donut value={pct / 100} size={190} stroke={13}>
               <span className="font-mono text-[44px] font-bold leading-none tabular-nums">{s ? pct : "—"}<span className="text-xl text-muted-foreground">%</span></span>
               <span className="mt-1 font-mono text-[11px] uppercase tracking-[0.22em] text-green-400">Passing</span>
-            </Ring>
+            </Donut>
             <div className="min-w-[220px] flex-1">
               <h3 className="text-lg font-semibold">{s && s.nonCompliant > 0 ? `${s.nonCompliant} need attention` : "All environments verified & sealed"}</h3>
               <p className="mt-1 text-sm text-muted-foreground">Every tracked artifact carries a signed attestation chain; the tamper-evident ledger is intact.</p>
@@ -194,9 +194,9 @@ export default function Overview() {
         <Panel>
           <SectionLabel>Environments</SectionLabel>
           <div className="mt-4 flex items-center gap-4">
-            <Ring value={envs.length ? secureEnvs / envs.length : 0} size={64} stroke={7} color="#35C08A">
+            <Donut value={envs.length ? secureEnvs / envs.length : 0} size={64} stroke={7}>
               <span className="font-mono text-xs font-bold text-green-400">{secureEnvs}/{envs.length || 0}</span>
-            </Ring>
+            </Donut>
             <div className="font-mono text-[11px] leading-relaxed text-muted-foreground">
               <span className="text-green-400">{envs.length && secureEnvs === envs.length ? "All secure" : `${envs.length - secureEnvs} drifting`}</span><br />
               {envs.length} workloads · {envs.length - secureEnvs} drift

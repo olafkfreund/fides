@@ -50,10 +50,7 @@ func (d *Dispatcher) backoff(attempts int) time.Duration {
 	for i := 1; i < attempts && delay < d.MaxBackoff; i++ {
 		delay *= 2
 	}
-	if delay > d.MaxBackoff {
-		delay = d.MaxBackoff
-	}
-	return delay
+	return min(delay, d.MaxBackoff)
 }
 
 // Run polls until ctx is cancelled. With no sinks registered it idles, leaving

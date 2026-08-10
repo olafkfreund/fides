@@ -46,11 +46,6 @@ func WithBasicAuth(user, pass string) HTTPOption {
 	}
 }
 
-// WithHeader sets an arbitrary request header (e.g. a custom auth or tenant id).
-func WithHeader(key, value string) HTTPOption {
-	return func(c *HTTPClient) { c.header.Set(key, value) }
-}
-
 // WithHTTPClient overrides the underlying *http.Client (for tests / custom TLS).
 func WithHTTPClient(hc *http.Client) HTTPOption {
 	return func(c *HTTPClient) { c.http = hc }

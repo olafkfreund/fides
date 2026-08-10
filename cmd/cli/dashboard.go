@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -301,9 +302,7 @@ func (m dashModel) tabStrip() string {
 
 func (m dashModel) overview() string {
 	cardW := (m.w - 8) / 4
-	if cardW < 14 {
-		cardW = 14
-	}
+	cardW = max(cardW, 14)
 
 	driftCount := 0
 	for _, e := range m.envs {
@@ -357,9 +356,7 @@ func (m dashModel) coveragePanel(w int) string {
 		// Weakest coverage first — surface the gaps at the top.
 		sort.SliceStable(ctrls, func(i, j int) bool { return ctrls[i].Coverage < ctrls[j].Coverage })
 		barW := w - 40
-		if barW < 10 {
-			barW = 10
-		}
+		barW = max(barW, 10)
 		const limit = 8
 		for i, c := range ctrls {
 			if i >= limit {
@@ -374,16 +371,9 @@ func (m dashModel) coveragePanel(w int) string {
 
 // coverageBar renders "SOC2-CC7.1            ████████░░░░  67%".
 func coverageBar(label string, pct float64, barW int) string {
-	if pct < 0 {
-		pct = 0
-	}
-	if pct > 1 {
-		pct = 1
-	}
+	pct = max(0, min(1, pct))
 	filled := int(pct*float64(barW) + 0.5)
-	if filled > barW {
-		filled = barW
-	}
+	filled = min(filled, barW)
 	fill := lipgloss.NewStyle().Foreground(covColor(pct)).Render(strings.Repeat("█", filled))
 	empty := lipgloss.NewStyle().Foreground(colEmpty).Render(strings.Repeat("░", barW-filled))
 	return fmt.Sprintf("%-24s %s%s %3.0f%%", truncate(label, 24), fill, empty, pct*100)
@@ -487,7 +477,7 @@ func (m dashModel) metricsPanel() string {
 			lipgloss.NewStyle().Foreground(colTitle).Render(sparkline(counts)),
 			"")
 		barW := w - 30
-		if barW < 10 {
+		if barW < 10 { // max builtin shadowed by local `max` var
 			barW = 10
 		}
 		for i, wk := range weeks {
@@ -523,12 +513,7 @@ func sparkline(vals []int) string {
 	if len(vals) == 0 {
 		return ""
 	}
-	max := 0
-	for _, v := range vals {
-		if v > max {
-			max = v
-		}
-	}
+	max := slices.Max(vals)
 	var b strings.Builder
 	for _, v := range vals {
 		idx := 0
@@ -546,9 +531,7 @@ func intBar(label string, val, max, barW int) string {
 	if max > 0 {
 		filled = val * barW / max
 	}
-	if filled > barW {
-		filled = barW
-	}
+	filled = min(filled, barW)
 	fill := lipgloss.NewStyle().Foreground(colGood).Render(strings.Repeat("█", filled))
 	empty := lipgloss.NewStyle().Foreground(colEmpty).Render(strings.Repeat("░", barW-filled))
 	return fmt.Sprintf("%-12s %s%s %3d", truncate(label, 12), fill, empty, val)
