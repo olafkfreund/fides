@@ -3,7 +3,8 @@ package servicenow
 import (
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"fides/pkg/ledger"
@@ -130,11 +131,7 @@ func writeEvidenceBundleNote(b *strings.Builder, bundle map[string]any) {
 		}
 	}
 	if counts, ok := bundle["attestation_types"].(map[string]map[string]int); ok && len(counts) > 0 {
-		types := make([]string, 0, len(counts))
-		for t := range counts {
-			types = append(types, t)
-		}
-		sort.Strings(types)
+		types := slices.Sorted(maps.Keys(counts))
 		b.WriteString("  Attestation types:\n")
 		for _, t := range types {
 			c := counts[t]

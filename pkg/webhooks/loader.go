@@ -3,6 +3,7 @@ package webhooks
 import (
 	"context"
 	"database/sql"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -40,7 +41,7 @@ func (l *DBLoader) Targets(ctx context.Context, orgID uuid.UUID, eventType strin
 				return err
 			}
 			// An empty event_types list subscribes to all event types.
-			if len(eventTypes) > 0 && !contains(eventTypes, eventType) {
+			if len(eventTypes) > 0 && !slices.Contains(eventTypes, eventType) {
 				continue
 			}
 			secret, err := l.secrets.GetSecret(ctx, "", secretPath)
@@ -52,13 +53,4 @@ func (l *DBLoader) Targets(ctx context.Context, orgID uuid.UUID, eventType strin
 		return rows.Err()
 	})
 	return targets, err
-}
-
-func contains(xs []string, v string) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }

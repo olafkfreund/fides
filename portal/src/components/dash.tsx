@@ -47,23 +47,6 @@ export function Panel({ label, right, children, className = "" }: { label?: Reac
   );
 }
 
-// Ring — a single-value gauge (value is 0..1).
-export function Ring({ value, size, stroke, color, children }: { value: number; size: number; stroke: number; color: string; children?: React.ReactNode }) {
-  const r = size / 2 - stroke;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-muted" />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round" stroke={color}
-          strokeDasharray={c} strokeDashoffset={c * (1 - Math.max(0, Math.min(1, value)))}
-          style={{ transition: "stroke-dashoffset .9s cubic-bezier(.3,.8,.3,1)" }} />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">{children}</div>
-    </div>
-  );
-}
-
 // StatTile — a KPI: big mono number + label, optional icon and link.
 export function StatTile({ label, value, sub, icon: Ic, color, href }: { label: string; value: string; sub?: string; icon?: React.ComponentType<{ className?: string }>; color?: string; href?: string }) {
   const body = (
@@ -97,16 +80,11 @@ export function Chip({ children, tone = "muted" }: { children: React.ReactNode; 
   return <span className={`inline-block rounded border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] ${CHIP_TONES[tone]}`}>{children}</span>;
 }
 
-// gridBg — the faint graph-paper background used on data-dense overview pages.
-export const gridBg: React.CSSProperties = {
-  backgroundImage: "linear-gradient(rgba(128,128,140,0.05) 1px,transparent 1px),linear-gradient(90deg,rgba(128,128,140,0.05) 1px,transparent 1px)",
-  backgroundSize: "34px 34px",
-};
-
 // Donut — a single-value gauge (value 0..1). Use status green for compliance/
 // pass-rate, gold (var(--primary)) for coverage/neutral magnitude. The center
-// shows `label` (default: the percentage) + optional `sublabel`.
-export function Donut({ value, label, sublabel, color = "#35C08A", size = 148, stroke = 14 }: { value: number; label?: string; sublabel?: string; color?: string; size?: number; stroke?: number }) {
+// shows `children` if given, else `label` (default: the percentage) + optional
+// `sublabel`.
+export function Donut({ value, label, sublabel, color = "#35C08A", size = 148, stroke = 14, children }: { value: number; label?: string; sublabel?: string; color?: string; size?: number; stroke?: number; children?: React.ReactNode }) {
   const r = size / 2 - stroke;
   const c = 2 * Math.PI * r;
   const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
@@ -119,8 +97,12 @@ export function Donut({ value, label, sublabel, color = "#35C08A", size = 148, s
           style={{ transition: "stroke-dashoffset .9s cubic-bezier(.3,.8,.3,1)" }} />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-mono text-3xl font-bold tabular-nums" style={{ color }}>{label ?? `${pct}%`}</span>
-        {sublabel && <span className="mt-0.5 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">{sublabel}</span>}
+        {children ?? (
+          <>
+            <span className="font-mono text-3xl font-bold tabular-nums" style={{ color }}>{label ?? `${pct}%`}</span>
+            {sublabel && <span className="mt-0.5 text-[9px] uppercase tracking-[0.16em] text-muted-foreground">{sublabel}</span>}
+          </>
+        )}
       </div>
     </div>
   );

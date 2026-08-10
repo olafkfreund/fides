@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -382,11 +384,7 @@ func ParseSBOM(data []byte) (Result, error) {
 			licSet[l] = struct{}{}
 		}
 	}
-	licenses := make([]string, 0, len(licSet))
-	for l := range licSet {
-		licenses = append(licenses, l)
-	}
-	sort.Strings(licenses)
+	licenses := slices.Sorted(maps.Keys(licSet))
 
 	return Result{
 		Format:    format,
