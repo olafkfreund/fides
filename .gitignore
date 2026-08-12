@@ -23,6 +23,9 @@ data/
 web-evidence/
 fides-evidence/
 
+# Built binaries (just build -> bin/fides)
+bin/
+
 # Dev files
 .env
 .idea/
