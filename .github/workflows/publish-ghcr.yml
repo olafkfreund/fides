@@ -1,9 +1,13 @@
 name: Publish images to GHCR
 
 # Publishes the container images to GitHub Container Registry so clusters that
-# can't reach the private ECR (e.g. the self-hosted p510 k3d) can pull them, and
-# so ArgoCD can auto-update on a new :latest digest. The AWS/EKS path keeps using
-# ECR (see go-build.yml); this is additive.
+# can't reach the private ECR (e.g. the self-hosted p510 k3d) can pull them.
+# The AWS/EKS path keeps using ECR (see go-build.yml); this is additive.
+#
+# Three steps, in this order (#390 then #389 -- pin, sign, then move the pin):
+#   1. build + push  :latest and :<commit sha>
+#   2. cosign keyless sign the DIGEST, and verify the signature before promoting
+#   3. bump the fides-server pin in factory-gitops so the cluster gets it
 on:
   push:
     branches: [main]
@@ -20,6 +24,19 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write # cosign keyless via GitHub OIDC (#390)
+
+env:
+  GITOPS_REPO: olafkfreund/factory-gitops
+  GITOPS_FILE: apps/fides/manifests/manifests.yaml
+  # The signer identity the cluster's verify-factory-image-signatures policy
+  # will assert at admission. Anchored at both ends and naming the workflow and
+  # the ref: the repo prefix alone would accept any workflow on any branch.
+  #
+  # A workflow_dispatch run from a branch other than main WILL fail the verify
+  # step below, because the cert then reads @refs/heads/<branch>. Intended --
+  # such an image is denied at admission too.
+  SIGNER_IDENTITY: '^https://github\.com/${{ github.repository_owner }}/fides/\.github/workflows/publish-ghcr\.yml@refs/heads/main$'
 
 jobs:
   publish:
@@ -31,6 +48,11 @@ jobs:
             dockerfile: Dockerfile.reporter
           - image: fides-server
             dockerfile: Dockerfile.server
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+      # secrets context is not allowed in a step-level `if:`; expose it here so
+      # the bump step can gate on env.GITOPS_PAT instead.
+      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -41,13 +63,138 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push ${{ matrix.image }}
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
-            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ----------------------------------------------------------------------
+      # #390 -- cosign keyless signing.
+      #
+      # Neither image had a signature at all (`crane digest <img>.sig` ->
+      # MANIFEST_UNKNOWN), which is the stated blocker on extending the
+      # cluster's verify-factory-image-signatures ClusterPolicy past the
+      # `factory` namespace to `fides` / `fides-reporter`.
+      #
+      # Sign the DIGEST, not the tag: signatures are digest-keyed, so one
+      # signature covers both :latest and :<sha>, and signing a tag would bind
+      # the signature to a pointer that moves.
+      # ----------------------------------------------------------------------
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign ${{ matrix.image }} (cosign keyless, Sigstore + GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Not decoration: a signing step that fails open leaves an unverifiable
+      # image that looks shipped. Same assertion Kyverno makes at admission,
+      # run here at build time so it fails in CI instead of at a deploy.
+      - name: Verify signature (self-test)
+        run: |
+          cosign verify \
+            --certificate-identity-regexp "${SIGNER_IDENTITY}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # ----------------------------------------------------------------------
+      # #389 -- tell the cluster the image exists.
+      #
+      # factory-gitops#162 moved p510 off `:latest` onto an immutable commit tag
+      # and deleted the 30-minute `kubectl rollout restart` CronJob that used to
+      # be the deploy mechanism. Nothing has moved that pin since, so a merge to
+      # main reached the cluster NEVER. This is the missing third step.
+      #
+      # fides-server only: fides-reporter is deployed from the chart in this
+      # repo at targetRevision main with image.tag=latest, so it is not pinned
+      # and not stuck.
+      # ----------------------------------------------------------------------
+      - name: Assert the pushed tag resolves to the image we built
+        if: matrix.image == 'fides-server'
+        run: |
+          set -euo pipefail
+          # The pin below names a TAG, so pin the tag we can prove is these
+          # bytes rather than a sha reassembled independently of the push.
+          pushed="$(docker buildx imagetools inspect "${IMAGE}:${{ github.sha }}" \
+                      --format '{{.Manifest.Digest}}')"
+          built="${{ steps.build.outputs.digest }}"
+          if [ "${pushed}" != "${built}" ]; then
+            echo "::error::${IMAGE}:${{ github.sha }} is ${pushed}, but this run built ${built}"
+            exit 1
+          fi
+          echo "tag ${{ github.sha }} == built digest ${built}"
+
+      - name: Bump fides-server pin in factory-gitops
+        if: matrix.image == 'fides-server' && env.GITOPS_PAT != ''
+        run: |
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+
+          # Every service in the fleet bumps this same repo, so two deploys in
+          # flight race on push (Factory#527). Retry the whole cycle from a
+          # fresh clone rather than rebasing: the edit is idempotent and this
+          # preserves the rival's commit instead of force-pushing over it.
+          pushed=""
+          for attempt in 1 2 3 4 5; do
+            rm -rf gitops
+            git clone --quiet --depth 1 "https://x:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git" gitops
+            cd gitops
+            sed -i -E "s|(image: ${IMAGE}):.*|\1:${SHA}|" "${GITOPS_FILE}"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            if git diff --quiet; then
+              # Two very different cases that a bare "nothing to do" would
+              # conflate: already pinned (fine) versus the sed matched nothing
+              # (a broken bump reporting success).
+              if grep -q "image: ${IMAGE}:${SHA}" "${GITOPS_FILE}"; then
+                echo "already pinned to ${SHA}; nothing to do."
+                pushed="already"
+                break
+              fi
+              echo "::error::the image edit changed nothing AND the pin is not ${SHA}."
+              echo "::error::The sed pattern no longer matches ${GITOPS_FILE}."
+              exit 1
+            fi
+
+            git commit --quiet -am "cd(fides): ${SHA} [skip ci]"
+            if git push --quiet; then
+              pushed="yes"
+              break
+            fi
+            echo "push rejected (attempt ${attempt}/5) - another service bumped first; retrying"
+            cd "$GITHUB_WORKSPACE"
+            sleep $(( attempt * 3 ))
+          done
+
+          if [ -z "$pushed" ]; then
+            echo "::error::could not push the image bump after 5 attempts (Factory#527)."
+            exit 1
+          fi
+
+          # A deploy that cannot prove the pin moved must not report success.
+          # Re-read from the remote rather than trusting the push.
+          cd "$GITHUB_WORKSPACE"
+          rm -rf gitops-verify
+          git clone --quiet --depth 1 "https://x:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git" gitops-verify
+          if grep -q "image: ${IMAGE}:${SHA}" "gitops-verify/${GITOPS_FILE}"; then
+            echo "verified: ${GITOPS_REPO} pins fides-server at ${SHA}"
+          else
+            echo "::error::pushed, but ${GITOPS_REPO} does not pin fides-server at ${SHA}."
+            exit 1
+          fi
+
+      - name: Note if CD is not wired
+        if: matrix.image == 'fides-server' && env.GITOPS_PAT == ''
+        run: |
+          echo "::notice::Image pushed and signed, but GITOPS_PAT is unset so nothing"
+          echo "::notice::moved the cluster pin -- this merge deploys nowhere (#389)."
+          echo "::notice::Fix once: gh secret set GITOPS_PAT --repo ${{ github.repository }}"
+          echo "::notice::(fine-grained PAT, Contents:write on ${GITOPS_REPO})"
+          echo "::notice::Until then, hand-edit ${GITOPS_FILE} to :${{ github.sha }}"
