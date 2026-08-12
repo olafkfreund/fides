@@ -76,6 +76,68 @@ jobs:
           cache-to: type=gha,mode=max
 
       # ----------------------------------------------------------------------
+      # CVE gate. Runs AFTER push (it scans the pushed image BY DIGEST -- the
+      # artifact that actually ships) but BEFORE signing and before the
+      # factory-gitops bump below, so a vulnerable image is never signed and
+      # never promoted to a cluster, even though it exists in GHCR.
+      #
+      # Signing and scanning answer different questions and neither substitutes
+      # for the other: a signature says these bytes came from this workflow, and
+      # says nothing at all about what is in them.
+      #
+      # Policy: fixable HIGH/CRITICAL only (`--ignore-unfixed`), `--exit-code 1`
+      # to make it a hard gate. Same severity policy as the ECR gate in
+      # go-build.yml -- two gates that disagree about what "clean" means are
+      # worse than one.
+      #
+      # `--skip-files usr/local/bin/kubectl` is the one exception, and it applies
+      # only to the reporter image (the path does not exist in fides-server).
+      # kubectl is a vendored third-party binary whose CVEs live in ITS vendored
+      # deps; no released kubectl is clean (see the measurements in
+      # Dockerfile.reporter) and we cannot patch them without rebuilding it.
+      #
+      # Skipping by PATH rather than listing the ~23 CVE IDs in a .trivyignore
+      # is deliberate: an ID list silently rots, and every new upstream CVE would
+      # break main until somebody appended to it. The step after this one prints
+      # what was skipped on every run, so the exception is visible rather than
+      # buried -- a gate that quietly excludes something reads as "clean" when it
+      # is not.
+      #
+      # KNOWN BLIND SPOT: both images sit on alpine:3.18, which is EOL ("no
+      # longer supported by the distribution" -- Trivy warns on every run). No
+      # further alpine 3.18 security updates will ever ship, so an OS-layer CVE
+      # there will never have a FixedVersion and `--ignore-unfixed` will drop it.
+      # The OS layer of this gate is therefore effectively blind until the base
+      # is bumped; the Go binaries, which is where our code lives, are covered.
+      # Tracked separately -- do not read a green here as "the base image is fine".
+      # ----------------------------------------------------------------------
+      - name: Install Trivy
+        # Pinned by commit, like gosec: an unpinned scanner changes with no
+        # commit here, so its verdict is attributable to nothing in git.
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.73.0
+
+      - name: Trivy scan ${{ matrix.image }} (fixable HIGH/CRITICAL)
+        run: |
+          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --skip-files usr/local/bin/kubectl \
+            --exit-code 1 "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Non-blocking, and deliberately not silent: report exactly what the gate
+      # above chose not to fail on, so the excepted count is on the run summary
+      # every time rather than living only in a comment.
+      - name: Report vendored kubectl CVEs (visibility, non-blocking)
+        if: matrix.image == 'fides-k8s-reporter'
+        run: |
+          set -euo pipefail
+          n=$(trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+                --quiet --format json "${IMAGE}@${{ steps.build.outputs.digest }}" \
+              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(len(r.get("Vulnerabilities") or []) for r in d.get("Results",[])))')
+          echo "::notice::vendored kubectl carries ${n} fixable HIGH/CRITICAL, excepted by path."
+          echo "::notice::No released kubectl is clean; the fix is to drop it for client-go."
+
+      # ----------------------------------------------------------------------
       # #390 -- cosign keyless signing.
       #
       # Neither image had a signature at all (`crane digest <img>.sig` ->
