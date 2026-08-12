@@ -12,8 +12,28 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o fides ./cmd/cli
 
 FROM alpine:3.18
 RUN apk add --no-cache ca-certificates
-# kubectl, pinned to the cluster's minor version (adjust via --build-arg).
-ARG KUBECTL_VERSION=v1.31.5
+# kubectl, pinned to the cluster's version (adjust via --build-arg).
+#
+# v1.31.14 is the EXACT server version of the sarc-aws EKS cluster this reports
+# on (`v1.31.14-eks-8f14419`), so client/server skew is nil. Bumped from
+# v1.31.5, which was two years of patches behind the API server it talked to.
+#
+# Do NOT bump the minor to chase a cleaner CVE scan. Measured 2026-08-12 against
+# the built image, fixable HIGH/CRITICAL: v1.31.14 -> 24, v1.32.13 -> 21,
+# v1.33.13 -> 7, v1.34.10 / v1.35.7 / v1.36.3 (latest stable) -> 6. There is no
+# clean kubectl: every one of those findings is in kubectl's own VENDORED deps
+# (Go stdlib, x/net, x/oauth2, x/text, spdystream), which we cannot patch
+# without rebuilding kubectl. Trading a supported skew for 6-instead-of-24
+# would optimise the scanner's number while moving kubectl three minors past
+# the cluster it queries -- the metric, not the security.
+#
+# The Trivy gates therefore skip this one binary by path and report its count
+# separately rather than hiding it. Everything we actually build is gated at
+# full strength; our own binaries scan clean. The real fix is to drop kubectl
+# entirely -- it is used for exactly one call, `kubectl get pods -o json` (see
+# cmd/cli/main.go) -- and read the API with client-go, whose x/net WE would own
+# and could patch. Tracked separately.
+ARG KUBECTL_VERSION=v1.31.14
 ARG TARGETARCH=amd64
 RUN apk add --no-cache --virtual .dl curl \
  && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \

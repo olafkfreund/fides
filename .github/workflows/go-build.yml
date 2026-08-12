@@ -131,7 +131,14 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
+      # Pinned by commit, like gosec: an unpinned scanner changes with no commit
+      # here, so its verdict is attributable to nothing in git.
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.73.0
+
+      - name: Build image for Amazon ECR
         env:
           ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
           ECR_REPOSITORY: fides-server
@@ -140,6 +147,27 @@ jobs:
           docker build -f Dockerfile.server \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+
+      # Scan BEFORE the push, not after: this is the production EKS path, and a
+      # vulnerable image should never reach the registry at all, let alone the
+      # cluster. Same bytes either way -- the push below uploads exactly what
+      # was scanned here.
+      #
+      # Flags are identical to the GHCR gate in publish-ghcr.yml. Two gates that
+      # disagree about what "clean" means are worse than one.
+      - name: Trivy scan the image (fixable HIGH/CRITICAL) — blocks the deploy
+        env:
+          ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
+          ECR_REPOSITORY: fides-server
+        run: |
+          trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 "$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
+
+      - name: Push image to Amazon ECR
+        env:
+          ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
+          ECR_REPOSITORY: fides-server
+        run: |
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
 
