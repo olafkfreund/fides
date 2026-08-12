@@ -1,0 +1,37 @@
+name: markdown-lint
+
+# Lints only the markdown a PR actually touches. The repo has a pre-existing
+# backlog of lint errors in docs/ and web/; gating on changed files stops new
+# drift without demanding a repo-wide reformat first. Switch to linting
+# everything once `just lint-md-all` is clean.
+on:
+  pull_request:
+    paths:
+      - '**/*.md'
+      - '.markdownlint.json'
+      - '.markdownlintignore'
+
+permissions:
+  contents: read
+
+jobs:
+  changed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed markdown
+        id: files
+        run: |
+          git diff --name-only --diff-filter=d \
+            "origin/${{ github.base_ref }}...HEAD" -- '*.md' > changed.txt
+          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
+          cat changed.txt
+
+      - name: markdownlint
+        if: steps.files.outputs.count != '0'
+        run: |
+          npm install -g markdownlint-cli
+          xargs -r -a changed.txt markdownlint

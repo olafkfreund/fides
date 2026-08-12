@@ -1,0 +1,11 @@
+# Dependencies and build output — never ours to lint.
+node_modules/
+portal/node_modules/
+portal/.next/
+portal/out/
+web/_next/
+.devenv/
+demo/screencasts/out/
+
+# Vendored / generated docs
+**/CHANGELOG.md
