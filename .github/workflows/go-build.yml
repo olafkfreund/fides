@@ -49,9 +49,12 @@ jobs:
       - name: Run Tests
         run: go test -race -v ./...
 
+      # PINNED, not @latest. An unpinned scanner changes without a commit, so a
+      # scan verdict is not attributable to anything in git, and an upstream
+      # release can turn CI red with no change from us. Bump deliberately.
       - name: Vulnerability scan (govulncheck)
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
       # gosec BLOCKS the pipeline at medium+ severity. All findings up to this
@@ -59,8 +62,14 @@ jobs:
       # false-positives annotated with justified `#nosec` (guarded storage paths,
       # the allowlisted MCP exec, the bounded multipart parse, the configured MCP
       # server URL, CLI opening user-specified files). New medium+ findings fail CI.
+      #
+      # Pinned by COMMIT rather than @master or a tag. `@master` ran whatever
+      # upstream last pushed -- new third-party code executing inside the
+      # security gate itself, with no commit here to attribute it to, and an
+      # upstream push able to turn CI red on its own. A tag is only slightly
+      # better: it is mutable and can be repointed. This is v2.28.0.
       - name: Static security analysis (gosec)
-        uses: securego/gosec@master
+        uses: securego/gosec@9e75c0576c9878035d4221392108d458abe10fc3 # v2.28.0
         with:
           args: -severity medium -confidence high ./...
 
