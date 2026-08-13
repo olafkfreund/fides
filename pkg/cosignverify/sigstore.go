@@ -38,7 +38,7 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
-	if opts.BundlePath == "" {
+	if opts.BundlePath == "" && opts.Image == "" {
 		return nil, ErrBundleRequired
 	}
 
@@ -47,9 +47,30 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		return nil, fmt.Errorf("cosignverify: invalid --sha256 digest %q: %w", opts.Digest, err)
 	}
 
-	b, err := bundle.LoadJSONFromPath(opts.BundlePath)
-	if err != nil {
-		return nil, fmt.Errorf("cosignverify: load bundle %q: %w", opts.BundlePath, err)
+	// artifactDigest is what the signature is asserted to cover.
+	//
+	// For an explicit --bundle that is the image digest itself. For a cosign
+	// signature discovered in a registry it is NOT: cosign signs a
+	// simplesigning payload which merely NAMES the image, so the policy must
+	// assert sha256(payload). The link back to the image digest is the binding
+	// check inside discoverSignature, which refuses any payload naming a
+	// different image -- without it, a valid signature for any image would
+	// satisfy a request about any other.
+	artifactDigest := digestBytes
+
+	var b *bundle.Bundle
+	if opts.BundlePath != "" {
+		b, err = bundle.LoadJSONFromPath(opts.BundlePath)
+		if err != nil {
+			return nil, fmt.Errorf("cosignverify: load bundle %q: %w", opts.BundlePath, err)
+		}
+	} else {
+		found, derr := discoverSignature(opts.Image, opts.Digest)
+		if derr != nil {
+			return nil, derr
+		}
+		b = found.Bundle
+		artifactDigest = found.PayloadDigest
 	}
 
 	verdict := &Verdict{Digest: opts.Digest}
@@ -90,7 +111,7 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		return nil, fmt.Errorf("cosignverify: build verifier: %w", err)
 	}
 
-	result, err := sev.Verify(b, verify.NewPolicy(verify.WithArtifactDigest("sha256", digestBytes), policyOpt))
+	result, err := sev.Verify(b, verify.NewPolicy(verify.WithArtifactDigest("sha256", artifactDigest), policyOpt))
 	if err != nil {
 		// A completed-but-failed verification is not an operational error:
 		// report it on the verdict so the caller can still record it as
