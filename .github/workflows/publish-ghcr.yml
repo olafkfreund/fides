@@ -231,12 +231,22 @@ jobs:
           # code says nothing -- the banner is the only signal. Checked here so
           # a bad key fails with that message instead of surfacing as a
           # confusing clone error five lines later.
-          if ssh -i ~/.ssh/gitops_deploy -o IdentitiesOnly=yes -T git@github.com 2>&1 \
-               | grep -q "successfully authenticated"; then
-            echo "deploy key authenticated to github"
+          # Capture rather than `| grep -q`: piping straight into grep SWALLOWS
+          # ssh's own explanation, which is the only thing that distinguishes
+          # "key not authorised" from "host key mismatch" from "network". The
+          # first cut of this step did exactly that and the failure was
+          # unattributable.
+          set +e
+          out="$(ssh -i ~/.ssh/gitops_deploy -o IdentitiesOnly=yes \
+                     -o BatchMode=yes -T git@github.com 2>&1)"
+          set -e
+          if printf '%s' "$out" | grep -q "successfully authenticated"; then
+            echo "deploy key authenticated: $(printf '%s' "$out" | head -1)"
           else
             echo "::error::the GITOPS_DEPLOY_KEY secret did not authenticate to github."
-            echo "::error::Check it is the PRIVATE half of a write deploy key on ${GITOPS_REPO}."
+            echo "::error::Check it is the PRIVATE half of a WRITE deploy key on ${GITOPS_REPO}."
+            echo "--- ssh said ---"
+            printf '%s\n' "$out"
             exit 1
           fi
 
