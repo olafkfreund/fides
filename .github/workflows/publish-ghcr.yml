@@ -265,7 +265,7 @@ jobs:
           echo "::warning::Fides recorded NO provenance for this build — its own"
           echo "::warning::runtime environments cannot be compliant without it."
           echo "::notice::Set secrets FIDES_SERVER_URL and FIDES_API_TOKEN, and"
-          echo "::notice::variable FIDES_FLOW_ID, to enable. See issue #416."
+          echo "::notice::variable FIDES_FLOW_ID, to enable. See issue #417."
 
       # The key never reaches the filesystem outside this job's runner, and it
       # is written 0600 to a path only this step and the next know. `ssh-agent`
