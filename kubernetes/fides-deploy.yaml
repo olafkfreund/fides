@@ -87,6 +87,15 @@ metadata:
   namespace: fides
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the model cache is a ReadWriteOnce EBS volume,
+  # so only one pod can ever mount it. A rolling update keeps the old pod alive
+  # until the new one is Ready, but the new one can never attach the volume and
+  # therefore never becomes Ready — the two ReplicaSets deadlock and the service
+  # stays down. Seen for real on 2026-08-13. Recreate stops the old pod first,
+  # which costs a short outage on every ollama change and is the only thing that
+  # works with a single-writer disk.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: fides-ollama
