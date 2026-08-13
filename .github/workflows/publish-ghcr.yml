@@ -295,7 +295,38 @@ jobs:
             --sha256 "${DIGEST#sha256:}" \
             --name "${IMAGE_NAME}" \
             --type docker
-          echo "recorded ${IMAGE_NAME} ${DIGEST}"
+          echo "recorded ${IMAGE_NAME} index ${DIGEST}"
+
+          # Also record the per-platform manifest digests.
+          #
+          # steps.build.outputs.digest is the INDEX digest, and the index
+          # carries a SLSA provenance attestation that embeds the commit — so
+          # a rebuild whose image content is byte-identical still gets a NEW
+          # index digest. containerd, which already holds that content, keeps
+          # reporting the index digest it first resolved. The runtime snapshot
+          # then sees a digest CI never registered and calls it a shadow
+          # change, forever.
+          #
+          # Observed on 2026-08-13: tags 6f5848c3 and 09157f3c differ only in
+          # workflow YAML, so both indexes wrap the SAME amd64 manifest
+          # (dd510945...) while their index digests differ. The pod reported
+          # the older index and stayed a shadow despite the build being
+          # registered.
+          #
+          # The platform manifest digest is the image content, so it is stable
+          # across content-identical rebuilds. Registering both means whichever
+          # one a runtime reports is known to Fides.
+          docker buildx imagetools inspect "${IMAGE}@${DIGEST}" --raw \
+            | jq -r '.manifests[]? | select(.platform.os != "unknown") | .digest' \
+            | while read -r child; do
+                [ -n "${child}" ] || continue
+                fides artifact report \
+                  --trail "${trail_id}" \
+                  --sha256 "${child#sha256:}" \
+                  --name "${IMAGE_NAME}" \
+                  --type docker
+                echo "recorded ${IMAGE_NAME} platform ${child}"
+              done
 
       - name: Note if provenance recording is not wired
         if: env.FIDES_API_TOKEN == '' || env.FIDES_SERVER_URL == '' || env.FIDES_FLOW_ID == ''

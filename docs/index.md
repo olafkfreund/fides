@@ -46,6 +46,7 @@ the same capabilities to AI tools (Claude Code, Cursor, Claude Desktop).
 | MCP server for AI tools | [MCP Server](mcp-server.md) |
 | Features & real-world examples | [Features & Examples](features.md) |
 | Supplying the three approval identities | [Segregation of Duties](segregation-of-duties.md) |
+| Recording build provenance from CI | [CI Provenance](ci-provenance.md) |
 | Runtime compliance checks via MCP | [Environment MCP Compliance](environment-mcp-compliance.md) |
 | ServiceNow integration overview | [ServiceNow Integration](servicenow-integration.md) |
 | Consuming ServiceNow's MCP server | [ServiceNow MCP](servicenow-mcp.md) |
