@@ -206,6 +206,24 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "${GITOPS_DEPLOY_KEY}" > ~/.ssh/gitops_deploy
           chmod 600 ~/.ssh/gitops_deploy
+
+          # Prove the key SURVIVED transport before blaming the far end. A
+          # secret that lost its newlines, or got truncated, fails at the
+          # handshake with the same "did not authenticate" as a key that was
+          # never authorised -- two very different faults, one message.
+          #
+          # `ssh-keygen -y` derives the PUBLIC half, so this is safe to print:
+          # it reveals nothing the deploy key entry on factory-gitops does not
+          # already publish, and it is the only local check that the private
+          # key is well-formed.
+          if ! ssh-keygen -y -f ~/.ssh/gitops_deploy > /tmp/derived.pub 2>/tmp/keyerr; then
+            echo "::error::GITOPS_DEPLOY_KEY is not a usable private key -- it did not"
+            echo "::error::survive transport into the runner, or is not a private key at all."
+            echo "::error::ssh-keygen said: $(tr -d '\n' < /tmp/keyerr)"
+            echo "::error::(wrote $(wc -l < ~/.ssh/gitops_deploy) lines; an ed25519 key is 8)"
+            exit 1
+          fi
+          echo "key parsed: $(ssh-keygen -lf /tmp/derived.pub)"
           # Pin github.com's host key rather than accept-new: a first-contact
           # TOFU accept on a fresh runner trusts whatever answers, every time.
           ssh-keyscan -t ed25519 github.com > ~/.ssh/known_hosts 2>/dev/null
