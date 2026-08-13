@@ -564,65 +564,71 @@ func handleSnapshot(config CLIConfig, args []string) {
 		fmt.Println("Ingesting running Kubernetes namespaces dynamically...")
 		podsJSON, err := fetchPodsJSON(*namespace)
 		if err != nil {
-			fmt.Printf("Failed to query Kubernetes pods: %v. Falling back to mock data.\n", err)
-			mockDigest := "3eb45c05c6d3df3634208a05c6d3df3634208a05c6d3df3634208a05c6d3df36"
-			reportedArtifacts = append(reportedArtifacts, map[string]string{
-				"sha256":       mockDigest,
-				"service_name": "kubernetes-pod-auth",
-			})
-		} else {
-			var podList struct {
-				Items []struct {
-					Metadata struct {
-						Name      string `json:"name"`
-						Namespace string `json:"namespace"`
-					} `json:"metadata"`
-					Status struct {
-						ContainerStatuses []struct {
-							Name    string `json:"name"`
-							Image   string `json:"image"`
-							ImageID string `json:"imageID"`
-						} `json:"containerStatuses"`
-					} `json:"status"`
-				} `json:"items"`
-			}
-			if err := json.Unmarshal(podsJSON, &podList); err == nil {
-				for _, pod := range podList.Items {
-					ns := pod.Metadata.Namespace
-					// Filter out system namespaces
-					if ns == "kube-system" || ns == "kube-public" || ns == "kube-node-lease" || ns == "ingress-nginx" || ns == "cert-manager" || ns == "external-secrets" || ns == "argocd" || ns == "gitlab" {
-						continue
-					}
-					// Filter by namespace if requested
-					if *namespace != "" && ns != *namespace {
-						continue
-					}
-					for _, container := range pod.Status.ContainerStatuses {
-						digest := ""
-						parts := strings.Split(container.ImageID, "@sha256:")
-						if len(parts) == 2 {
-							digest = parts[1]
-						} else {
-							digest = container.ImageID
-						}
-						// Strip sha256: prefix if present
-						digest = strings.TrimPrefix(digest, "sha256:")
-						if digest == "" {
-							digest = container.Image
-						}
-						if len(digest) > 64 {
-							digest = digest[:64]
-						}
-
-						reportedArtifacts = append(reportedArtifacts, map[string]string{
-							"sha256":       digest,
-							"service_name": container.Name,
-						})
-					}
+			// Fail, do not invent. This used to fall back to a hard-coded
+			// "mock" digest and submit it as a runtime snapshot — a claim that
+			// a specific image was running, indistinguishable downstream from
+			// an observed one. Being unable to observe the cluster is not
+			// evidence that something is running; it is the absence of
+			// evidence, and a compliance tool has to say so. The docker branch
+			// above already exits here (#406).
+			fmt.Printf("Failed to query Kubernetes pods: %v\n", err)
+			os.Exit(1)
+		}
+		var podList struct {
+			Items []struct {
+				Metadata struct {
+					Name      string `json:"name"`
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
+				Status struct {
+					ContainerStatuses []struct {
+						Name    string `json:"name"`
+						Image   string `json:"image"`
+						ImageID string `json:"imageID"`
+					} `json:"containerStatuses"`
+				} `json:"status"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal(podsJSON, &podList); err == nil {
+			for _, pod := range podList.Items {
+				ns := pod.Metadata.Namespace
+				// Filter out system namespaces
+				if ns == "kube-system" || ns == "kube-public" || ns == "kube-node-lease" || ns == "ingress-nginx" || ns == "cert-manager" || ns == "external-secrets" || ns == "argocd" || ns == "gitlab" {
+					continue
 				}
-			} else {
-				fmt.Printf("Failed to parse pod list json: %v\n", err)
+				// Filter by namespace if requested
+				if *namespace != "" && ns != *namespace {
+					continue
+				}
+				for _, container := range pod.Status.ContainerStatuses {
+					digest := ""
+					parts := strings.Split(container.ImageID, "@sha256:")
+					if len(parts) == 2 {
+						digest = parts[1]
+					} else {
+						digest = container.ImageID
+					}
+					// Strip sha256: prefix if present
+					digest = strings.TrimPrefix(digest, "sha256:")
+					if digest == "" {
+						digest = container.Image
+					}
+					if len(digest) > 64 {
+						digest = digest[:64]
+					}
+
+					reportedArtifacts = append(reportedArtifacts, map[string]string{
+						"sha256":       digest,
+						"service_name": container.Name,
+					})
+				}
 			}
+		} else {
+			// Same reasoning as the query failure above: an unparseable pod
+			// list left reportedArtifacts empty and the snapshot was still
+			// submitted, asserting that nothing was running (#406).
+			fmt.Printf("Failed to parse pod list json: %v\n", err)
+			os.Exit(1)
 		}
 	}
 
