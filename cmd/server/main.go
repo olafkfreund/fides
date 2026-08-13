@@ -44,6 +44,22 @@ func main() {
 	}
 	defer db.Close()
 
+	// Retire pooled connections before anything upstream does. Go's default
+	// lifetime is unlimited, so a conn can idle for hours until RDS or a NAT
+	// gateway drops it, and the pool then hands out the corpse. Unpinned
+	// *sql.DB queries retry onto a fresh conn and hide that; the RLS path
+	// (db.ScopedConn) pins a *sql.Conn, where one driver.ErrBadConn closes the
+	// pinned conn outright — every later query on it then fails ErrConnDone.
+	//
+	// NOT a proven fix for the production ErrConnDone reports (see the issue):
+	// those logs carry no "bad connection" line, so the conn was closed by
+	// something other than a network reap. This is hardening on a real gap,
+	// not a diagnosis. Do not close that issue on the strength of this.
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(5)
+
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to establish database connection ping: %v", err)
 	}
