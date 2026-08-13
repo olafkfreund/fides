@@ -127,16 +127,26 @@ spec:
           value: "1"
         ports:
         - containerPort: 11434
-        # Nodes are m6i.xlarge (4 vCPU / 16Gi, 3920m allocatable). CPU inference
-        # is memory-bandwidth bound — every token reads the whole weight set —
-        # so the model choice above matters more than the CPU count here. This
-        # reserves enough to hold qwen2.5:3b-q4 (~2Gi resident) plus context and
-        # to get real parallelism across the 4 vCPU. Measured on this hardware:
-        # ~12.9 tok/s, versus gemma4:e2b (5.1B, 6.7Gi resident) which could not
-        # emit a single token inside two minutes. See #408.
+        # Nodes are m6i.xlarge (4 vCPU / 16Gi, 3920m allocatable) and the
+        # cluster already sits at 84-96% CPU *requested* — it runs on bursting,
+        # with limits at 5-6x allocatable. So the CPU request is a small
+        # scheduling floor, not the working size: a 2-core request cannot be
+        # placed on any node and leaves the pod Pending. The limit is what
+        # actually lets inference use the cores, and audits are bursty (a few
+        # per hour), so reserving dedicated cores would waste them anyway.
+        #
+        # Memory is the one that must be reserved: the model has to stay
+        # resident. qwen2.5:3b-q4 is ~2Gi plus context; nodes are only 27-37%
+        # memory-requested, so 3Gi places comfortably.
+        #
+        # CPU inference is memory-bandwidth bound — every token reads the whole
+        # weight set — so the model choice above matters far more than the core
+        # count. Measured on this hardware: ~12.9 tok/s, versus gemma4:e2b
+        # (5.1B, 6.7Gi resident) which could not emit a single token inside two
+        # minutes. See #408.
         resources:
           requests:
-            cpu: "2"
+            cpu: 400m
             memory: 3Gi
           limits:
             cpu: "3500m"
