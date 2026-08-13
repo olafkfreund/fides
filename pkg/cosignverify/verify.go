@@ -4,7 +4,7 @@
 // produces a normalized Verdict suitable for recording as a
 // `cosign-verification` Fides attestation and for gating a deploy on.
 //
-// TODO(#218): a bare sha256 digest does not identify an OCI repository, so
+// TODO(#407): a bare sha256 digest does not identify an OCI repository, so
 // SigstoreVerifier verifies a pre-fetched Sigstore bundle (Options.BundlePath,
 // e.g. produced by `cosign verify --bundle out.json` or `cosign
 // download signature`) rather than resolving+fetching the signature directly
