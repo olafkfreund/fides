@@ -7,9 +7,11 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
+	"fides/pkg/db"
 	"fides/pkg/events"
 	"fides/pkg/ledger"
 )
@@ -18,6 +20,10 @@ import (
 // name recorded on a trail proving committer, approver(s), and deployer are
 // distinct identities (PCI-DSS 4.0 req 6.3 / SOX ITGC change management).
 const SegregationOfDutiesAttestationType = "segregation-of-duties"
+
+// sodWriteTimeout bounds the detached attestation write, so a request that the
+// client abandoned cannot leave a goroutine parked on the database forever.
+const sodWriteTimeout = 10 * time.Second
 
 // sodAttestation is the payload recorded as the segregation-of-duties
 // attestation. Shaped so ServiceNow (or any downstream consumer) can read the
@@ -202,6 +208,31 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 // (change-gate, approve) where the attestation is a valuable side-effect but
 // must never fail the primary request the caller is servicing.
 func (s *Server) emitSegregationOfDutiesAttestation(ctx context.Context, orgID, trailID uuid.UUID) *sodAttestation {
+	// Detach from the request. When an HTTP client hangs up mid-request its
+	// context is cancelled, and on the RLS path that also poisons the pinned
+	// connection: lib/pq marks the conn bad from watchCancel, database/sql then
+	// closes the *sql.Conn, and every query after that returns sql.ErrConnDone.
+	// This emitter runs last in both change-gate and approve, so it was where
+	// that surfaced — and being best-effort it logged and returned nil, losing
+	// the attestation silently. Compliance evidence must not depend on the
+	// client still waiting. Reproduced by TestIntegrationScopedConnPoisonedByCancel
+	// in pkg/db. See #405.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sodWriteTimeout)
+	defer cancel()
+
+	// WithoutCancel keeps context values, including the request's pinned (now
+	// possibly closed) querier — so under RLS take a fresh tenant-scoped
+	// connection rather than inherit the poisoned one.
+	if s.DB != nil && orgID != uuid.Nil && os.Getenv("FIDES_RLS_ENABLED") == "true" {
+		conn, release, err := db.ScopedConn(ctx, s.DB, orgID.String())
+		if err != nil {
+			log.Printf("segregation-of-duties attestation: trail %s: scoped conn: %v", trailID, err)
+			return nil
+		}
+		defer release()
+		ctx = db.WithQuerier(ctx, conn)
+	}
+
 	result, err := s.recordSegregationOfDutiesAttestation(ctx, orgID, trailID)
 	if err != nil {
 		log.Printf("segregation-of-duties attestation: trail %s: %v", trailID, err)
