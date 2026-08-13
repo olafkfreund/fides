@@ -90,26 +90,17 @@ jobs:
       # go-build.yml -- two gates that disagree about what "clean" means are
       # worse than one.
       #
-      # `--skip-files usr/local/bin/kubectl` is the one exception, and it applies
-      # only to the reporter image (the path does not exist in fides-server).
-      # kubectl is a vendored third-party binary whose CVEs live in ITS vendored
-      # deps; no released kubectl is clean (see the measurements in
-      # Dockerfile.reporter) and we cannot patch them without rebuilding it.
+      # NO EXCEPTIONS. This gate used to pass `--skip-files usr/local/bin/kubectl`
+      # on the reporter image, and both images used to sit on the EOL alpine:3.18,
+      # whose OS-layer CVEs can never have a FixedVersion and so were silently
+      # dropped by --ignore-unfixed. Both holes are closed: kubectl is gone from
+      # the image (#398, the CLI reads the API server directly) and the base is
+      # alpine 3.23 (#399, still receiving updates). Every layer of both images is
+      # now scanned at full strength and measures clean.
       #
-      # Skipping by PATH rather than listing the ~23 CVE IDs in a .trivyignore
-      # is deliberate: an ID list silently rots, and every new upstream CVE would
-      # break main until somebody appended to it. The step after this one prints
-      # what was skipped on every run, so the exception is visible rather than
-      # buried -- a gate that quietly excludes something reads as "clean" when it
-      # is not.
-      #
-      # KNOWN BLIND SPOT: both images sit on alpine:3.18, which is EOL ("no
-      # longer supported by the distribution" -- Trivy warns on every run). No
-      # further alpine 3.18 security updates will ever ship, so an OS-layer CVE
-      # there will never have a FixedVersion and `--ignore-unfixed` will drop it.
-      # The OS layer of this gate is therefore effectively blind until the base
-      # is bumped; the Go binaries, which is where our code lives, are covered.
-      # Tracked separately -- do not read a green here as "the base image is fine".
+      # Keep it that way. If a future finding is genuinely unfixable, prefer
+      # removing the offending component over adding a skip -- a gate that
+      # quietly excludes something reads as "clean" when it is not.
       # ----------------------------------------------------------------------
       - name: Install Trivy
         # Pinned by commit, like gosec: an unpinned scanner changes with no
@@ -121,21 +112,25 @@ jobs:
       - name: Trivy scan ${{ matrix.image }} (fixable HIGH/CRITICAL)
         run: |
           trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-            --skip-files usr/local/bin/kubectl \
             --exit-code 1 "${IMAGE}@${{ steps.build.outputs.digest }}"
 
-      # Non-blocking, and deliberately not silent: report exactly what the gate
-      # above chose not to fail on, so the excepted count is on the run summary
-      # every time rather than living only in a comment.
-      - name: Report vendored kubectl CVEs (visibility, non-blocking)
-        if: matrix.image == 'fides-k8s-reporter'
+      # The gate above drops unfixable findings, which is only safe while the
+      # base still receives updates -- on an EOL release nothing is ever
+      # "fixable" and a green scan means nothing (#399). Fail loudly if the base
+      # goes EOL again rather than letting the gate quietly degrade to a no-op.
+      - name: Fail if the base image is EOL
         run: |
           set -euo pipefail
-          n=$(trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-                --quiet --format json "${IMAGE}@${{ steps.build.outputs.digest }}" \
-              | python3 -c 'import json,sys; d=json.load(sys.stdin); print(sum(len(r.get("Vulnerabilities") or []) for r in d.get("Results",[])))')
-          echo "::notice::vendored kubectl carries ${n} fixable HIGH/CRITICAL, excepted by path."
-          echo "::notice::No released kubectl is clean; the fix is to drop it for client-go."
+          # Trivy reports EOL as a WARN on stderr, and --quiet SUPPRESSES it, so
+          # this must run without --quiet. `2>&1 >/dev/null` keeps only stderr.
+          if trivy image --scanners vuln --severity HIGH,CRITICAL \
+               "${IMAGE}@${{ steps.build.outputs.digest }}" 2>&1 >/dev/null \
+             | grep -qi "no longer supported by the distribution"; then
+            echo "::error::${{ matrix.image }} is built on an EOL base; --ignore-unfixed"
+            echo "::error::makes the OS layer of the CVE gate blind. Bump the base (#399)."
+            exit 1
+          fi
+          echo "base image is a supported release; OS layer is genuinely covered."
 
       # ----------------------------------------------------------------------
       # #390 -- cosign keyless signing.

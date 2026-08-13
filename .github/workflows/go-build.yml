@@ -163,6 +163,27 @@ jobs:
           trivy image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
             --exit-code 1 "$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
 
+      # --ignore-unfixed above is only safe while the base still receives
+      # updates: on an EOL release nothing is ever "fixable", so the OS layer
+      # silently stops being gated and a green scan means nothing (#399).
+      # Mirrors the identical check in publish-ghcr.yml.
+      - name: Fail if the base image is EOL
+        env:
+          ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com
+          ECR_REPOSITORY: fides-server
+        run: |
+          set -euo pipefail
+          # Trivy reports EOL as a WARN on stderr, and --quiet SUPPRESSES it, so
+          # this must run without --quiet. `2>&1 >/dev/null` keeps only stderr.
+          if trivy image --scanners vuln --severity HIGH,CRITICAL \
+               "$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" 2>&1 >/dev/null \
+             | grep -qi "no longer supported by the distribution"; then
+            echo "::error::built on an EOL base; --ignore-unfixed makes the OS"
+            echo "::error::layer of the CVE gate blind. Bump the base (#399)."
+            exit 1
+          fi
+          echo "base image is a supported release; OS layer is genuinely covered."
+
       - name: Push image to Amazon ECR
         env:
           ECR_REGISTRY: 796973489124.dkr.ecr.eu-west-2.amazonaws.com

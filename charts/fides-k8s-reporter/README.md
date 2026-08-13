@@ -13,9 +13,9 @@ environment snapshots, drift re-evaluation).
 
 ```
 CronJob ──runs──▶ fides snapshot k8s --env <id> [--namespace <ns>]
-                     └─ kubectl get pods (-A | -n <ns>)  ──▶  POST /api/v1/snapshots
-                                                              (Fides diffs vs the
-                                                               previous snapshot)
+                     └─ GET /api/v1/pods from the API server   ──▶  POST /api/v1/snapshots
+                        (in-cluster ServiceAccount token)           (Fides diffs vs the
+                                                                     previous snapshot)
 ```
 
 ## Prerequisites
@@ -25,7 +25,8 @@ CronJob ──runs──▶ fides snapshot k8s --env <id> [--namespace <ns>]
    ```bash
    fides env create --name my-cluster --type k8s   # or via the portal
    ```
-3. The **reporter image** (`fides` CLI + `kubectl`), built from `Dockerfile.reporter`:
+3. The **reporter image** (just the `fides` CLI — it reads the API server
+   directly, so no `kubectl` is baked in), built from `Dockerfile.reporter`:
    ```bash
    docker build -f Dockerfile.reporter -t ghcr.io/<you>/fides-k8s-reporter:1.0.0 .
    docker push ghcr.io/<you>/fides-k8s-reporter:1.0.0

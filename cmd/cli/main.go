@@ -557,19 +557,12 @@ func handleSnapshot(config CLIConfig, args []string) {
 			os.Exit(0)
 		}
 	} else if runtimeType == "k8s" {
-		// Least privilege: with --namespace, query only that namespace
-		// (`kubectl get pods -n <ns>`, needs a namespaced Role) instead of the
-		// cluster-wide `-A` (which needs a ClusterRole). The k8s-reporter chart
-		// (charts/fides-k8s-reporter) sets --namespace for its namespaced scope.
-		k8sArgs := []string{"get", "pods", "-A", "-o", "json"}
-		if *namespace != "" {
-			k8sArgs = []string{"get", "pods", "-n", *namespace, "-o", "json"}
-		}
+		// Least privilege: with --namespace, query only that namespace (needs a
+		// namespaced Role) instead of the cluster-wide list (which needs a
+		// ClusterRole). The k8s-reporter chart (charts/fides-k8s-reporter) sets
+		// --namespace for its namespaced scope.
 		fmt.Println("Ingesting running Kubernetes namespaces dynamically...")
-		cmdK8s := exec.Command("kubectl", k8sArgs...)
-		var out bytes.Buffer
-		cmdK8s.Stdout = &out
-		err := cmdK8s.Run()
+		podsJSON, err := fetchPodsJSON(*namespace)
 		if err != nil {
 			fmt.Printf("Failed to query Kubernetes pods: %v. Falling back to mock data.\n", err)
 			mockDigest := "3eb45c05c6d3df3634208a05c6d3df3634208a05c6d3df3634208a05c6d3df36"
@@ -593,7 +586,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 					} `json:"status"`
 				} `json:"items"`
 			}
-			if err := json.Unmarshal(out.Bytes(), &podList); err == nil {
+			if err := json.Unmarshal(podsJSON, &podList); err == nil {
 				for _, pod := range podList.Items {
 					ns := pod.Metadata.Namespace
 					// Filter out system namespaces
@@ -628,7 +621,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 					}
 				}
 			} else {
-				fmt.Printf("Failed to parse kubectl json: %v\n", err)
+				fmt.Printf("Failed to parse pod list json: %v\n", err)
 			}
 		}
 	}

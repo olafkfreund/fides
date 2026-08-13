@@ -2,8 +2,8 @@
 # reports running workloads to a Fides server.
 
 image:
-  # Build with `docker build -f Dockerfile.reporter -t <repo>:<tag> .` (fides CLI
-  # + kubectl). Publish to a registry your cluster can pull, or k3d image import.
+  # Build with `docker build -f Dockerfile.reporter -t <repo>:<tag> .` (the fides
+  # CLI alone). Publish to a registry your cluster can pull, or k3d image import.
   repository: ghcr.io/olafkfreund/fides-k8s-reporter
   pullPolicy: IfNotPresent
   tag: "" # defaults to the chart appVersion
@@ -51,7 +51,7 @@ resources:
     memory: "256Mi"
     cpu: "100m"
 
-# Hardened by default; kubectl + fides need no elevated privileges.
+# Hardened by default; fides needs no elevated privileges.
 securityContext:
   allowPrivilegeEscalation: false
   runAsNonRoot: true
