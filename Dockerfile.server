@@ -46,7 +46,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp ./cmd/mcp
 
 # Stage 2: Minimal runtime image
-FROM alpine:3.18
+#
+# alpine 3.23, NOT 3.18. 3.18 went EOL, so no further security updates ship for
+# it: an OS-layer CVE there would never get a FixedVersion, and the Trivy gates
+# run with --ignore-unfixed, so they would silently drop it. A green scan on an
+# EOL base means "nothing fixable", not "nothing wrong" (#399).
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates tzdata
 

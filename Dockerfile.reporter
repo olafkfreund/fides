@@ -10,35 +10,29 @@ RUN apk add --no-cache git ca-certificates
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o fides ./cmd/cli
 
-FROM alpine:3.18
+# alpine 3.23, NOT 3.18. 3.18 went EOL, so no further security updates ship for
+# it: an OS-layer CVE there would never get a FixedVersion, and the Trivy gates
+# run with --ignore-unfixed, so they would silently drop it. A green scan on an
+# EOL base means "nothing fixable", not "nothing wrong" (#399).
+FROM alpine:3.23
 RUN apk add --no-cache ca-certificates
-# kubectl, pinned to the cluster's version (adjust via --build-arg).
+# NO kubectl. It used to be baked in here for exactly one call
+# (`kubectl get pods -o json`); the CLI now reads the API server directly with
+# net/http and the mounted ServiceAccount token (cmd/cli/k8s.go), so a ~50MB
+# third-party binary is gone from the image (#398).
 #
-# v1.31.14 is the EXACT server version of the sarc-aws EKS cluster this reports
-# on (`v1.31.14-eks-8f14419`), so client/server skew is nil. Bumped from
-# v1.31.5, which was two years of patches behind the API server it talked to.
+# That binary carried 24 fixable HIGH/CRITICAL CVEs in ITS OWN vendored deps
+# (Go stdlib, x/net, x/oauth2, x/text, spdystream) which we could not patch
+# without rebuilding kubectl, and no released version was clean -- measured
+# 2026-08-12: v1.31.14 -> 24, v1.32.13 -> 21, v1.33.13 -> 7, v1.34.10 /
+# v1.35.7 / v1.36.3 -> 6. It was excepted by path from both Trivy gates. That
+# exception is now DELETED, not widened: the gates run at full strength with no
+# skips on either image.
 #
-# Do NOT bump the minor to chase a cleaner CVE scan. Measured 2026-08-12 against
-# the built image, fixable HIGH/CRITICAL: v1.31.14 -> 24, v1.32.13 -> 21,
-# v1.33.13 -> 7, v1.34.10 / v1.35.7 / v1.36.3 (latest stable) -> 6. There is no
-# clean kubectl: every one of those findings is in kubectl's own VENDORED deps
-# (Go stdlib, x/net, x/oauth2, x/text, spdystream), which we cannot patch
-# without rebuilding kubectl. Trading a supported skew for 6-instead-of-24
-# would optimise the scanner's number while moving kubectl three minors past
-# the cluster it queries -- the metric, not the security.
-#
-# The Trivy gates therefore skip this one binary by path and report its count
-# separately rather than hiding it. Everything we actually build is gated at
-# full strength; our own binaries scan clean. The real fix is to drop kubectl
-# entirely -- it is used for exactly one call, `kubectl get pods -o json` (see
-# cmd/cli/main.go) -- and read the API with client-go, whose x/net WE would own
-# and could patch. Tracked separately.
-ARG KUBECTL_VERSION=v1.31.14
-ARG TARGETARCH=amd64
-RUN apk add --no-cache --virtual .dl curl \
- && curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
- && chmod +x /usr/local/bin/kubectl \
- && apk del .dl
+# client-go was the obvious alternative and was rejected: it pulls ~100 modules
+# including its own golang.org/x/net, which relocates the CVE surface instead of
+# removing it. Off-cluster (a laptop) the CLI still shells out to kubectl for
+# its kubeconfig -- that path just is not shipped in this image.
 COPY --from=builder /app/fides /usr/local/bin/fides
 USER 65532:65532
 ENTRYPOINT ["fides"]

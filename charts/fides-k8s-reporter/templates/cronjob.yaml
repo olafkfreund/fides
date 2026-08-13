@@ -62,10 +62,6 @@ spec:
                     secretKeyRef:
                       name: {{ .Values.fides.apiToken.secretName | quote }}
                       key: {{ .Values.fides.apiToken.secretKey | quote }}
-                # kubectl writes its discovery cache under $HOME; keep it on the
-                # writable emptyDir so readOnlyRootFilesystem can stay true.
-                - name: HOME
-                  value: /tmp
                 {{- with .Values.extraEnvVars }}
                 {{- toYaml . | nindent 16 }}
                 {{- end }}
