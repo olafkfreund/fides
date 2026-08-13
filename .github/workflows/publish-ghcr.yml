@@ -51,8 +51,15 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
       # secrets context is not allowed in a step-level `if:`; expose it here so
-      # the bump step can gate on env.GITOPS_PAT instead.
-      GITOPS_PAT: ${{ secrets.GITOPS_PAT }}
+      # the bump step can gate on env.GITOPS_DEPLOY_KEY instead.
+      #
+      # A DEPLOY KEY, not a PAT (#395). A PAT carries its owner's reach: the
+      # classic token available here has 21 scopes including admin:org,
+      # delete_repo and workflow -- and `workflow` alone lets anything holding
+      # it rewrite this file. A deploy key is bound to ONE repository and
+      # grants nothing anywhere else, which is the entire authority this job
+      # needs: push one line to factory-gitops.
+      GITOPS_DEPLOY_KEY: ${{ secrets.GITOPS_DEPLOY_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -187,8 +194,40 @@ jobs:
           fi
           echo "tag ${{ github.sha }} == built digest ${built}"
 
+      # The key never reaches the filesystem outside this job's runner, and it
+      # is written 0600 to a path only this step and the next know. `ssh-agent`
+      # was avoided deliberately: it leaves the key live for every later step
+      # in the job, whereas GIT_SSH_COMMAND scopes it to the git calls that
+      # need it.
+      - name: Load the factory-gitops deploy key
+        if: matrix.image == 'fides-server' && env.GITOPS_DEPLOY_KEY != ''
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${GITOPS_DEPLOY_KEY}" > ~/.ssh/gitops_deploy
+          chmod 600 ~/.ssh/gitops_deploy
+          # Pin github.com's host key rather than accept-new: a first-contact
+          # TOFU accept on a fresh runner trusts whatever answers, every time.
+          ssh-keyscan -t ed25519 github.com > ~/.ssh/known_hosts 2>/dev/null
+          # `git@github.com` always exits 1 (it refuses a shell), so the exit
+          # code says nothing -- the banner is the only signal. Checked here so
+          # a bad key fails with that message instead of surfacing as a
+          # confusing clone error five lines later.
+          if ssh -i ~/.ssh/gitops_deploy -o IdentitiesOnly=yes -T git@github.com 2>&1 \
+               | grep -q "successfully authenticated"; then
+            echo "deploy key authenticated to github"
+          else
+            echo "::error::the GITOPS_DEPLOY_KEY secret did not authenticate to github."
+            echo "::error::Check it is the PRIVATE half of a write deploy key on ${GITOPS_REPO}."
+            exit 1
+          fi
+
       - name: Bump fides-server pin in factory-gitops
-        if: matrix.image == 'fides-server' && env.GITOPS_PAT != ''
+        if: matrix.image == 'fides-server' && env.GITOPS_DEPLOY_KEY != ''
+        env:
+          # Scoped to the git calls below. IdentitiesOnly stops ssh offering any
+          # other key the runner might have and getting rejected first.
+          GIT_SSH_COMMAND: "ssh -i ~/.ssh/gitops_deploy -o IdentitiesOnly=yes"
         run: |
           set -euo pipefail
           SHA="${{ github.sha }}"
@@ -200,7 +239,7 @@ jobs:
           pushed=""
           for attempt in 1 2 3 4 5; do
             rm -rf gitops
-            git clone --quiet --depth 1 "https://x:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git" gitops
+            git clone --quiet --depth 1 "git@github.com:${GITOPS_REPO}.git" gitops
             cd gitops
             sed -i -E "s|(image: ${IMAGE}):.*|\1:${SHA}|" "${GITOPS_FILE}"
             git config user.name "github-actions[bot]"
@@ -239,7 +278,7 @@ jobs:
           # Re-read from the remote rather than trusting the push.
           cd "$GITHUB_WORKSPACE"
           rm -rf gitops-verify
-          git clone --quiet --depth 1 "https://x:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git" gitops-verify
+          git clone --quiet --depth 1 "git@github.com:${GITOPS_REPO}.git" gitops-verify
           if grep -q "image: ${IMAGE}:${SHA}" "gitops-verify/${GITOPS_FILE}"; then
             echo "verified: ${GITOPS_REPO} pins fides-server at ${SHA}"
           else
@@ -248,10 +287,14 @@ jobs:
           fi
 
       - name: Note if CD is not wired
-        if: matrix.image == 'fides-server' && env.GITOPS_PAT == ''
+        if: matrix.image == 'fides-server' && env.GITOPS_DEPLOY_KEY == ''
         run: |
-          echo "::notice::Image pushed and signed, but GITOPS_PAT is unset so nothing"
-          echo "::notice::moved the cluster pin -- this merge deploys nowhere (#389)."
-          echo "::notice::Fix once: gh secret set GITOPS_PAT --repo ${{ github.repository }}"
-          echo "::notice::(fine-grained PAT, Contents:write on ${GITOPS_REPO})"
+          echo "::notice::Image pushed and signed, but GITOPS_DEPLOY_KEY is unset so"
+          echo "::notice::nothing moved the cluster pin -- this merge deploys nowhere (#389)."
+          echo "::notice::Fix: add a WRITE deploy key to ${GITOPS_REPO} and store its"
+          echo "::notice::private half as GITOPS_DEPLOY_KEY on ${{ github.repository }}:"
+          echo "::notice::  ssh-keygen -t ed25519 -f k -N '' -C 'fides CD'"
+          echo "::notice::  gh api -X POST repos/${GITOPS_REPO}/keys -f title='fides CD' \\"
+          echo "::notice::    -f key=\"\$(cat k.pub)\" -F read_only=false"
+          echo "::notice::  gh secret set GITOPS_DEPLOY_KEY --repo ${{ github.repository }} < k"
           echo "::notice::Until then, hand-edit ${GITOPS_FILE} to :${{ github.sha }}"
