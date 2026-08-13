@@ -1,6 +1,35 @@
 # NOTE: the `fides` namespace is managed separately (cluster-scoped). The CI
 # deploy role has namespace-scoped EKS access, so this manifest only contains
 # namespaced resources. Create the namespace once: kubectl create namespace fides
+#
+# CLUSTER DEPENDENCY — EKS node auto repair
+#
+# Both fides-db and fides-ollama hold ReadWriteOnce EBS volumes, so a single
+# node failure takes Fides down until that node is genuinely gone: the volume
+# cannot attach elsewhere while a dead node still holds it.
+#
+# On 2026-08-13 a node went NotReady while its EC2 instance stayed alive
+# (kubelet stopped posting status). Nothing detected it, so Postgres kept the
+# volume and Fides was down ~30 minutes until the instance was terminated by
+# hand. Note the instance being ALIVE is what made it dangerous: force-deleting
+# the pod would have risked two Postgres processes on one volume.
+#
+# Fixed by enabling EKS node auto repair on the managed node group, which
+# detects and replaces nodes in that state:
+#
+#   aws eks update-nodegroup-config --cluster-name sarc-aws \
+#     --nodegroup-name <ng> --node-repair-config enabled=true --region eu-west-2
+#
+# That was applied via the CLI, but the node group is tagged
+# ManagedBy=terraform (Stack=infra/aws, shared), so it is DRIFT and the next
+# apply reverts it. It needs to land in that stack:
+#
+#   node_repair_config { enabled = true }
+#
+# If a node ever fails while auto repair is off, the recovery is: terminate the
+# instance, then check for a VolumeAttachment still naming the dead node
+# (`kubectl get volumeattachments | grep <node>`) and delete it if the volume
+# shows `available` in EC2 but the pod is still stuck on Multi-Attach.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
