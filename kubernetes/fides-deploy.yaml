@@ -106,8 +106,8 @@ spec:
             until ollama list >/dev/null 2>&1; do
               sleep 1
             done
-            echo "Ollama started. Pulling gemma4:e2b model..."
-            ollama pull gemma4:e2b
+            echo "Ollama started. Pulling qwen2.5:3b-instruct-q4_K_M model..."
+            ollama pull qwen2.5:3b-instruct-q4_K_M
             echo "Model pulled successfully."
             wait
         env:
@@ -115,8 +115,32 @@ spec:
           value: ""
         - name: OLLAMA_CPU_ONLY
           value: "1"
+        # Keep the model resident. A cold load costs ~7s, and the audit path is
+        # bursty, so without this most calls pay it.
+        - name: OLLAMA_KEEP_ALIVE
+          value: "-1"
+        # One model, one request at a time: splitting 4 vCPU across parallel
+        # requests makes every one of them slow rather than queueing them.
+        - name: OLLAMA_MAX_LOADED_MODELS
+          value: "1"
+        - name: OLLAMA_NUM_PARALLEL
+          value: "1"
         ports:
         - containerPort: 11434
+        # Nodes are m6i.xlarge (4 vCPU / 16Gi, 3920m allocatable). CPU inference
+        # is memory-bandwidth bound — every token reads the whole weight set —
+        # so the model choice above matters more than the CPU count here. This
+        # reserves enough to hold qwen2.5:3b-q4 (~2Gi resident) plus context and
+        # to get real parallelism across the 4 vCPU. Measured on this hardware:
+        # ~12.9 tok/s, versus gemma4:e2b (5.1B, 6.7Gi resident) which could not
+        # emit a single token inside two minutes. See #408.
+        resources:
+          requests:
+            cpu: "2"
+            memory: 3Gi
+          limits:
+            cpu: "3500m"
+            memory: 6Gi
         volumeMounts:
         - name: ollama-data
           mountPath: /root/.ollama
@@ -220,8 +244,9 @@ spec:
           value: ollama
         - name: AI_OLLAMA_ENDPOINT
           value: http://fides-ollama:11434
+        # Must match the model pulled by the fides-ollama deployment above.
         - name: AI_MODEL
-          value: gemma4:e2b
+          value: qwen2.5:3b-instruct-q4_K_M
         - name: STORAGE_DRIVER
           value: s3
         - name: AWS_S3_BUCKET
