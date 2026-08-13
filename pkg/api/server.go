@@ -1401,6 +1401,35 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256).Scan(&dbSHA, &dbTrailID)
 
 		if err == sql.ErrNoRows {
+			// Not registered — but it may be an APPROVED third-party image.
+			// environment_allowlist records an explicit, attributed exception
+			// (approved_by + reason), which is exactly the compliance concept
+			// of an accepted risk. Until this check existed, the allowlist had
+			// no effect on the verdict at all: approving an image left it
+			// counted as a shadow change and the environment non-compliant
+			// forever, so the only way to a green verdict was to have no
+			// third-party images at all. Every real environment has some —
+			// this one runs postgres.
+			var approved bool
+			if aerr := tx.QueryRowContext(r.Context(),
+				`SELECT EXISTS(SELECT 1 FROM environment_allowlist WHERE environment_id = $1 AND artifact_sha256 = $2)`,
+				envID, a.SHA256).Scan(&approved); aerr != nil {
+				internalError(w, aerr)
+				return
+			}
+			if approved {
+				// Recorded as running and approved. Deliberately NOT added to
+				// shadows: an approved image is not an unexplained one, and a
+				// list that reports it as such is the noise this replaced.
+				services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": false, "approved": true})
+				saID := uuid.New()
+				tx.ExecContext(r.Context(),
+					`INSERT INTO snapshot_artifacts (id, snapshot_id, artifact_sha256, service_name, runtime_digest, started_at)
+					 VALUES ($1, $2, NULL, $3, $4, $5)`,
+					saID, snapshotID, a.ServiceName, a.SHA256, time.Now())
+				continue
+			}
+
 			// Shadow deployment: digest is running but not registered in database
 			shadows = append(shadows, fmt.Sprintf("service %s running unregistered digest %s", a.ServiceName, a.SHA256))
 			services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": false})
