@@ -19,6 +19,7 @@ Gate deploys on `2`. Applies to `assert`, `verify-image`, `change-gate`,
 non-compliance — previously `1`.)
 
 ## Pipeline (build/CI)
+
 | Command | Purpose |
 |---|---|
 | `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>] [--committed-at <RFC3339>]` | Begin a build trail (`--committer` records commit-metadata identity for segregation-of-duties; `--committed-at`, or auto-derived from `--commit` via git, records the commit timestamp for true code-to-prod DORA lead time) |
@@ -29,12 +30,13 @@ non-compliance — previously `1`.)
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab SLSA attestations for an artifact (records under type `slsa-provenance`) |
 | `fides attest authorship --trail <id> [--commit <ref>] [--reviewer <name>]` | Record a `code.authorship` attestation from the commit's git trailers (human vs AI-agent author, reviewer). AI-authored changes without a human reviewer are non-compliant, so a control requiring `code.authorship` holds the change gate |
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
-| `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure) |
+| `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--image <repo> \| --bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure). `--image ghcr.io/org/name` resolves the signature straight from the registry; `--bundle` uses a pre-fetched one (offline/air-gapped) |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken); also reports the external RFC3161 anchor status (`external_anchor`) if the trail was anchored |
 | `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (proves the head existed at a point in time, independently of the Fides DB). TSA URL from `--tsa` or the server's `FIDES_TSA_URL` |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
 
 ## Runtime snapshots
+
 | Command | Purpose |
 |---|---|
 | `fides snapshot docker --env <id> [--container <n>]` | Docker runtime |
@@ -43,11 +45,12 @@ non-compliance — previously `1`.)
 | `fides snapshot lambda --env <id>` | AWS Lambda (via aws CLI) |
 
 ## Environments, policies, approvals
+
 | Command | Purpose |
 |---|---|
 | `fides allowlist add\|list\|check\|remove --env <id> [--sha <hex> --reason <r>]` | Per-environment artifact approvals (`check` exits 2 if not approved) |
 | `fides flow list \| trails --flow <id> \| artifacts --flow <id>` | List flows and their trails / artifacts |
-| `fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor --source unleash|flagsmith|manual --flow <id>]` | Record a feature-flag change as a `flag.changed` attestation on a per-change trail (governs flag flips like deploys) |
+| `fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor --source unleash\|flagsmith\|manual --flow <id>]` | Record a feature-flag change as a `flag.changed` attestation on a per-change trail (governs flag flips like deploys) |
 | `fides flag list [--limit N]` | List recent feature-flag changes (flag_key, env, state, actor, compliant) for auditors |
 | `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
@@ -58,6 +61,7 @@ non-compliance — previously `1`.)
 | `fides remediation propose\|list\|get\|approve\|reject\|apply [...]` | Policy-driven auto-remediation: propose a fix, then approve/reject/apply it |
 
 ## Controls, frameworks & change gate
+
 | Command | Purpose |
 |---|---|
 | `fides control import --framework <SOC2\|ISO27001\|NIST-800-53\|PCI-DSS\|DORA\|PSD2\|SOX\|SLSA\|CRA>` | Adopt a regulated framework's control catalog (idempotent). `SLSA` is a supply-chain integrity catalog requiring `slsa-provenance`, `cosign-verification`, and `sbom-cyclonedx` evidence |
@@ -72,6 +76,7 @@ non-compliance — previously `1`.)
 | `fides approve --trail <id> [--reason <r>] [--role approver\|deployer]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans); refreshes the trail's `segregation-of-duties` attestation proving committer != approver != deployer |
 
 ## EU AI Act model provenance
+
 Reuses trails/attestations — no parallel engine. A model version is a `Trail`
 (register it under a `Flow` representing the model); training/eval/audit
 evidence and inference/decision events are `Attestation`s of type
@@ -88,6 +93,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides model timeline --trail <id>` | List a model version's evidence + inference/decision events |
 
 ## Search & metrics
+
 | Command | Purpose |
 |---|---|
 | `fides search artifacts [--sha --commit --name]` | Search artifacts |
@@ -102,6 +108,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides dashboard` | Interactive live TUI of server stats (checks, artifacts, coverage) — no flags |
 
 ## Integration & admin config
+
 | Command | Purpose |
 |---|---|
 | `fides servicenow config\|get\|change-check [...]` | ServiceNow connection + change gate |
@@ -115,6 +122,7 @@ retention (`FIDES_EVIDENCE_RETENTION_DAYS` / S3 Object Lock).
 | `fides user set-password --user <id> --password <pw>` | Set a user's local password |
 
 ## AI tools (MCP)
+
 Fides ships **`fides-mcp`**, a Model Context Protocol server so Claude Code, Cursor, and Claude Desktop can query your compliance data (flows, environments, artifacts, attestations, controls coverage, deployment frequency) **and read the Fides docs** in-conversation. See **[mcp-server.md](mcp-server.md)**.
 
 See [features.md](features.md) for worked examples of each.

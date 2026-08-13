@@ -44,6 +44,7 @@ func runVerifyImage(config CLIConfig, verifier cosignverify.Verifier, out io.Wri
 	issuer := cmd.String("issuer", "", "Expected OIDC issuer, e.g. https://token.actions.githubusercontent.com (optional)")
 	key := cmd.String("key", "", "Path to a PEM-encoded public key for key-based verification (skips keyless/OIDC)")
 	bundlePath := cmd.String("bundle", "", "Path to a Sigstore/cosign verification bundle (JSON) — see docs/cli-reference.md")
+	image := cmd.String("image", "", "OCI repository (no tag/digest), e.g. ghcr.io/org/name — resolves the signature from the registry so --bundle is not needed")
 	trail := cmd.String("trail", "", "Trail UUID to record the verdict on as a cosign-verification attestation (optional)")
 	name := cmd.String("name", "cosign-verification", "Attestation name")
 	if err := cmd.Parse(args); err != nil {
@@ -51,7 +52,7 @@ func runVerifyImage(config CLIConfig, verifier cosignverify.Verifier, out io.Wri
 	}
 
 	if *sha == "" || (*signer == "" && *key == "") {
-		fmt.Fprintln(out, "Usage: fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--bundle <path>] [--trail <id>]")
+		fmt.Fprintln(out, "Usage: fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--image <repo> | --bundle <path>] [--trail <id>]")
 		fmt.Fprintln(out, "Error: --sha256 is required, and either --signer (keyless) or --key (key-based) is required")
 		return exitError
 	}
@@ -62,6 +63,7 @@ func runVerifyImage(config CLIConfig, verifier cosignverify.Verifier, out io.Wri
 		Issuer:     *issuer,
 		KeyPath:    *key,
 		BundlePath: *bundlePath,
+		Image:      *image,
 	}
 
 	verdict, err := verifier.Verify(context.Background(), opts)

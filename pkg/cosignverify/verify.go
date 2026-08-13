@@ -4,14 +4,17 @@
 // produces a normalized Verdict suitable for recording as a
 // `cosign-verification` Fides attestation and for gating a deploy on.
 //
-// TODO(#407): a bare sha256 digest does not identify an OCI repository, so
-// SigstoreVerifier verifies a pre-fetched Sigstore bundle (Options.BundlePath,
-// e.g. produced by `cosign verify --bundle out.json` or `cosign
-// download signature`) rather than resolving+fetching the signature directly
-// from a registry. Wiring up registry auto-discovery (cosign's
-// `<repo>:sha256-<digest>.sig` tag convention, or the OCI 1.1 referrers API)
-// given an `--image <repo>` reference is tracked as follow-up work; Verify
-// returns ErrBundleRequired until then when BundlePath is empty.
+// Signatures are resolved one of two ways:
+//
+//   - Options.Image set: the signature is fetched from the registry using
+//     cosign's <repo>:sha256-<digest>.sig convention and converted to a
+//     Sigstore bundle. A bare digest cannot identify an OCI repository, which
+//     is why the repo has to be named rather than inferred (#407).
+//   - Options.BundlePath set: a pre-fetched bundle (e.g. from
+//     `cosign verify --bundle out.json`) is used as-is. Still the right choice
+//     offline or air-gapped.
+//
+// Verify returns ErrBundleRequired when neither is supplied.
 package cosignverify
 
 import (
@@ -21,7 +24,7 @@ import (
 
 // ErrBundleRequired is returned when no verification bundle is available and
 // registry auto-discovery has not been implemented yet (see package doc).
-var ErrBundleRequired = errors.New("cosignverify: no bundle available; pass --bundle <path> (OCI registry auto-discovery from a bare digest is not implemented yet, see TODO in pkg/cosignverify)")
+var ErrBundleRequired = errors.New("cosignverify: no signature source; pass --image <repo> to resolve it from the registry, or --bundle <path> to use a pre-fetched bundle")
 
 // Verdict is the normalized result of a single image verification. It is
 // recorded as the payload of a `cosign-verification` attestation.
@@ -52,9 +55,15 @@ type Options struct {
 	// KeyPath, when set, switches to key-based verification against a
 	// PEM-encoded public key instead of keyless/Fulcio identity verification.
 	KeyPath string
-	// BundlePath is the path to a Sigstore verification bundle (JSON). See
-	// the package doc TODO — required today.
+	// BundlePath is the path to a Sigstore verification bundle (JSON).
+	// Optional when Image is set.
 	BundlePath string
+	// Image is an OCI repository reference WITHOUT a tag or digest, e.g.
+	// "ghcr.io/org/name". When set and BundlePath is empty, the signature is
+	// resolved from the registry using cosign's <repo>:sha256-<digest>.sig
+	// convention. A bare digest cannot identify a repository, which is why
+	// this is needed rather than inferred.
+	Image string
 }
 
 // Validate checks that Options is internally consistent, independent of any
