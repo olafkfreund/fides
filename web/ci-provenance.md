@@ -1,8 +1,3 @@
----
-layout: default
-title: Recording build provenance from CI
----
-
 # Recording build provenance from CI
 
 How to make a Fides environment report a verdict that means something — and
