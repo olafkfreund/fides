@@ -11,7 +11,7 @@ environment snapshots, drift re-evaluation).
 
 ## How it works
 
-```
+```text
 CronJob ──runs──▶ fides snapshot k8s --env <id> [--namespace <ns>]
                      └─ GET /api/v1/pods from the API server   ──▶  POST /api/v1/snapshots
                         (in-cluster ServiceAccount token)           (Fides diffs vs the
@@ -22,11 +22,14 @@ CronJob ──runs──▶ fides snapshot k8s --env <id> [--namespace <ns>]
 
 1. A reachable Fides server and an **API token** (service-account or session).
 2. A Fides **environment** to report into — create it once and note its UUID:
+
    ```bash
    fides env create --name my-cluster --type k8s   # or via the portal
    ```
+
 3. The **reporter image** (just the `fides` CLI — it reads the API server
    directly, so no `kubectl` is baked in), built from `Dockerfile.reporter`:
+
    ```bash
    docker build -f Dockerfile.reporter -t ghcr.io/<you>/fides-k8s-reporter:1.0.0 .
    docker push ghcr.io/<you>/fides-k8s-reporter:1.0.0
@@ -61,6 +64,7 @@ helm install k8s-reporter charts/fides-k8s-reporter \
   --set fides.environmentId=<environment-uuid> \
   --set image.repository=ghcr.io/<you>/fides-k8s-reporter --set image.tag=1.0.0
 ```
+
 This binds a namespaced `Role` (pods get/list in that namespace only) instead of
 a cluster-wide `ClusterRole`.
 
