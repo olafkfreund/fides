@@ -1,0 +1,173 @@
+name: Release drift
+
+# Opens (and keeps up to date) ONE issue when the published release no longer
+# matches main.
+#
+# Why this exists
+# ---------------
+# `.github/actions/setup-fides` installs the latest RELEASE. Nothing made a
+# release follow a merge, so shipped code and installed code drifted silently:
+# on 2026-08-14 the newest release was v0.4.0 from 2026-07-31, 29 commits
+# behind. Among the commits nobody could install was #406 -- the fix for the
+# CLI writing a HARDCODED container digest into the evidence vault when it
+# could not read pods. Every consumer on `latest` had a compliance tool that
+# would invent evidence, for two weeks, and nothing anywhere said so.
+#
+# Why an issue and not a build warning
+# ------------------------------------
+# The failure mode was "true, visible, and ignored for two weeks". A
+# `::warning::` in an otherwise green build is exactly that again. An issue
+# sits on the board until someone closes it.
+#
+# Why not a blocking gate
+# -----------------------
+# Failing the build on unreleased commits makes the fix unmergeable until it
+# is released, and it cannot be released until it is merged.
+#
+# Which paths count
+# -----------------
+# Derived with `go list -deps` over the four commands the release archive
+# actually ships, so it tracks real imports instead of a hand-kept path list
+# that rots. A change under a package no released binary imports (test
+# helpers, the portal, docs) is correctly ignored.
+
+on:
+  schedule:
+    # Mondays 09:00 UTC. Weekly is the right cadence for a question whose
+    # answer changes on the scale of a release, and it means a fix merged on
+    # Friday is flagged before it has been stale a fortnight.
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  # An unreleased fix is not an incident on day one -- it is one after a week.
+  # Age, not commit count: one `fix(cli)` sitting for a month is worse than
+  # thirty docs-adjacent commits from yesterday.
+  MAX_AGE_DAYS: '7'
+  ISSUE_TITLE: 'Release drift: the published release is behind main'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags and full history: the whole check is "how far is HEAD from the
+          # newest tag", which a shallow clone cannot answer.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          check-latest: true
+
+      - name: Measure drift
+        id: drift
+        run: |
+          set -euo pipefail
+
+          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          if [ -z "${tag}" ]; then
+            echo "no tags yet; nothing to compare against"
+            echo "fire=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # The packages the RELEASED binaries import, straight from the build
+          # graph. `|| true` on the grep: no first-party deps is a valid answer,
+          # not a failure, and `set -e` would treat grep's exit 1 as one.
+          mapfile -t paths < <(
+            go list -deps ./cmd/cli ./cmd/server ./cmd/mcp ./cmd/mcp-sensor 2>/dev/null \
+              | { grep '^fides/' || true; } | sed 's|^fides/||' | sort -u
+          )
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "::warning::could not resolve first-party packages; skipping"
+            echo "fire=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          count="$(git log --oneline "${tag}"..HEAD -- "${paths[@]}" | wc -l | tr -d ' ')"
+          if [ "${count}" -eq 0 ]; then
+            echo "${tag} is current: no shipped-binary changes since it was cut."
+            echo "fire=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          oldest_ts="$(git log --reverse --format=%ct "${tag}"..HEAD -- "${paths[@]}" | head -1)"
+          age_days=$(( ( "$(date +%s)" - oldest_ts ) / 86400 ))
+          echo "tag=${tag} count=${count} oldest_age_days=${age_days} threshold=${MAX_AGE_DAYS}"
+
+          if [ "${age_days}" -lt "${MAX_AGE_DAYS}" ]; then
+            echo "recent enough; not flagging yet"
+            echo "fire=false" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          # Body written to a FILE. Commit subjects are attacker-influenced
+          # text; interpolating them into a script or into a workflow
+          # expression is the script-injection hole actionlint flags by name.
+          {
+            echo "\`${tag}\` was cut $(git log -1 --format=%cs "${tag}"), and **${count} commit(s)** to code the released binaries ship have landed since. The oldest has been waiting **${age_days} days**."
+            echo
+            echo "\`setup-fides\` installs the latest release, so until this is tagged, anyone on \`latest\` is running \`${tag}\` — not this."
+            echo
+            echo "## Unreleased commits"
+            echo
+            git log --format='- %s (%cs)' "${tag}"..HEAD -- "${paths[@]}"
+            echo
+            echo "## To close this"
+            echo
+            echo '```'
+            echo "git tag -a vX.Y.Z -m 'vX.Y.Z' && git push origin vX.Y.Z"
+            echo '```'
+            echo
+            echo "Then confirm the installer resolves it, rather than assuming:"
+            echo
+            echo '```bash'
+            echo "gh release view --repo ${GITHUB_REPOSITORY} --json tagName -q .tagName"
+            echo '```'
+            echo
+            echo "_Raised automatically by \`.github/workflows/release-drift.yml\`. Re-runs weekly and edits this issue in place; it will not open a second one._"
+          } > drift.md
+
+          echo "fire=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Open or update the issue
+        if: steps.drift.outputs.fire == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Edit in place rather than commenting: a weekly comment on a
+          # long-lived issue is a notification everyone learns to mute, which
+          # is how the original problem stayed invisible.
+          existing="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
+                        --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" \
+                      | head -1)"
+          if [ -n "${existing}" ]; then
+            gh issue edit "${existing}" --body-file drift.md
+            echo "updated #${existing}"
+          else
+            gh issue create --title "${ISSUE_TITLE}" --body-file drift.md
+          fi
+
+      - name: Close the issue once a release catches up
+        if: steps.drift.outputs.fire == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          existing="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
+                        --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" \
+                      | head -1)"
+          if [ -n "${existing}" ]; then
+            gh issue close "${existing}" --reason completed \
+              --comment "A release has caught up with main; closing automatically."
+            echo "closed #${existing}"
+          else
+            echo "no drift, nothing open."
+          fi
