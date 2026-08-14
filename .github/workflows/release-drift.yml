@@ -37,7 +37,16 @@ on:
     # answer changes on the scale of a release, and it means a fix merged on
     # Friday is flagged before it has been stale a fortnight.
     - cron: '0 9 * * 1'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Compare against this tag instead of the newest one. Blank = newest.'
+        required: false
+        default: ''
+      max_age_days:
+        description: 'Days an unreleased change may sit before this flags it. Blank = 7.'
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -67,10 +76,32 @@ jobs:
 
       - name: Measure drift
         id: drift
+        env:
+          # Through the environment, never inline: dispatch inputs are
+          # caller-supplied text, and the tag goes straight into a git
+          # revision range.
+          IN_TAG: ${{ inputs.tag }}
+          IN_MAX_AGE: ${{ inputs.max_age_days }}
         run: |
           set -euo pipefail
 
-          tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          # Overrides exist so the alerting path can be exercised on demand
+          # instead of only during a real incident -- the first run of an
+          # alert should not be the one that matters. Also handy for asking
+          # "what has not shipped since <older tag>".
+          if [ -n "${IN_MAX_AGE}" ]; then MAX_AGE_DAYS="${IN_MAX_AGE}"; fi
+
+          if [ -n "${IN_TAG}" ]; then
+            tag="${IN_TAG}"
+            if ! git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+              echo "::error::no such tag: ${tag}"
+              exit 1
+            fi
+            echo "comparing against ${tag} (override)"
+          else
+            tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+          fi
+
           if [ -z "${tag}" ]; then
             echo "no tags yet; nothing to compare against"
             echo "fire=false" >> "${GITHUB_OUTPUT}"
