@@ -128,7 +128,14 @@ jobs:
             exit 0
           fi
 
-          oldest_ts="$(git log --reverse --format=%ct "${tag}"..HEAD -- "${paths[@]}" | head -1)"
+          # Capture, then take the first line -- NOT `| head -1`. Under
+          # `set -o pipefail`, head closing the pipe after one line sends
+          # git SIGPIPE and the step exits 141. It only happens once the
+          # range is big enough that git is still writing when head quits,
+          # i.e. only when there IS drift: the alert would have failed
+          # precisely when it was needed, and passed every quiet run.
+          oldest_all="$(git log --reverse --format=%ct "${tag}"..HEAD -- "${paths[@]}")"
+          oldest_ts="${oldest_all%%$'\n'*}"
           age_days=$(( ( "$(date +%s)" - oldest_ts ) / 86400 ))
           echo "tag=${tag} count=${count} oldest_age_days=${age_days} threshold=${MAX_AGE_DAYS}"
 
@@ -176,9 +183,10 @@ jobs:
           # Edit in place rather than commenting: a weekly comment on a
           # long-lived issue is a notification everyone learns to mute, which
           # is how the original problem stayed invisible.
-          existing="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
-                        --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" \
-                      | head -1)"
+          # Same SIGPIPE reasoning as above: capture, then take line one.
+          found="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
+                     --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number")"
+          existing="${found%%$'\n'*}"
           if [ -n "${existing}" ]; then
             gh issue edit "${existing}" --body-file drift.md
             echo "updated #${existing}"
@@ -192,9 +200,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
-                        --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number" \
-                      | head -1)"
+          # Same SIGPIPE reasoning as above: capture, then take line one.
+          found="$(gh issue list --state open --search "${ISSUE_TITLE} in:title" \
+                     --json number,title -q ".[] | select(.title == \"${ISSUE_TITLE}\") | .number")"
+          existing="${found%%$'\n'*}"
           if [ -n "${existing}" ]; then
             gh issue close "${existing}" --reason completed \
               --comment "A release has caught up with main; closing automatically."
