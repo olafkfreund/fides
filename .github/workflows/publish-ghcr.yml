@@ -36,7 +36,16 @@ env:
   # A workflow_dispatch run from a branch other than main WILL fail the verify
   # step below, because the cert then reads @refs/heads/<branch>. Intended --
   # such an image is denied at admission too.
-  SIGNER_IDENTITY: '^https://github\.com/${{ github.repository_owner }}/fides/\.github/workflows/publish-ghcr\.yml@refs/heads/main$'
+  #
+  # A LITERAL, not a regexp. It was `^https://github\.com/...$` -- anchored at
+  # both ends with every dot escaped, which is an exact match written the long
+  # way. `fides verify-image --signer` takes an exact SAN (it passes it as
+  # sanValue, not sanRegex, to sigstore-go's NewShortCertificateIdentity), so
+  # the regexp form would be compared literally -- backslashes, anchors and all
+  # -- against the real SAN and could never match. One literal, and both cosign
+  # and the Fides verifier assert the same thing the same way.
+  SIGNER_IDENTITY: 'https://github.com/${{ github.repository_owner }}/fides/.github/workflows/publish-ghcr.yml@refs/heads/main'
+  SIGNER_ISSUER: 'https://token.actions.githubusercontent.com'
 
 jobs:
   publish:
@@ -175,8 +184,8 @@ jobs:
       - name: Verify signature (self-test)
         run: |
           cosign verify \
-            --certificate-identity-regexp "${SIGNER_IDENTITY}" \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity "${SIGNER_IDENTITY}" \
+            --certificate-oidc-issuer "${SIGNER_ISSUER}" \
             "${IMAGE}@${{ steps.build.outputs.digest }}"
 
       # ----------------------------------------------------------------------
@@ -296,6 +305,31 @@ jobs:
             --name "${IMAGE_NAME}" \
             --type docker
           echo "recorded ${IMAGE_NAME} index ${DIGEST}"
+
+          # Verify the signature AGAIN, with Fides' own verifier, and record the
+          # verdict as a cosign-verification attestation.
+          #
+          # The `cosign verify` self-test above already gates the build, so this
+          # is not a second opinion on whether the image is signed -- it is the
+          # difference between a fact that exists in a CI log for 90 days and a
+          # fact that exists in the evidence vault. "Was this image's signature
+          # verified, by whom, against which identity?" is an audit question,
+          # and until now the only answer was a green tick in a job someone had
+          # to still be able to find.
+          #
+          # It is also the only place #407's registry resolution runs for real:
+          # no --bundle here, so the signature is discovered from GHCR via
+          # cosign's <repo>:sha256-<digest>.sig convention, exactly as a
+          # third-party verifying our images would have to do it.
+          #
+          # Non-zero on an unverified image (exit 2), so this fails the build
+          # rather than filing a "verified: false" attestation and moving on.
+          fides verify-image \
+            --sha256 "${DIGEST#sha256:}" \
+            --image "${IMAGE}" \
+            --signer "${SIGNER_IDENTITY}" \
+            --issuer "${SIGNER_ISSUER}" \
+            --trail "${trail_id}"
 
           # Also record the per-platform manifest digests.
           #
