@@ -270,9 +270,36 @@ jobs:
       # Inert until configured: needs secrets FIDES_SERVER_URL / FIDES_API_TOKEN
       # and variable FIDES_FLOW_ID. Same opt-in shape as the deploy key below.
       # ----------------------------------------------------------------------
-      - name: Install the fides CLI
+      # Build the CLI from THIS commit rather than installing a release.
+      #
+      # setup-fides downloads the latest published release, which is a
+      # different version of Fides from the one this run is building. That skew
+      # broke the pipeline on 2026-08-14: `verify-image --image` had merged to
+      # main (#407) but was in no release yet, so the released binary exited
+      # with "flag provided but not defined: -image" and took the platform
+      # digest registration and the factory-gitops bump down with it.
+      #
+      # setup-fides is right for CONSUMERS of Fides, who should pin a release.
+      # It is wrong here: this repo IS Fides, so recording a build with a stale
+      # binary means the pipeline can only ever use features from before the
+      # code it is currently shipping. Building from source makes the CLI and
+      # the artifact it describes the same version by construction.
+      - name: Set up Go (to build the CLI)
         if: env.FIDES_API_TOKEN != '' && env.FIDES_SERVER_URL != '' && env.FIDES_FLOW_ID != ''
-        uses: ./.github/actions/setup-fides
+        uses: actions/setup-go@v5
+        with:
+          # Same pin as go-build.yml: the govulncheck gate there is the reason
+          # the version is pinned at all, and two Go versions in one repo is a
+          # difference nobody wants to debug later.
+          go-version: '1.26.6'
+          check-latest: true
+
+      - name: Build the fides CLI from this commit
+        if: env.FIDES_API_TOKEN != '' && env.FIDES_SERVER_URL != '' && env.FIDES_FLOW_ID != ''
+        run: |
+          set -euo pipefail
+          go build -o "${RUNNER_TEMP}/fides" ./cmd/cli
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       - name: Record ${{ matrix.image }} provenance in Fides
         if: env.FIDES_API_TOKEN != '' && env.FIDES_SERVER_URL != '' && env.FIDES_FLOW_ID != ''
@@ -306,31 +333,6 @@ jobs:
             --type docker
           echo "recorded ${IMAGE_NAME} index ${DIGEST}"
 
-          # Verify the signature AGAIN, with Fides' own verifier, and record the
-          # verdict as a cosign-verification attestation.
-          #
-          # The `cosign verify` self-test above already gates the build, so this
-          # is not a second opinion on whether the image is signed -- it is the
-          # difference between a fact that exists in a CI log for 90 days and a
-          # fact that exists in the evidence vault. "Was this image's signature
-          # verified, by whom, against which identity?" is an audit question,
-          # and until now the only answer was a green tick in a job someone had
-          # to still be able to find.
-          #
-          # It is also the only place #407's registry resolution runs for real:
-          # no --bundle here, so the signature is discovered from GHCR via
-          # cosign's <repo>:sha256-<digest>.sig convention, exactly as a
-          # third-party verifying our images would have to do it.
-          #
-          # Non-zero on an unverified image (exit 2), so this fails the build
-          # rather than filing a "verified: false" attestation and moving on.
-          fides verify-image \
-            --sha256 "${DIGEST#sha256:}" \
-            --image "${IMAGE}" \
-            --signer "${SIGNER_IDENTITY}" \
-            --issuer "${SIGNER_ISSUER}" \
-            --trail "${trail_id}"
-
           # Also record the per-platform manifest digests.
           #
           # steps.build.outputs.digest is the INDEX digest, and the index
@@ -361,6 +363,39 @@ jobs:
                   --type docker
                 echo "recorded ${IMAGE_NAME} platform ${child}"
               done
+
+          # Verify the signature AGAIN, with Fides' own verifier, and record the
+          # verdict as a cosign-verification attestation.
+          #
+          # The `cosign verify` self-test above already gates the build, so this
+          # is not a second opinion on whether the image is signed -- it is the
+          # difference between a fact that lives in a CI log for 90 days and a
+          # fact that lives in the evidence vault. "Was this image's signature
+          # verified, against which identity?" is an audit question, and the
+          # only answer used to be a green tick in a job someone had to still
+          # be able to find.
+          #
+          # It is also the only place #407's registry resolution runs for real:
+          # no --bundle here, so the signature is discovered from GHCR via
+          # cosign's <repo>:sha256-<digest>.sig convention, exactly as a third
+          # party verifying our images would have to do it.
+          #
+          # LAST in this step, deliberately. It is a gate, and a gate placed
+          # before the recording it guards destroys the very evidence it exists
+          # to certify: on 2026-08-14 this call sat above the platform-digest
+          # loop, failed, and took both that loop and the factory-gitops bump
+          # with it -- undoing #420 and stopping CD, over a verification
+          # question that has no bearing on whether the digests are worth
+          # recording. Record everything first, then gate.
+          #
+          # Non-zero on an unverified image (exit 2), so this still fails the
+          # build rather than filing a "verified: false" attestation quietly.
+          fides verify-image \
+            --sha256 "${DIGEST#sha256:}" \
+            --image "${IMAGE}" \
+            --signer "${SIGNER_IDENTITY}" \
+            --issuer "${SIGNER_ISSUER}" \
+            --trail "${trail_id}"
 
       - name: Note if provenance recording is not wired
         if: env.FIDES_API_TOKEN == '' || env.FIDES_SERVER_URL == '' || env.FIDES_FLOW_ID == ''
