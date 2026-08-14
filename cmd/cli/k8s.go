@@ -177,3 +177,23 @@ func fetchPodsViaKubectl(ns string) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// isSHA256Hex reports whether s is exactly a 64-character lowercase-or-upper
+// hex string, i.e. a sha256 digest and not something merely the right length.
+//
+// The snapshot path used to truncate any string to 64 characters to make it
+// fit the digest field, which turned an image TAG into something that looked
+// like an observation (#430). Length alone is not the property that matters.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isHex := (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+		if !isHex {
+			return false
+		}
+	}
+	return true
+}

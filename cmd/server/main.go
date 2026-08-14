@@ -71,6 +71,19 @@ func main() {
 			log.Fatalf("Failed to apply database migrations: %v", err)
 		}
 		log.Printf("Database migrations applied")
+
+		// The RLS policies are applied SEPARATELY and on every boot, not as a
+		// numbered migration: schema-rls.sql is idempotent and also self-heals
+		// databases carrying an older policy set, which a run-once migration
+		// could never do. Only when RLS is actually enabled -- applying tenant
+		// policies to a deployment that does not set app.current_org per
+		// request would hide every row from every query.
+		if os.Getenv("FIDES_RLS_ENABLED") == "true" {
+			if err := fidesdb.ApplyRLS(context.Background(), db); err != nil {
+				log.Fatalf("Failed to apply RLS policies: %v", err)
+			}
+			log.Printf("RLS policies applied")
+		}
 	}
 
 	var store storage.StorageBackend
