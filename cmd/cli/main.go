@@ -601,20 +601,30 @@ func handleSnapshot(config CLIConfig, args []string) {
 					continue
 				}
 				for _, container := range pod.Status.ContainerStatuses {
+					// Resolve the RUNNING digest, or report nothing for this
+					// container.
+					//
+					// This used to fall back to container.ImageID, then to
+					// container.Image -- a TAG -- and then truncate to 64 chars
+					// so it fit the digest-shaped field. The result looked like
+					// an observation and was not: a tag recorded as a sha256
+					// can never equal a CI-registered artifact or an allowlist
+					// entry, so it produced a shadow change that no correct
+					// action could ever clear, and an environment stuck at
+					// non-compliant for a reason its operator could not fix.
+					//
+					// Same rule as #406: when the runtime cannot tell us what
+					// is running, say so. Do not invent a value that fits.
 					digest := ""
-					parts := strings.Split(container.ImageID, "@sha256:")
-					if len(parts) == 2 {
-						digest = parts[1]
-					} else {
-						digest = container.ImageID
+					if _, after, found := strings.Cut(container.ImageID, "@sha256:"); found {
+						digest = after
 					}
-					// Strip sha256: prefix if present
 					digest = strings.TrimPrefix(digest, "sha256:")
-					if digest == "" {
-						digest = container.Image
-					}
-					if len(digest) > 64 {
-						digest = digest[:64]
+					if !isSHA256Hex(digest) {
+						fmt.Fprintf(os.Stderr,
+							"warning: skipping container %q in %s/%s: no sha256 digest in imageID %q (image %q)\n",
+							container.Name, ns, pod.Metadata.Name, container.ImageID, container.Image)
+						continue
 					}
 
 					reportedArtifacts = append(reportedArtifacts, map[string]string{
