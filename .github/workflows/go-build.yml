@@ -20,9 +20,11 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Pin the patched toolchain: go1.26.5 fixes crypto/tls GO-2026-5856
+          # Pin the patched toolchain: go1.26.6 fixes 7 stdlib advisories reached by
+          # this code (encoding/asn1 GO-2026-5972 via cosignverify+tsa, net/http
+          # GO-2026-5026, encoding/xml via evidence.ParseJUnit, among others).
           # (govulncheck gate). Bump as newer stdlib advisories land.
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           check-latest: true
 
       - name: Verify dependencies
@@ -94,7 +96,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.5'
+          go-version: '1.26.6'
           check-latest: true
 
       # Proves the Postgres RLS policies (schema-rls.sql) enforce tenant
