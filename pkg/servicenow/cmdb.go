@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"fides/pkg/events"
@@ -129,6 +130,8 @@ func (s *CMDBSink) Deliver(ctx context.Context, ev events.Event) error {
 		return s.deliverSnapshot(ctx, ev)
 	case AnchorEventType:
 		return s.deliverAnchor(ctx, ev)
+	case ArtifactEventType:
+		return s.deliverArtifact(ctx, ev)
 	default:
 		return nil
 	}
@@ -171,6 +174,77 @@ func (s *CMDBSink) deliverSnapshot(ctx context.Context, ev events.Event) error {
 // pipeline (build log, runtime snapshot) and, when present, the change that
 // authorized it.
 const AnchorEventType = "deployment.attested"
+
+// ArtifactEventType is emitted when a build artifact is reported to a trail
+// (`fides artifact report`). The CMDB sink consumes it to keep a queryable
+// image CI per digest, so the change gate can anchor a change's cmdb_ci.
+const ArtifactEventType = "artifact.reported"
+
+// artifactPayload is the artifact.reported event body.
+type artifactPayload struct {
+	SHA256 string `json:"sha256"`
+	Name   string `json:"name"`
+	Type   string `json:"type"`
+}
+
+// deliverArtifact upserts a cmdb_ci_docker_image CI carrying the reported
+// digest, so a later change gate can resolve the change's Configuration item
+// (cmdb_ci) from the trail's artifacts. This is the producer half of the
+// binary anchor; ResolveImageCIsByDigest is the consumer.
+//
+// The digest is written into short_description ("<name> binary digest
+// sha256:<hex>") because that is the field ServiceNow can actually filter on
+// for this class — the same field, in the same format, the resolver matches.
+// Idempotent: an image CI already recorded for the digest is left untouched.
+// Non-image artifacts (sbom, sarif, ...) are skipped.
+func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
+	cfg, enabled, err := s.loader.ServiceNowConfig(ctx, ev.OrgID)
+	if err != nil || !enabled {
+		return err
+	}
+
+	var p artifactPayload
+	if err := json.Unmarshal(ev.Payload, &p); err != nil {
+		return err
+	}
+	sha := strings.TrimPrefix(strings.TrimSpace(p.SHA256), "sha256:")
+	if sha == "" {
+		return nil
+	}
+	// Only container images anchor a change. An empty type is treated as an
+	// image (the CLI's default `--type docker`); everything else is skipped.
+	switch p.Type {
+	case "", "docker", "container", "image":
+	default:
+		return nil
+	}
+
+	client, err := s.newClient(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Idempotent: skip if an image CI for this digest already exists.
+	if res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "short_descriptionLIKEsha256:"+sha, "sys_id"); err == nil && res != nil && len(res.Result) > 0 {
+		return nil
+	}
+
+	name := p.Name
+	if name == "" {
+		name = "image"
+	}
+	short := sha
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	_, err = client.CreateRecord(ctx, "cmdb_ci_docker_image", map[string]any{
+		"name":               fmt.Sprintf("%s@sha256:%s", name, short),
+		"short_description":  fmt.Sprintf("%s binary digest sha256:%s", name, sha),
+		"discovery_source":   "fides",
+		"operational_status": "1",
+	})
+	return err
+}
 
 // DeploymentAttestation is the decoupled input for CMDB anchoring: it captures
 // what was deployed and where the supporting evidence lives, so it can be

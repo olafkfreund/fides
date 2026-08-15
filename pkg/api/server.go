@@ -874,6 +874,13 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep a queryable CMDB image CI per digest so the change gate can anchor a
+	// change's cmdb_ci to the binary it deployed (best-effort; the CMDB sink is
+	// a no-op when ServiceNow is not configured for the org).
+	_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, servicenow.ArtifactEventType, map[string]any{
+		"sha256": req.SHA256, "name": req.Name, "type": req.Type,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(artifact)
