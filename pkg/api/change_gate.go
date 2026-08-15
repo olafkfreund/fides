@@ -37,12 +37,31 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		`SELECT count(*) FILTER (WHERE NOT is_compliant), count(*) FROM attestations WHERE trail_id = $1`, trailID).
 		Scan(&nonCompliant, &totalAtt)
 
+	// Controls for the org — read fully into memory and close the rows BEFORE
+	// running any other query. Under RLS every request shares ONE transaction
+	// connection, and a single connection cannot stream two result sets at
+	// once. Holding crows open (via defer) while the waiver and approval
+	// queries ran corrupted that connection and surfaced as
+	// "sql: connection is already closed", 500ing the whole change gate.
+	type control struct {
+		key, name string
+		req       pq.StringArray
+	}
+	var controls []control
 	crows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT key, name, required_types FROM controls WHERE org_id = $1 AND NOT archived ORDER BY key`, orgID)
 	if err != nil {
 		return nil, err
 	}
-	defer crows.Close()
+	for crows.Next() {
+		var c control
+		if err := crows.Scan(&c.key, &c.name, &c.req); err != nil {
+			crows.Close()
+			return nil, err
+		}
+		controls = append(controls, c)
+	}
+	crows.Close()
 
 	// Active, in-date control exceptions (waivers) keyed by control_key. A waiver
 	// lets a failing/missing control not block the gate — governed and time-boxed.
@@ -60,16 +79,37 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		xrows.Close()
 	}
 
+	// Segregation of duties: separate approver-role from deployer-role sign-offs
+	// so the gate output mirrors the SoD attestation (a deployer is not an
+	// approver). humanApprovers counts any human (session) sign-off, either role.
+	approverList := []string{}
+	deployerList := []string{}
+	humanApprovers := 0
+	if arows, aerr := s.q(ctx).QueryContext(ctx,
+		`SELECT approved_by, approver_kind, COALESCE(NULLIF(role, ''), 'approver') FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
+		for arows.Next() {
+			var by, kind, role string
+			if arows.Scan(&by, &kind, &role) == nil {
+				if role == "deployer" {
+					deployerList = append(deployerList, by)
+				} else {
+					approverList = append(approverList, by)
+				}
+				if kind == "session" {
+					humanApprovers++
+				}
+			}
+		}
+		arows.Close()
+	}
+
+	// Evaluate each control against the trail's per-type compliance + waivers.
 	passed := []string{}
 	failed := []map[string]any{}
 	missing := []map[string]any{}
 	waived := []map[string]any{}
-	for crows.Next() {
-		var key, name string
-		var req pq.StringArray
-		if err := crows.Scan(&key, &name, &req); err != nil {
-			return nil, err
-		}
+	for _, ctrl := range controls {
+		key, name, req := ctrl.key, ctrl.name, ctrl.req
 		hasFailed, hasMissing := false, false
 		reasons := []string{}
 		for _, t := range req {
@@ -99,30 +139,6 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 		default:
 			passed = append(passed, key)
 		}
-	}
-
-	// Segregation of duties: separate approver-role from deployer-role sign-offs
-	// so the gate output mirrors the SoD attestation (a deployer is not an
-	// approver). humanApprovers counts any human (session) sign-off, either role.
-	approverList := []string{}
-	deployerList := []string{}
-	humanApprovers := 0
-	if arows, aerr := s.q(ctx).QueryContext(ctx,
-		`SELECT approved_by, approver_kind, COALESCE(NULLIF(role, ''), 'approver') FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
-		for arows.Next() {
-			var by, kind, role string
-			if arows.Scan(&by, &kind, &role) == nil {
-				if role == "deployer" {
-					deployerList = append(deployerList, by)
-				} else {
-					approverList = append(approverList, by)
-				}
-				if kind == "session" {
-					humanApprovers++
-				}
-			}
-		}
-		arows.Close()
 	}
 
 	risk := len(failed)*25 + len(missing)*15 + nonCompliant*10
