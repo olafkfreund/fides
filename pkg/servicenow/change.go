@@ -108,11 +108,11 @@ func BuildChangeGateNote(gate map[string]any) string {
 }
 
 // ResolveImageCIsByDigest returns the sys_ids of cmdb_ci_docker_image records
-// whose digest matches any of the given sha256 strings (bare hex or already
-// "sha256:"-prefixed). This is the binary anchor: the CMDB image CI keyed by
-// digest is created by the CMDB sink (BuildIREPayload) from the same digests
-// the trail attests, so a change's artifacts resolve straight to the CIs that
-// run them. Deduped and best-effort — a query error for one digest is skipped.
+// carrying any of the given sha256 digests (bare hex or "sha256:"-prefixed).
+// This is the binary anchor: the CMDB image CI recorded for a digest is the
+// same digest the trail attests, so a change's artifacts resolve straight to
+// the CIs that run them. Matched via short_description (see the query note
+// below). Deduped and best-effort — a query error for one digest is skipped.
 func ResolveImageCIsByDigest(ctx context.Context, client *Client, digests []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -121,10 +121,18 @@ func ResolveImageCIsByDigest(ctx context.Context, client *Client, digests []stri
 		if d == "" {
 			continue
 		}
-		if !strings.HasPrefix(d, "sha256:") {
-			d = "sha256:" + d
+		// Match on short_description, NOT a `digest` field. cmdb_ci_docker_image
+		// as populated here (discovery_source=karc-portal) carries the full
+		// digest in short_description ("... binary digest sha256:<hex> ...") and
+		// has no queryable `digest` column -- a `digest=` query is silently
+		// ignored by ServiceNow and returns unrelated rows, which would anchor
+		// the change to a random image. LIKE on the sha256 string filters
+		// correctly (verified: exact digest -> the one image CI; bogus -> none).
+		hex := strings.TrimPrefix(d, "sha256:")
+		if hex == "" {
+			continue
 		}
-		res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "digest="+d, "sys_id")
+		res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "short_descriptionLIKEsha256:"+hex, "sys_id")
 		if err != nil || len(res.Result) == 0 {
 			continue
 		}
