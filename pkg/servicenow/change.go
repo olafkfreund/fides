@@ -107,6 +107,58 @@ func BuildChangeGateNote(gate map[string]any) string {
 	return b.String()
 }
 
+// ResolveImageCIsByDigest returns the sys_ids of cmdb_ci_docker_image records
+// whose digest matches any of the given sha256 strings (bare hex or already
+// "sha256:"-prefixed). This is the binary anchor: the CMDB image CI keyed by
+// digest is created by the CMDB sink (BuildIREPayload) from the same digests
+// the trail attests, so a change's artifacts resolve straight to the CIs that
+// run them. Deduped and best-effort — a query error for one digest is skipped.
+func ResolveImageCIsByDigest(ctx context.Context, client *Client, digests []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, d := range digests {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		if !strings.HasPrefix(d, "sha256:") {
+			d = "sha256:" + d
+		}
+		res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "digest="+d, "sys_id")
+		if err != nil || len(res.Result) == 0 {
+			continue
+		}
+		if sysID, _ := res.Result[0]["sys_id"].(string); sysID != "" && !seen[sysID] {
+			seen[sysID] = true
+			out = append(out, sysID)
+		}
+	}
+	return out
+}
+
+// LinkAffectedCIs adds task_ci rows (the change's "Affected CIs" related list)
+// linking each ci sys_id to the change, skipping pairs that already exist so
+// re-runs of the change gate do not duplicate rows. Returns the number of rows
+// created. Best-effort: the first create error is returned but rows already
+// written stand.
+func LinkAffectedCIs(ctx context.Context, client *Client, changeSysID string, ciSysIDs []string) (int, error) {
+	created := 0
+	for _, ci := range ciSysIDs {
+		if ci == "" {
+			continue
+		}
+		res, err := client.QueryTable(ctx, "task_ci", "task="+changeSysID+"^ci_item="+ci, "sys_id")
+		if err == nil && res != nil && len(res.Result) > 0 {
+			continue // already linked
+		}
+		if _, err := client.CreateRecord(ctx, "task_ci", map[string]any{"task": changeSysID, "ci_item": ci}); err != nil {
+			return created, err
+		}
+		created++
+	}
+	return created, nil
+}
+
 // writeEvidenceBundleNote renders the signed evidence bundle as a structured
 // section of the work note: the tamper-evidence chain verdict (INTACT vs
 // TAMPERED, with the break point when broken), the artifact digests produced
