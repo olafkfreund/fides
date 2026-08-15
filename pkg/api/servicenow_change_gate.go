@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -88,7 +89,35 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 		riskField = "3"
 	}
 
+	// CMDB traceability enrichment. The evidence bundle carries the trail's
+	// artifact digests; resolve those to the binary CIs (cmdb_ci_docker_image,
+	// keyed by digest), set the change's Configuration item when it has none,
+	// and populate the Affected CIs related list. Best-effort — a CMDB miss
+	// must never fail the verdict write, which is the record of record.
+	var traceSummary string
+	if arts, ok := bundle["artifacts"].([]map[string]any); ok && len(arts) > 0 {
+		digests := make([]string, 0, len(arts))
+		for _, a := range arts {
+			if d, _ := a["sha256"].(string); d != "" {
+				digests = append(digests, d)
+			}
+		}
+		if ciSysIDs := servicenow.ResolveImageCIsByDigest(r.Context(), client, digests); len(ciSysIDs) > 0 {
+			if existing, _ := cr["cmdb_ci"].(string); existing == "" {
+				if _, err := client.UpdateRecord(r.Context(), "change_request", sysID, map[string]any{"cmdb_ci": ciSysIDs[0]}); err == nil {
+					traceSummary += "set cmdb_ci; "
+				}
+			}
+			if n, _ := servicenow.LinkAffectedCIs(r.Context(), client, sysID, ciSysIDs); n > 0 {
+				traceSummary += fmt.Sprintf("linked %d affected CI(s); ", n)
+			}
+		}
+	}
+
 	note := servicenow.BuildChangeGateNote(gate)
+	if traceSummary != "" {
+		note += "\nCMDB traceability: " + traceSummary
+	}
 	if _, err := client.UpdateRecord(r.Context(), "change_request", sysID, map[string]any{
 		"work_notes": note,
 		"risk":       riskField,
