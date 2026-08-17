@@ -61,31 +61,50 @@ for probe in "sys_user:auth" "change_request:ITSM" "cmdb_ci:CMDB" \
 done
 
 # ---------------------------------------------------------------------------
-section "1. CMDB — IRE upsert creates real CIs"
+section "1-2. CMDB + ITOM sinks — driven through Fides, end to end"
 
-# Drive IRE through the same code path the sink uses, with a run-unique name so
-# the read-back cannot pass on CIs left by an earlier run.
+# These two surfaces are NOT exercised by calling ServiceNow directly. The
+# whole point is the chain Fides actually runs in production:
+#
+#   POST /api/v1/snapshots -> snapshot.reported    -> outbox -> CMDBSink -> IRE
+#                          -> snapshot.noncompliant -> outbox -> ITOMSink -> em_event
+#
+# Reporting an artifact digest Fides has never seen makes it a shadow change,
+# which fires both events from one call. Anything that only curls ServiceNow
+# validates the payload contract but leaves the sink path untested — and the
+# sink path is where the CMDB bug lived.
 SVC="fides-$RUN_ID"
 DIGEST="$(printf '%s' "$RUN_ID" | sha256sum | cut -c1-64)"
-IRE_OUT=$(snpost --data @- "$SN_URL/api/now/identifyreconcile?sysparm_data_source=Other%20Automated" <<EOF
-{"items":[
- {"className":"cmdb_ci_service_discovered","values":{"name":"$SVC","short_description":"Fides e2e"}},
- {"className":"cmdb_ci_docker_image","values":{"name":"ghcr.io/fides/$SVC","image_id":"sha256:$DIGEST"}},
- {"className":"cmdb_ci_docker_container","values":{"name":"$SVC-c","container_id":"$SVC-c","state":"running"}}
-],"relations":[
- {"parent":1,"child":2,"type":"Instantiates::Instance of"},
- {"parent":2,"child":0,"type":"Depends on::Used by"}]}
-EOF
-)
-HAS_ERR=$(printf '%s' "$IRE_OUT" | jqp 'print(str(json.load(sys.stdin)["result"]["hasError"]).lower())')
-ok "IRE reports no error" "$([ "$HAS_ERR" = false ] && echo true || echo false)" \
-   "$(printf '%s' "$IRE_OUT" | jqp 'r=json.load(sys.stdin)["result"];print("; ".join(e["message"][:90] for i in r["items"] for e in i.get("errors",[])))')"
 
-# The read-back. This is the check the old mock-only suite could not express.
+ENV_ID=$(fides -H 'Content-Type: application/json' -X POST \
+  -d "{\"name\":\"$SVC-env\",\"type\":\"K8S\",\"description\":\"Fides e2e, safe to delete\"}" \
+  "$FIDES_SERVER_URL/api/v1/environments" | jqp 'print(json.load(sys.stdin)["id"])')
+ok "environment created in Fides" "$([ -n "$ENV_ID" ] && echo true || echo false)" "$ENV_ID"
+
+SNAP=$(fides -H 'Content-Type: application/json' -X POST \
+  -d "{\"environment_id\":\"$ENV_ID\",\"artifacts\":[{\"sha256\":\"$DIGEST\",\"service_name\":\"$SVC\"}]}" \
+  "$FIDES_SERVER_URL/api/v1/snapshots")
+SHADOWS=$(printf '%s' "$SNAP" | jqp 'print(len(json.load(sys.stdin).get("shadow_changes") or []))')
+ok "snapshot reports the unregistered digest as a shadow" \
+   "$([ "${SHADOWS:-0}" -ge 1 ] && echo true || echo false)" \
+   "shadows=$SHADOWS (both sink events depend on this)"
+
+# The outbox dispatcher is asynchronous; give it room before concluding.
+echo "  waiting for the outbox dispatcher..."
+sleep 20
+
+# The read-back. This is the check the old mock-only suite could not express:
+# it fails whenever IRE rejects the sink's payload, which it did — silently,
+# inside an HTTP 200 — for every release before this one.
 for t in cmdb_ci_service_discovered cmdb_ci_docker_container; do
-  n=$(snget --data-urlencode "sysparm_query=nameLIKE$SVC" --data-urlencode 'sysparm_fields=sys_id' \
-        "$SN_URL/api/now/table/$t" | jqp 'print(len(json.load(sys.stdin)["result"]))')
-  ok "$t CI exists in CMDB" "$([ "${n:-0}" -ge 1 ] && echo true || echo false)" "found $n"
+  n=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    n=$(snget --data-urlencode "sysparm_query=nameLIKE$SVC" --data-urlencode 'sysparm_fields=sys_id' \
+          "$SN_URL/api/now/table/$t" | jqp 'print(len(json.load(sys.stdin)["result"]))')
+    [ "${n:-0}" -ge 1 ] && break
+    sleep 6
+  done
+  ok "CMDB sink created $t" "$([ "${n:-0}" -ge 1 ] && echo true || echo false)" "found $n"
 done
 
 # Relations are checked separately because they fail independently of the items:
@@ -101,21 +120,18 @@ ok "container->service relation created" \
    "$(printf '%s' "$RELS" | grep -q 'Depends on::Used by' && echo true || echo false)" "types=$RELS"
 
 # ---------------------------------------------------------------------------
-section "2. ITOM — event lands in em_event"
-
-MSGKEY="fides-$RUN_ID"
-snpost -d "{\"records\":[{\"source\":\"Fides\",\"event_class\":\"Fides\",\"node\":\"$SVC\",\"severity\":\"4\",\"description\":\"Fides e2e probe\",\"message_key\":\"$MSGKEY\"}]}" \
-  "$SN_URL/api/global/em/jsonv2" >/dev/null
-
-# Event ingestion is asynchronous — poll rather than assume.
+# ITOMSink stamps node with the environment id and source with Fides-Compliance,
+# so a hit here can only have come from the sink — not from this script.
 EVN=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  EVN=$(snget --data-urlencode "sysparm_query=message_key=$MSGKEY" --data-urlencode 'sysparm_fields=sys_id' \
-        "$SN_URL/api/now/table/em_event" | jqp 'print(len(json.load(sys.stdin)["result"]))')
+  EVN=$(snget --data-urlencode "sysparm_query=node=$ENV_ID^source=Fides-Compliance" \
+        --data-urlencode 'sysparm_fields=sys_id' "$SN_URL/api/now/table/em_event" \
+        | jqp 'print(len(json.load(sys.stdin)["result"]))')
   [ "${EVN:-0}" -ge 1 ] && break
-  sleep 3
+  sleep 6
 done
-ok "em_event row created" "$([ "${EVN:-0}" -ge 1 ] && echo true || echo false)" "found $EVN after polling"
+ok "ITOM sink wrote em_event for the shadow" "$([ "${EVN:-0}" -ge 1 ] && echo true || echo false)" \
+   "found $EVN with node=$ENV_ID"
 
 # ---------------------------------------------------------------------------
 section "3-5. ITSM — change check, gate write-back, control linkage"
@@ -180,7 +196,8 @@ printf '\n\033[1m== Result: %d passed, %d failed\033[0m\n' "$PASSED" "$FAILED"
 echo "Records created (run id $RUN_ID):"
 echo "  change:  $SN_URL/nav_to.do?uri=change_request.do?sys_id=$CHG_SYS"
 echo "  CIs:     name LIKE $SVC"
-echo "  event:   message_key = $MSGKEY"
+echo "  events:  em_event node = $ENV_ID"
+echo "  env:     Fides environment $ENV_ID (safe to delete)"
 [ "${KEEP:-0}" = 1 ] || echo "  (set KEEP=1 to silence this; nothing is auto-deleted)"
 
 exit "$FAILED"

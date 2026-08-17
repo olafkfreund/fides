@@ -66,17 +66,51 @@ Each check drives a surface and then asks ServiceNow what happened:
 | # | Surface | Driven by | Verified in ServiceNow by |
 |---|---|---|---|
 | 0 | credential + roles | Table API probe per surface | HTTP 200 on each table |
-| 1 | CMDB IRE | `POST /api/now/identifyreconcile` | CIs exist in `cmdb_ci_*`; **relations exist in `cmdb_rel_ci` with the right type and direction** |
-| 2 | ITOM | `POST /api/global/em/jsonv2` | row in `em_event` matching `message_key` (polled — ingestion is async) |
+| 1 | **CMDB sink** | `POST /api/v1/snapshots` → `snapshot.reported` → outbox → `CMDBSink` | CIs exist in `cmdb_ci_*`; **relations exist in `cmdb_rel_ci` with the right type and direction** |
+| 2 | **ITOM sink** | the same snapshot → `snapshot.noncompliant` → outbox → `ITOMSink` | row in `em_event` with `node=<environment-id>`, `source=Fides-Compliance` |
 | 3 | Change check | `POST /api/v1/servicenow/change-check` | attestation recorded; CR state read back |
 | 4-5 | Gate write-back + control link | `POST …/link-control` | `sys_journal_field` work note names the control and attestation UUID |
 | 6 | Anchoring | Attachment API | `sys_attachment` row with non-zero `size_bytes` |
 | 7 | Grounding | `GET …/grounding` | `grounded` true, summary cites real control keys |
 | 8 | Governed MCP lookup | `POST …/mcp/lookup` | row count agrees with a direct Table API query |
 
+### Drive the sinks through Fides, not around them
+
+Checks 1 and 2 deliberately do **not** call ServiceNow directly. They report a
+snapshot containing an artifact digest Fides has never seen, which makes it a
+shadow change and fires both events from one call:
+
+```text
+POST /api/v1/snapshots -> snapshot.reported     -> outbox -> CMDBSink -> IRE
+                       -> snapshot.noncompliant -> outbox -> ITOMSink -> em_event
+```
+
+Curling ServiceNow directly would validate the *payload contract* while leaving
+the *sink path* untested — and the sink path is where the CMDB bug lived. The
+`em_event` assertion filters on `node=<environment-id>`, which only `ITOMSink`
+sets, so a passing check cannot have been produced by the script itself.
+
+Both are polled: the outbox dispatcher and ServiceNow's event ingestion are
+asynchronous, so a single immediate read would report a false failure.
+
 Relations get their own assertions because they fail *independently* of the
 items — a relation whose type is not a `cmdb_rel_type` name is rejected on its
 own, which is exactly how `Instantiated From` went unnoticed.
+
+## Keeping it honest over time
+
+`.github/workflows/servicenow-e2e.yml` runs the suite weekly (Monday 07:00 UTC)
+and on demand. It cannot run on pull requests — it needs credentials forks must
+not have, and it writes to a shared instance — so it is scheduled instead, and
+skips with a warning when the secrets are absent.
+
+That cadence is chosen for the failure mode it defends against: most breakage
+here originates on the *ServiceNow* side, where nothing in this repo changes. A
+renamed choice value, a revoked role, a deactivated plugin — none of these
+produce a commit, so only a periodic live run will find them.
+
+Required configuration: secrets `FIDES_SERVER_URL`, `FIDES_API_TOKEN`, `SN_URL`,
+`SN_USER`, `SN_PASS`, and variable `FIDES_FLOW_ID`.
 
 ## Prerequisites on the instance
 
