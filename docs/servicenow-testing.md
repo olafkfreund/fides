@@ -125,10 +125,27 @@ reconcile against the other, so with both writing, one binary ends up as two
 disconnected records. That is the textbook duplicate-CI cause: multiple sources
 pushing the same thing under different identifiers.
 
-The flag covers both CI-inventory writers — the snapshot path (IRE) and the
-artifact path (Table API). They are gated together on purpose: they disagree
-with each other about how an image CI is keyed, so enabling one without the
-other has Fides duplicating its own records.
+The flag covers the **snapshot** path only — the one that mirrors an entire
+environment. The per-binary **artifact** path is governed separately by
+`FIDES_SNOW_ARTIFACT_CI_ENABLED` and is **on** by default, because the two have
+different blast radii:
+
+| Path | Writes | Default |
+|---|---|---|
+| `snapshot.reported` → IRE | every service, image and container in an environment | **off** |
+| `artifact.reported` → Table API | one image CI for a binary Fides built | **on** |
+
+Mirroring somebody else's whole estate is what collides. Writing a single CI for
+a binary you produced does not — and that path skips when a CI for the digest
+already exists, matching on the digest in `short_description`, which is where
+other systems put it too. On a shared instance it fills gaps rather than
+duplicating.
+
+It also has a consumer that fails quietly without it. ARC's scheduled
+`fides-external-cr-reconcile` job reports an artifact, waits for that image CI to
+appear, then gates the change so `cmdb_ci` resolves to the binary. Gating both
+paths together left it polling for a record that would never arrive and logging a
+warning nobody reads — which is why they are now separate.
 
 **Evidence anchoring is never gated.** Attaching a signed attestation to a CI
 somebody else owns is the whole point on a shared instance, and it is precisely
@@ -166,8 +183,12 @@ The rule that follows:
 
 | Situation | `FIDES_SNOW_CMDB_ENABLED` | Why |
 |---|---|---|
-| Another system owns the CMDB (ARC, an SGC, Discovery) | **off** | it already has image CIs; the change gate resolves against those |
-| Fides is the only thing writing CIs | **on** | nothing else creates them, so anchoring would find nothing |
+| Another system owns the CMDB (ARC, an SGC, Discovery) | **off** | it already models the estate; the change gate resolves against its CIs |
+| Fides is the only thing writing CIs | **on** | nothing else mirrors the environment |
+
+Leave `FIDES_SNOW_ARTIFACT_CI_ENABLED` alone in both cases. Set it to `false`
+only where another system is the sole authority for image CIs *and* nothing
+depends on Fides filling the gaps.
 
 If you turn it on, add a `discovery_source` choice for Fides so its CIs are
 attributable, and run the suite with `CMDB_INVENTORY=1`.

@@ -117,32 +117,62 @@ func containerName(svc RunningService) string {
 // CMDBEventType is the event the CMDB sink consumes (emitted on every snapshot).
 const CMDBEventType = "snapshot.reported"
 
-// CMDBInventoryEnabled reports whether Fides may create CMDB configuration
-// items — the running services, images and containers it observes.
+// CMDBSnapshotInventoryEnabled reports whether Fides may mirror an entire
+// environment into the CMDB — every running service, image and container it
+// observes in a snapshot.
 //
-// This is off by default, and deliberately so. On a shared instance the CMDB
-// usually already has an owner: ARC, for example, syncs 274 Kubernetes
-// workloads and 315 build artifacts into the same instance Fides points at,
-// keyed by a name-encoded digest. Fides keys images by image_id through IRE,
-// which cannot reconcile against that, so both writing produces two
-// disconnected records for one binary — the classic duplicate-CI failure.
-//
-// Evidence anchoring is NOT gated by this. Attaching a signed attestation to a
-// CI somebody else owns is exactly the division of labour a shared CMDB wants,
-// and it is the integration ARC's own CSDM model asks Fides for.
-func CMDBInventoryEnabled() bool {
+// Off by default, and deliberately so. On a shared instance the CMDB usually
+// already has an owner: ARC, for example, syncs 274 Kubernetes workloads into
+// the same instance Fides points at. Fides keys images by image_id through IRE,
+// which cannot reconcile against ARC's name-encoded digests, so both writing
+// produces two disconnected records for one binary — the classic duplicate-CI
+// failure.
+func CMDBSnapshotInventoryEnabled() bool {
 	return os.Getenv("FIDES_SNOW_CMDB_ENABLED") == "true"
+}
+
+// ArtifactCIEnabled reports whether Fides may create one image CI per binary it
+// built, on `fides artifact report`.
+//
+// On by default, unlike the snapshot mirror above, because the two have
+// different blast radii and different consumers:
+//
+//   - The snapshot path mirrors somebody else's whole estate. That is what
+//     collides.
+//   - This path writes a single CI for a binary Fides itself produced, and only
+//     when no CI for that digest exists — the idempotency check below matches on
+//     the digest in short_description, which is where other systems put it too.
+//     So on a shared instance it fills gaps rather than duplicating.
+//
+// It also has a consumer that breaks quietly without it. ARC's scheduled
+// fides-external-cr-reconcile job reports an artifact, waits for this CI to
+// appear, then gates the change so cmdb_ci resolves to the binary. Gating both
+// paths together left that job polling for a record that would never arrive and
+// logging a warning nobody reads, which is the whole reason this split exists.
+//
+// Set FIDES_SNOW_ARTIFACT_CI_ENABLED=false where another system is the sole
+// authority for image CIs.
+func ArtifactCIEnabled() bool {
+	return os.Getenv("FIDES_SNOW_ARTIFACT_CI_ENABLED") != "false"
 }
 
 // CMDBSink reconciles running services into ServiceNow CMDB via IRE.
 type CMDBSink struct {
 	loader    Loader
 	newClient func(Config) (*Client, error)
-	inventory func() bool // overridable in tests
+
+	// Overridable in tests.
+	snapshotInventory func() bool
+	artifactCI        func() bool
 }
 
 func NewCMDBSink(loader Loader) *CMDBSink {
-	return &CMDBSink{loader: loader, newClient: New, inventory: CMDBInventoryEnabled}
+	return &CMDBSink{
+		loader:            loader,
+		newClient:         New,
+		snapshotInventory: CMDBSnapshotInventoryEnabled,
+		artifactCI:        ArtifactCIEnabled,
+	}
 }
 
 func (s *CMDBSink) Name() string { return "servicenow-cmdb" }
@@ -158,16 +188,16 @@ type reportedPayload struct {
 func (s *CMDBSink) Deliver(ctx context.Context, ev events.Event) error {
 	switch ev.Type {
 	case CMDBEventType:
-		// Both of these create configuration items, so both are gated. They
-		// also disagree with each other: this one keys images by image_id via
-		// IRE while deliverArtifact creates them by name via the Table API, so
-		// leaving one on and one off would have Fides duplicating its own CIs.
-		if !s.inventory() {
+		// Mirroring a whole environment is the write that collides with a CMDB
+		// somebody else owns, so it is opt-in.
+		if !s.snapshotInventory() {
 			return nil
 		}
 		return s.deliverSnapshot(ctx, ev)
 	case ArtifactEventType:
-		if !s.inventory() {
+		// One CI for one binary Fides built, only when no CI for that digest
+		// exists. Gated separately and on by default — see ArtifactCIEnabled.
+		if !s.artifactCI() {
 			return nil
 		}
 		return s.deliverArtifact(ctx, ev)
