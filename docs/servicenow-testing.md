@@ -146,6 +146,36 @@ with no other integration writing CIs. When you do, add a matching
 > successfully and then attributable to nobody. Both paths now use the
 > configured source.
 
+### The change gate still anchors with inventory off
+
+Worth knowing before you reach for the flag, because it is the thing that makes
+"off" a sensible default rather than a loss of function.
+
+The change gate anchors a change to the binary it deployed by resolving the
+trail's artifact digests to image CIs (`ResolveImageCIsByDigest`), then setting
+`change_request.cmdb_ci` and the Affected CIs list. That resolution matches the
+digest inside `short_description` — **not** a Fides-specific field — so it finds
+image CIs written by whoever owns the CMDB just as happily as ones Fides wrote.
+
+Verified on the shared instance: a full digest resolves to exactly one CI, ARC's
+(`discovery_source=karc-portal`), and a bogus digest to none. So with inventory
+off, the change gate anchors changes to **the owner's** CIs instead of to Fides'
+duplicates — a better outcome than what it did before, not a degraded one.
+
+The rule that follows:
+
+| Situation | `FIDES_SNOW_CMDB_ENABLED` | Why |
+|---|---|---|
+| Another system owns the CMDB (ARC, an SGC, Discovery) | **off** | it already has image CIs; the change gate resolves against those |
+| Fides is the only thing writing CIs | **on** | nothing else creates them, so anchoring would find nothing |
+
+If you turn it on, add a `discovery_source` choice for Fides so its CIs are
+attributable, and run the suite with `CMDB_INVENTORY=1`.
+
+`TestResolveImageCIsByDigestMatchesForeignShortDescription` pins the query
+format. Switching it to `image_id` would look tidier and would silently stop
+resolving anything Fides did not write itself.
+
 ## Prerequisites on the instance
 
 **The discovery source must be a valid choice.** IRE validates
