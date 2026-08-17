@@ -22,8 +22,15 @@ func (s *Server) handleSearchArtifacts(w http.ResponseWriter, r *http.Request) {
 	commit := r.URL.Query().Get("commit")
 	name := r.URL.Query().Get("name")
 
+	// a.trail_id is selected because resolving a digest to the trail it was
+	// built on is the one thing a deploy gate needs and this endpoint could not
+	// answer. Without it a caller had to fall back to GET /api/v1/artifacts,
+	// which takes no filter, has no LIMIT, and runs a per-row SBOM query
+	// embedding the payload — so the whole organisation's SBOMs came back to
+	// learn one 36-byte id. The join was already here; only the column was
+	// missing.
 	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT a.sha256, a.name, a.type, a.created_at, COALESCE(t.git_commit, '')
+		`SELECT a.sha256, a.name, a.type, a.created_at, COALESCE(t.git_commit, ''), a.trail_id
 		 FROM artifacts a LEFT JOIN trails t ON t.id = a.trail_id
 		 WHERE a.org_id = $1
 		   AND ($2 = '' OR a.sha256 LIKE $2 || '%')
@@ -39,11 +46,19 @@ func (s *Server) handleSearchArtifacts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var sha256, n, typ, gitCommit string
 		var created interface{}
-		if err := rows.Scan(&sha256, &n, &typ, &created, &gitCommit); err != nil {
+		// Nullable: an artifact can be reported without a trail, and the join
+		// is a LEFT JOIN for that reason. Kept as *uuid.UUID so it serialises
+		// as a string or null, matching models.Artifact.TrailID — a caller
+		// reading trail_id should not have to care which endpoint it came from.
+		var trailID *uuid.UUID
+		if err := rows.Scan(&sha256, &n, &typ, &created, &gitCommit, &trailID); err != nil {
 			internalError(w, err)
 			return
 		}
-		out = append(out, map[string]any{"sha256": sha256, "name": n, "type": typ, "git_commit": gitCommit, "created_at": created})
+		out = append(out, map[string]any{
+			"sha256": sha256, "name": n, "type": typ,
+			"git_commit": gitCommit, "created_at": created, "trail_id": trailID,
+		})
 	}
 	writeJSON(w, out)
 }
