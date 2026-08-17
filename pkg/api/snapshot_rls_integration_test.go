@@ -58,7 +58,9 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open super: %v", err)
 	}
-	defer super.Close()
+	// Closed via Cleanup, not defer: deferred calls run before any t.Cleanup,
+	// so this closed the pool before the row cleanup below could use it.
+	t.Cleanup(func() { super.Close() })
 	if err := super.Ping(); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
