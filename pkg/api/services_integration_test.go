@@ -27,7 +27,10 @@ func TestServiceRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer pool.Close()
+	// Closed via Cleanup, not defer: deferred calls run before any t.Cleanup,
+	// so `defer pool.Close()` closed the pool before the cleanups below could
+	// use it. Registered here so LIFO runs it last.
+	t.Cleanup(func() { pool.Close() })
 	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
 	pool.Exec(string(schema))
 	mig, _ := os.ReadFile(filepath.Join("..", "..", "pkg", "db", "migrations", "0024_service_registry.sql"))

@@ -24,7 +24,10 @@ func TestServiceNowConfigIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer pool.Close()
+	// Closed via Cleanup, not defer: deferred calls run before any t.Cleanup,
+	// so `defer pool.Close()` closed the pool before the cleanups below could
+	// use it. Registered here so LIFO runs it last.
+	t.Cleanup(func() { pool.Close() })
 	if err := pool.Ping(); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
