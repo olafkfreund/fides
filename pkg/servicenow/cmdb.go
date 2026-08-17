@@ -25,8 +25,9 @@ type RunningService struct {
 //   - cmdb_ci_docker_image        (per unique image digest)
 //   - cmdb_ci_docker_container    (the running instance)
 //
-// with relations container->image ("Instantiated From") and
-// container->service ("Depends on::Used by").
+// with relations image->container ("Instantiates::Instance of") and
+// container->service ("Depends on::Used by"). Both names must exist in
+// cmdb_rel_type or IRE rejects the relation.
 func BuildIREPayload(services []RunningService) IREPayload {
 	var p IREPayload
 	serviceIdx := map[string]int{} // service name -> items index
@@ -54,9 +55,13 @@ func BuildIREPayload(services []RunningService) IREPayload {
 			if i, ok := imageIdx[svc.Digest]; ok {
 				imgIdx = i
 			} else {
+				// image_id, not digest: the IRE identify rule for
+				// cmdb_ci_docker_image matches on image_id, so a payload
+				// carrying only name+digest is rejected as
+				// MISSING_MATCHING_ATTRIBUTES and no CI is created.
 				vals := map[string]any{
-					"name":   nameFor(svc.Repository, svc.Service),
-					"digest": "sha256:" + svc.Digest,
+					"name":     nameFor(svc.Repository, svc.Service),
+					"image_id": "sha256:" + svc.Digest,
 				}
 				if svc.Repository != "" {
 					vals["repository"] = svc.Repository
@@ -66,14 +71,21 @@ func BuildIREPayload(services []RunningService) IREPayload {
 			}
 		}
 
-		// Container CI (the running instance).
+		// Container CI (the running instance). container_id is the identify
+		// rule's matching attribute, so it has to be present and stable — the
+		// name already encodes service+digest, which is exactly that.
 		cIdx := add(IREItem{ClassName: "cmdb_ci_docker_container", Values: map[string]any{
-			"name":  containerName(svc),
-			"state": "running",
+			"name":         containerName(svc),
+			"container_id": containerName(svc),
+			"state":        "running",
 		}})
 
 		if imgIdx >= 0 {
-			p.Relations = append(p.Relations, IRERelation{Parent: cIdx, Child: imgIdx, Type: "Instantiated From"})
+			// "Instantiates::Instance of" reads parent-instantiates-child, so
+			// the image is the parent and the container the child. The former
+			// "Instantiated From" is not a cmdb_rel_type name at all and every
+			// relation carrying it was rejected.
+			p.Relations = append(p.Relations, IRERelation{Parent: imgIdx, Child: cIdx, Type: "Instantiates::Instance of"})
 		}
 		p.Relations = append(p.Relations, IRERelation{Parent: cIdx, Child: sIdx, Type: "Depends on::Used by"})
 	}
@@ -160,7 +172,7 @@ func (s *CMDBSink) deliverSnapshot(ctx context.Context, ev events.Event) error {
 	if err != nil {
 		return err
 	}
-	return client.IdentifyReconcile(ctx, BuildIREPayload(p.Services), nil)
+	return client.IdentifyReconcile(ctx, BuildIREPayload(p.Services))
 }
 
 // ---- Deployment attestation anchoring ----

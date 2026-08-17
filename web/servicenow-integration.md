@@ -1,6 +1,6 @@
 # ServiceNow Integration
 
-Fides integrates with ServiceNow across four surfaces, all driven by the
+Fides integrates with ServiceNow across the surfaces below, all driven by the
 event/outbox core and opt-in via `FIDES_EVENTS_ENABLED=true`:
 
 | Surface | What it does | Mechanism |
@@ -8,14 +8,25 @@ event/outbox core and opt-in via `FIDES_EVENTS_ENABLED=true`:
 | **CMDB** | Upserts running services/images/containers as CIs | IRE (`/api/now/identifyreconcile`), `snapshot.reported` → `CMDBSink` |
 | **ITOM** | Alerts on shadow deployments & runtime drift | Event Management (`/api/global/em/jsonv2`), `snapshot.noncompliant` → `ITOMSink` |
 | **ITSM** | Gates deploys on an approved change request | Table API (`change_request`), `POST /api/v1/servicenow/change-check` |
+| **Change gate** | Writes the evidence-backed verdict + risk score onto the change | Table API PATCH, `POST /api/v1/servicenow/change-gate` |
+| **Control linkage** | Records which control a change implements, as a work note | Table API PATCH, `POST /api/v1/servicenow/link-control` |
 | **CMDB anchoring** | Attaches a signed deployment attestation to the CI on change close / deploy | Attachment API (`/api/now/attachment/file`), `deployment.attested` → `CMDBSink` |
+| **Now Assist grounding** | Serves signed evidence as grounding context for change-risk prediction | `GET /api/v1/servicenow/grounding` |
 | **MCP** | Dev-agent tools for change status / incidents / CMDB | `fides-mcp` tools → Fides endpoints → Table API |
+| **Inbound spoke** | Verifies the Fides HMAC on webhooks, inside ServiceNow | Scripted REST API + `FidesWebhookVerifier` |
+
+To exercise all of these against a real instance and verify in ServiceNow that
+they landed, see [Testing the ServiceNow integration](servicenow-testing.md).
 
 ## 1. ServiceNow service account & roles
 
 Create a dedicated integration user and grant least-privilege roles per surface:
 
-- **CMDB (IRE)**: `import_transformer` (and `itil` for read).
+- **CMDB (IRE)**: `import_transformer` (and `itil` for read). The instance must
+  also have a valid `cmdb_ci.discovery_source` choice for Fides to write under —
+  it defaults to `Other Automated`, overridable with
+  `FIDES_SNOW_DISCOVERY_SOURCE`. IRE rejects the whole payload if the value is
+  not a listed choice, and it reports that rejection *inside an HTTP 200*.
 - **ITOM (Event Management)**: `evt_mgmt_integration` / `sn_event_read` (write to `em_event`).
 - **ITSM (Table API)**: `itil` (read `change_request`, create `incident`).
 - **CMDB read (MCP search)**: `cmdb_read` / `itil`.
@@ -165,3 +176,9 @@ it's what the change actually authorized), or by name via `--ci`/`ci`. Fides:
   is covered by `pkg/servicenow` unit tests against an httptest mock.
 - `DBLoader` config resolution is covered by a Postgres-backed integration test
   (`pkg/servicenow`, gated by `FIDES_TEST_DB_DSN`), run in CI.
+- **Neither of those touches ServiceNow.** A mock accepts whatever it is sent,
+  so the unit tests prove Fides speaks, not that ServiceNow understands — which
+  is how a CMDB payload ServiceNow rejected in full shipped green for months.
+  `scripts/servicenow-e2e.sh` drives every surface against a real instance and
+  verifies each one by reading the record back through ServiceNow's own Table
+  API. See [Testing the ServiceNow integration](servicenow-testing.md).

@@ -52,11 +52,35 @@ func TestBuildIREPayload(t *testing.T) {
 			t.Fatalf("relation index out of range: %+v", rel)
 		}
 	}
+	// The IRE identify rules match cmdb_ci_docker_image on image_id and
+	// cmdb_ci_docker_container on container_id. Omit either and ServiceNow
+	// rejects the item with MISSING_MATCHING_ATTRIBUTES and creates nothing.
 	for _, it := range p.Items {
-		if it.ClassName == "cmdb_ci_docker_image" {
-			if d, _ := it.Values["digest"].(string); d[:7] != "sha256:" {
-				t.Errorf("image digest must be sha256-prefixed, got %q", d)
+		switch it.ClassName {
+		case "cmdb_ci_docker_image":
+			d, _ := it.Values["image_id"].(string)
+			if !strings.HasPrefix(d, "sha256:") {
+				t.Errorf("image_id must be sha256-prefixed, got %q", d)
 			}
+		case "cmdb_ci_docker_container":
+			if id, _ := it.Values["container_id"].(string); id == "" {
+				t.Errorf("container CI must carry container_id, got %+v", it.Values)
+			}
+		}
+	}
+
+	// Relation names must exist in cmdb_rel_type, and "Instantiates::Instance
+	// of" reads parent-instantiates-child, so the image is the parent.
+	for _, rel := range p.Relations {
+		switch rel.Type {
+		case "Instantiates::Instance of":
+			if p.Items[rel.Parent].ClassName != "cmdb_ci_docker_image" {
+				t.Errorf("image must be the parent of the instantiates relation, got %s",
+					p.Items[rel.Parent].ClassName)
+			}
+		case "Depends on::Used by":
+		default:
+			t.Errorf("unknown cmdb_rel_type name %q", rel.Type)
 		}
 	}
 }
