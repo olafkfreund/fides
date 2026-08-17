@@ -11,6 +11,40 @@ import (
 	"fides/pkg/ledger"
 )
 
+// The change gate anchors a change to the binary it deployed by resolving
+// artifact digests to image CIs. Since CI-inventory writes are opt-in, on a
+// shared instance those CIs belong to whoever owns the CMDB — verified against
+// calitiiltddemo3, where a full digest resolves to ARC's karc-portal CI.
+//
+// That works only because the query matches the digest inside short_description.
+// Switching it to image_id would look tidier and would silently stop resolving
+// anything not written by Fides itself, taking change->binary traceability with
+// it wherever Fides is not the CMDB's owner. Hence this test.
+func TestResolveImageCIsByDigestMatchesForeignShortDescription(t *testing.T) {
+	const digest = "3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f"
+
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("sysparm_query")
+		// Shaped like a CI written by another system (ARC): the digest lives in
+		// short_description, image_id is empty, discovery_source is not ours.
+		w.Write([]byte(`{"result":[{"sys_id":"bb57cbc0c3ba","name":"postgres:15-alpine@sha256:3d0f7584ed7d",` +
+			`"image_id":"","discovery_source":"karc-portal"}]}`))
+	}))
+	defer srv.Close()
+
+	got := ResolveImageCIsByDigest(context.Background(), testClient(srv.URL, AuthBasic, srv.Client()),
+		[]string{"sha256:" + digest})
+
+	if len(got) != 1 || got[0] != "bb57cbc0c3ba" {
+		t.Fatalf("expected to resolve the foreign-owned CI, got %v", got)
+	}
+	if !strings.Contains(gotQuery, "short_descriptionLIKEsha256:"+digest) {
+		t.Fatalf("must match the digest in short_description so CIs owned by another\n"+
+			"system still resolve; query was %q", gotQuery)
+	}
+}
+
 func TestQueryChangeRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/now/table/change_request" {
