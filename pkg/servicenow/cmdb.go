@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -116,14 +117,32 @@ func containerName(svc RunningService) string {
 // CMDBEventType is the event the CMDB sink consumes (emitted on every snapshot).
 const CMDBEventType = "snapshot.reported"
 
+// CMDBInventoryEnabled reports whether Fides may create CMDB configuration
+// items — the running services, images and containers it observes.
+//
+// This is off by default, and deliberately so. On a shared instance the CMDB
+// usually already has an owner: ARC, for example, syncs 274 Kubernetes
+// workloads and 315 build artifacts into the same instance Fides points at,
+// keyed by a name-encoded digest. Fides keys images by image_id through IRE,
+// which cannot reconcile against that, so both writing produces two
+// disconnected records for one binary — the classic duplicate-CI failure.
+//
+// Evidence anchoring is NOT gated by this. Attaching a signed attestation to a
+// CI somebody else owns is exactly the division of labour a shared CMDB wants,
+// and it is the integration ARC's own CSDM model asks Fides for.
+func CMDBInventoryEnabled() bool {
+	return os.Getenv("FIDES_SNOW_CMDB_ENABLED") == "true"
+}
+
 // CMDBSink reconciles running services into ServiceNow CMDB via IRE.
 type CMDBSink struct {
 	loader    Loader
 	newClient func(Config) (*Client, error)
+	inventory func() bool // overridable in tests
 }
 
 func NewCMDBSink(loader Loader) *CMDBSink {
-	return &CMDBSink{loader: loader, newClient: New}
+	return &CMDBSink{loader: loader, newClient: New, inventory: CMDBInventoryEnabled}
 }
 
 func (s *CMDBSink) Name() string { return "servicenow-cmdb" }
@@ -139,11 +158,21 @@ type reportedPayload struct {
 func (s *CMDBSink) Deliver(ctx context.Context, ev events.Event) error {
 	switch ev.Type {
 	case CMDBEventType:
+		// Both of these create configuration items, so both are gated. They
+		// also disagree with each other: this one keys images by image_id via
+		// IRE while deliverArtifact creates them by name via the Table API, so
+		// leaving one on and one off would have Fides duplicating its own CIs.
+		if !s.inventory() {
+			return nil
+		}
 		return s.deliverSnapshot(ctx, ev)
+	case ArtifactEventType:
+		if !s.inventory() {
+			return nil
+		}
+		return s.deliverArtifact(ctx, ev)
 	case AnchorEventType:
 		return s.deliverAnchor(ctx, ev)
-	case ArtifactEventType:
-		return s.deliverArtifact(ctx, ev)
 	default:
 		return nil
 	}
@@ -249,10 +278,15 @@ func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
 	if len(short) > 12 {
 		short = short[:12]
 	}
+	// discovery_source must be a valid choice of cmdb_ci.discovery_source. The
+	// Table API does not validate it the way IRE does — it stores an unknown
+	// value as empty and returns 201, so a hardcoded "fides" produced CIs that
+	// were created successfully and then attributable to nobody. Use the same
+	// configured source the IRE path uses.
 	_, err = client.CreateRecord(ctx, "cmdb_ci_docker_image", map[string]any{
 		"name":               fmt.Sprintf("%s@sha256:%s", name, short),
 		"short_description":  fmt.Sprintf("%s binary digest sha256:%s", name, sha),
-		"discovery_source":   "fides",
+		"discovery_source":   client.cfg.DataSource,
 		"operational_status": "1",
 	})
 	return err
