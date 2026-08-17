@@ -30,7 +30,10 @@ func TestRemediationLifecycleIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer pool.Close()
+	// Closed via Cleanup, not defer: deferred calls run before any t.Cleanup,
+	// so `defer pool.Close()` closed the pool before the cleanups below could
+	// use it. Registered here so LIFO runs it last.
+	t.Cleanup(func() { pool.Close() })
 	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
@@ -125,7 +128,10 @@ func TestRemediationRejectIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer pool.Close()
+	// Closed via Cleanup, not defer: deferred calls run before any t.Cleanup,
+	// so `defer pool.Close()` closed the pool before the cleanups below could
+	// use it. Registered here so LIFO runs it last.
+	t.Cleanup(func() { pool.Close() })
 
 	org, env := uuid.New(), uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
