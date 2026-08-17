@@ -53,18 +53,20 @@ func (s *Server) authServiceAccountKey(ctx context.Context, token string) *auth.
 		return nil
 	}
 	var (
-		orgID     uuid.UUID
-		role      string
-		enabled   bool
-		keyID     uuid.UUID
-		keyHash   string
-		expiresAt *time.Time
-		revokedAt *time.Time
+		orgID       uuid.UUID
+		role        string
+		enabled     bool
+		keyID       uuid.UUID
+		keyHash     string
+		expiresAt   *time.Time
+		revokedAt   *time.Time
+		mayDelegate bool
 	)
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT sa.org_id, sa.role, sa.enabled, k.id, k.key_hash, k.expires_at, k.revoked_at
+		`SELECT sa.org_id, sa.role, sa.enabled, sa.may_delegate_approvals,
+		        k.id, k.key_hash, k.expires_at, k.revoked_at
 		 FROM service_account_keys k JOIN service_accounts sa ON sa.id = k.service_account_id
-		 WHERE k.prefix = $1`, prefix).Scan(&orgID, &role, &enabled, &keyID, &keyHash, &expiresAt, &revokedAt)
+		 WHERE k.prefix = $1`, prefix).Scan(&orgID, &role, &enabled, &mayDelegate, &keyID, &keyHash, &expiresAt, &revokedAt)
 	if err != nil {
 		return nil
 	}
@@ -79,7 +81,7 @@ func (s *Server) authServiceAccountKey(ctx context.Context, token string) *auth.
 	}
 	// Best-effort last-used stamp.
 	_, _ = s.DB.ExecContext(ctx, `UPDATE service_account_keys SET last_used_at = now() WHERE id = $1`, keyID)
-	return &auth.Principal{OrgID: orgID, Role: role, Kind: "service"}
+	return &auth.Principal{OrgID: orgID, Role: role, Kind: "service", MayDelegateApprovals: mayDelegate}
 }
 
 // ----- management handlers (Admin only) -----
@@ -113,6 +115,10 @@ func (s *Server) handleCreateServiceAccount(w http.ResponseWriter, r *http.Reque
 	var req struct {
 		Name string `json:"name"`
 		Role string `json:"role"`
+		// MayDelegateApprovals grants the narrow permission to record an
+		// approval on behalf of a named human. Separate from Role on purpose —
+		// see resolveApprovalDelegation.
+		MayDelegateApprovals bool `json:"may_delegate_approvals"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -127,14 +133,18 @@ func (s *Server) handleCreateServiceAccount(w http.ResponseWriter, r *http.Reque
 	}
 	id := uuid.New()
 	if _, err := s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO service_accounts (id, org_id, name, role) VALUES ($1, $2, $3, $4)`,
-		id, p.OrgID, req.Name, req.Role); err != nil {
+		`INSERT INTO service_accounts (id, org_id, name, role, may_delegate_approvals)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		id, p.OrgID, req.Name, req.Role, req.MayDelegateApprovals); err != nil {
 		internalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]any{"id": id, "name": req.Name, "role": req.Role})
+	json.NewEncoder(w).Encode(map[string]any{
+		"id": id, "name": req.Name, "role": req.Role,
+		"may_delegate_approvals": req.MayDelegateApprovals,
+	})
 }
 
 func (s *Server) handleListServiceAccounts(w http.ResponseWriter, r *http.Request) {
@@ -288,4 +298,59 @@ func (s *Server) handleRevokeServiceAccountKey(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"revoked"}`))
+}
+
+// handleSetServiceAccountDelegation grants or revokes the narrow permission to
+// record an approval on behalf of a named human.
+//
+// Separate from role, and separate from issuing a key, because it has to be
+// grantable to an account that already exists: the alternative is recreating
+// the service account, which means reissuing its keys and rotating a
+// credential in whatever pipeline is holding it, in order to change one
+// boolean.
+//
+// Admin only. Granting the right to attribute approvals to other people is an
+// administrative act even though holding it is not.
+func (s *Server) handleSetServiceAccountDelegation(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	saID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid service account id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		MayDelegateApprovals *bool `json:"may_delegate_approvals"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	// A pointer, so that an absent field is refused rather than read as false.
+	// Silently revoking a permission because a caller sent {} would be a
+	// surprising way to break a pipeline's ability to record sign-offs.
+	if req.MayDelegateApprovals == nil {
+		http.Error(w, "may_delegate_approvals is required (true or false)", http.StatusBadRequest)
+		return
+	}
+
+	// Org-scoped, so an Admin cannot grant delegation on another tenant's
+	// service account by guessing an id.
+	res, err := s.q(r.Context()).ExecContext(r.Context(),
+		`UPDATE service_accounts SET may_delegate_approvals = $1 WHERE id = $2 AND org_id = $3`,
+		*req.MayDelegateApprovals, saID, p.OrgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "service account not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"id": saID, "may_delegate_approvals": *req.MayDelegateApprovals,
+	})
 }

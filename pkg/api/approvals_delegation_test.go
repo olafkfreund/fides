@@ -244,3 +244,75 @@ func TestRecordApprovalDelegationIntegration(t *testing.T) {
 		}
 	})
 }
+
+// The capability that exists so Admin does not have to.
+//
+// Requiring Admin to delegate coupled two things that should not be: recording
+// who signed off on a deploy, and being able to create service accounts,
+// rewrite controls and register users. A deploy tool needs the first and should
+// not hold the second — but without delegation its approvals are stored as kind
+// "service" and the change gate never counts them, which is worse than either.
+func TestDelegationDoesNotRequireAdmin(t *testing.T) {
+	org := uuid.New()
+	const target = "approver@example.com"
+
+	for _, tc := range []struct {
+		name        string
+		principal   *auth.Principal
+		wantHonored bool
+	}{
+		{
+			// The case this exists for: least privilege and a countable
+			// sign-off at the same time.
+			name:        "writer service token with the capability",
+			principal:   &auth.Principal{OrgID: org, Role: auth.RoleWriter, Kind: "service", MayDelegateApprovals: true},
+			wantHonored: true,
+		},
+		{
+			// Still accepted, so no deployment breaks on upgrade. Broader than
+			// intended, not wrong.
+			name:        "admin service token, no capability",
+			principal:   &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "service"},
+			wantHonored: true,
+		},
+		{
+			// Default-deny survives: the capability is not implied by being
+			// able to write evidence.
+			name:        "writer service token without the capability",
+			principal:   &auth.Principal{OrgID: org, Role: auth.RoleWriter, Kind: "service"},
+			wantHonored: false,
+		},
+		{
+			// A viewer granted it can delegate, and that is intentional —
+			// recording who approved is not the same permission as writing
+			// evidence, and coupling them is the mistake being undone here.
+			name:        "viewer service token with the capability",
+			principal:   &auth.Principal{OrgID: org, Role: auth.RoleViewer, Kind: "service", MayDelegateApprovals: true},
+			wantHonored: true,
+		},
+		{
+			// A human session never delegates: they are already the approver,
+			// and honouring it would let someone sign in someone else's name.
+			name:        "human session with the capability",
+			principal:   &auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session", Email: "human@example.com", MayDelegateApprovals: true},
+			wantHonored: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := resolveApprovalDelegation(true, tc.principal, target)
+			if got.honored != tc.wantHonored {
+				t.Errorf("honored = %v, want %v", got.honored, tc.wantHonored)
+			}
+			if !got.requested {
+				t.Error("requested = false; an on_behalf_of was supplied")
+			}
+		})
+	}
+
+	// The server-side flag still gates everything, capability or not.
+	if got := resolveApprovalDelegation(false, &auth.Principal{
+		OrgID: org, Role: auth.RoleWriter, Kind: "service", MayDelegateApprovals: true,
+	}, target); got.honored {
+		t.Error("delegation was honored with FIDES_DELEGATED_APPROVAL_ENABLED off")
+	}
+}
