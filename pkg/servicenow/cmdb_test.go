@@ -85,6 +85,64 @@ func TestBuildIREPayload(t *testing.T) {
 	}
 }
 
+// CI-inventory writes are off unless explicitly enabled, because on a shared
+// instance the CMDB already has an owner and Fides would duplicate its CIs.
+// Evidence anchoring is not inventory and must keep working regardless.
+func TestCMDBSinkInventoryGate(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		event     string
+		inventory bool
+		wantCall  bool
+	}{
+		{"snapshot suppressed when inventory is off", CMDBEventType, false, false},
+		{"snapshot delivered when inventory is on", CMDBEventType, true, true},
+		{"artifact suppressed when inventory is off", ArtifactEventType, false, false},
+		{"artifact delivered when inventory is on", ArtifactEventType, true, true},
+		// The whole point of gating inventory rather than the sink: attaching
+		// evidence to a CI someone else owns stays on.
+		{"anchoring is never gated", AnchorEventType, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var called bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				w.Write([]byte(`{"result":{"hasError":false,"items":[]}}`))
+			}))
+			defer srv.Close()
+
+			sink := NewCMDBSink(fakeLoader{
+				cfg:     Config{InstanceURL: srv.URL, AuthType: AuthBasic, ClientID: "u", Secret: "p"},
+				enabled: true,
+			})
+			sink.inventory = func() bool { return tc.inventory }
+			sink.newClient = func(cfg Config) (*Client, error) {
+				return testClient(cfg.InstanceURL, AuthBasic, srv.Client()), nil
+			}
+
+			payload := `{"environment":"e","services":[{"service":"s","digest":"abc","registered":true}]}`
+			switch tc.event {
+			case ArtifactEventType:
+				payload = `{"sha256":"abc","name":"img","type":"docker"}`
+			case AnchorEventType:
+				payload = `{"ci":"x","trail_id":"t","image_digest":"abc"}`
+			}
+
+			err := sink.Deliver(context.Background(), events.Event{
+				OrgID: uuid.New(), Type: tc.event, Payload: []byte(payload),
+			})
+			// Anchoring against a stub server may legitimately error; the
+			// assertion here is only about whether ServiceNow was contacted.
+			if tc.event != AnchorEventType && err != nil {
+				t.Fatalf("Deliver: %v", err)
+			}
+			if called != tc.wantCall {
+				t.Fatalf("ServiceNow contacted = %v, want %v", called, tc.wantCall)
+			}
+		})
+	}
+}
+
 func TestCMDBSinkPostsIRE(t *testing.T) {
 	var gotPath string
 	var body IREPayload
@@ -103,6 +161,8 @@ func TestCMDBSinkPostsIRE(t *testing.T) {
 	sink.newClient = func(cfg Config) (*Client, error) {
 		return testClient(cfg.InstanceURL, cfg.AuthType, srv.Client()), nil
 	}
+	// CI inventory is opt-in; this test is about what gets posted once it is on.
+	sink.inventory = func() bool { return true }
 
 	payload, _ := json.Marshal(reportedPayload{
 		Environment: "prod",

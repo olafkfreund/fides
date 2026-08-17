@@ -112,6 +112,40 @@ produce a commit, so only a periodic live run will find them.
 Required configuration: secrets `FIDES_SERVER_URL`, `FIDES_API_TOKEN`, `SN_URL`,
 `SN_USER`, `SN_PASS`, and variable `FIDES_FLOW_ID`.
 
+## Who owns the CMDB
+
+Fides only creates configuration items when `FIDES_SNOW_CMDB_ENABLED=true`. It
+is **off by default**, and that default is the important part.
+
+A CMDB usually already has an owner. On the instance this was developed against,
+ARC syncs 274 Kubernetes workloads, 315 build artifacts and its own image CIs —
+keyed by a **name-encoded digest** (`myapp:tag@sha256:abcdef123456`) written
+through the Table API. Fides keys images by `image_id` through IRE. Neither can
+reconcile against the other, so with both writing, one binary ends up as two
+disconnected records. That is the textbook duplicate-CI cause: multiple sources
+pushing the same thing under different identifiers.
+
+The flag covers both CI-inventory writers — the snapshot path (IRE) and the
+artifact path (Table API). They are gated together on purpose: they disagree
+with each other about how an image CI is keyed, so enabling one without the
+other has Fides duplicating its own records.
+
+**Evidence anchoring is never gated.** Attaching a signed attestation to a CI
+somebody else owns is the whole point on a shared instance, and it is precisely
+the integration ARC's own CSDM model asks Fides for (`sn_grc_item` evidence
+against an existing CI). Turning inventory off does not cost you any evidence.
+
+Enable it only where Fides is the CMDB's source of truth — a standalone tenant
+with no other integration writing CIs. When you do, add a matching
+`discovery_source` choice so the CIs are attributable, and run the suite with
+`CMDB_INVENTORY=1` so it asserts the writes instead of asserting the gate holds.
+
+> `discovery_source` is validated by IRE but **not** by the Table API, which
+> stores an unknown value as empty and still returns 201. Fides shipped a
+> hardcoded `"fides"` that was not a valid choice, so those CIs were created
+> successfully and then attributable to nobody. Both paths now use the
+> configured source.
+
 ## Prerequisites on the instance
 
 **The discovery source must be a valid choice.** IRE validates

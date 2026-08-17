@@ -19,6 +19,9 @@
 #   SN_URL             https://<instance>.service-now.com
 #   SN_USER / SN_PASS  ServiceNow service account
 #   KEEP=1             keep the records created (default: report them for cleanup)
+#   CMDB_INVENTORY=1   assert Fides writes CMDB CIs (only where Fides owns the
+#                      CMDB; on an ARC-owned instance leave unset and the suite
+#                      asserts the gate holds instead)
 #
 # Exit code is the number of failed checks, so CI can gate on it.
 set -uo pipefail
@@ -31,6 +34,7 @@ set -uo pipefail
 
 RUN_ID="e2e-$(date +%s)"
 FAILED=0
+SKIPPED=0
 PASSED=0
 
 fides()  { curl -fsS -H "Authorization: Bearer $FIDES_API_TOKEN" "$@"; }
@@ -46,6 +50,11 @@ ok() {
     printf '  \033[31mFAIL\033[0m %s%s\n' "$1" "${3:+ — $3}"; FAILED=$((FAILED+1))
   fi
 }
+
+# skip <name> <why> — not a pass and not a failure. A suite that reports red for
+# a deliberately disabled feature trains people to ignore it, which costs more
+# than the check is worth.
+skip() { printf '  \033[33mSKIP\033[0m %s — %s\n' "$1" "$2"; SKIPPED=$((SKIPPED+1)); }
 
 section() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
@@ -93,31 +102,45 @@ ok "snapshot reports the unregistered digest as a shadow" \
 echo "  waiting for the outbox dispatcher..."
 sleep 20
 
-# The read-back. This is the check the old mock-only suite could not express:
-# it fails whenever IRE rejects the sink's payload, which it did — silently,
-# inside an HTTP 200 — for every release before this one.
-for t in cmdb_ci_service_discovered cmdb_ci_docker_container; do
-  n=0
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    n=$(snget --data-urlencode "sysparm_query=nameLIKE$SVC" --data-urlencode 'sysparm_fields=sys_id' \
-          "$SN_URL/api/now/table/$t" | jqp 'print(len(json.load(sys.stdin)["result"]))')
-    [ "${n:-0}" -ge 1 ] && break
-    sleep 6
+# CI-inventory writes are opt-in (FIDES_SNOW_CMDB_ENABLED on the server), because
+# on a shared instance the CMDB already has an owner. Set CMDB_INVENTORY=1 here
+# to assert they happen; otherwise assert only that the sink stayed quiet, which
+# is the correct behaviour on an ARC-owned instance.
+if [ "${CMDB_INVENTORY:-0}" = 1 ]; then
+  # The read-back the old mock-only suite could not express: it fails whenever
+  # IRE rejects the sink's payload, which it did — silently, inside an HTTP 200
+  # — for every release before the fix.
+  for t in cmdb_ci_service_discovered cmdb_ci_docker_container; do
+    n=0
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      n=$(snget --data-urlencode "sysparm_query=nameLIKE$SVC" --data-urlencode 'sysparm_fields=sys_id' \
+            "$SN_URL/api/now/table/$t" | jqp 'print(len(json.load(sys.stdin)["result"]))')
+      [ "${n:-0}" -ge 1 ] && break
+      sleep 6
+    done
+    ok "CMDB sink created $t" "$([ "${n:-0}" -ge 1 ] && echo true || echo false)" "found $n"
   done
-  ok "CMDB sink created $t" "$([ "${n:-0}" -ge 1 ] && echo true || echo false)" "found $n"
-done
 
-# Relations are checked separately because they fail independently of the items:
-# a relation whose type is not a cmdb_rel_type name is rejected on its own, and
-# "Instantiated From" — which Fides used to send — is not one.
-RELS=$(snget --data-urlencode "sysparm_query=parent.nameLIKE$SVC^ORchild.nameLIKE$SVC" \
-  --data-urlencode 'sysparm_fields=type' --data-urlencode 'sysparm_display_value=true' \
-  "$SN_URL/api/now/table/cmdb_rel_ci" \
-  | jqp 'print(",".join(r["type"]["display_value"] for r in json.load(sys.stdin)["result"]))')
-ok "image->container relation created" \
-   "$(printf '%s' "$RELS" | grep -q 'Instantiates::Instance of' && echo true || echo false)" "types=$RELS"
-ok "container->service relation created" \
-   "$(printf '%s' "$RELS" | grep -q 'Depends on::Used by' && echo true || echo false)" "types=$RELS"
+  # Relations are checked separately because they fail independently of the
+  # items: a relation whose type is not a cmdb_rel_type name is rejected on its
+  # own, and "Instantiated From" — which Fides used to send — is not one.
+  RELS=$(snget --data-urlencode "sysparm_query=parent.nameLIKE$SVC^ORchild.nameLIKE$SVC" \
+    --data-urlencode 'sysparm_fields=type' --data-urlencode 'sysparm_display_value=true' \
+    "$SN_URL/api/now/table/cmdb_rel_ci" \
+    | jqp 'print(",".join(r["type"]["display_value"] for r in json.load(sys.stdin)["result"]))')
+  ok "image->container relation created" \
+     "$(printf '%s' "$RELS" | grep -q 'Instantiates::Instance of' && echo true || echo false)" "types=$RELS"
+  ok "container->service relation created" \
+     "$(printf '%s' "$RELS" | grep -q 'Depends on::Used by' && echo true || echo false)" "types=$RELS"
+else
+  # Assert the gate actually holds. A disabled feature that still writes is
+  # worse than one that never worked, because nobody is looking.
+  LEAKED=$(snget --data-urlencode "sysparm_query=nameLIKE$SVC" --data-urlencode 'sysparm_fields=sys_id' \
+    "$SN_URL/api/now/table/cmdb_ci" | jqp 'print(len(json.load(sys.stdin)["result"]))')
+  ok "CMDB inventory gate holds (no CIs written)" \
+     "$([ "${LEAKED:-0}" -eq 0 ] && echo true || echo false)" "found $LEAKED unexpected CIs"
+  skip "CMDB sink CI/relation assertions" "inventory disabled; set CMDB_INVENTORY=1 when Fides owns the CMDB"
+fi
 
 # ---------------------------------------------------------------------------
 # ITOMSink stamps node with the environment id and source with Fides-Compliance,
@@ -192,7 +215,7 @@ MCP_N=$(fides -H 'Content-Type: application/json' -X POST -d '{"table":"change_r
 ok "MCP lookup returns change_request rows" "$([ "${MCP_N:-0}" -ge 1 ] && echo true || echo false)" "rows=$MCP_N"
 
 # ---------------------------------------------------------------------------
-printf '\n\033[1m== Result: %d passed, %d failed\033[0m\n' "$PASSED" "$FAILED"
+printf '\n\033[1m== Result: %d passed, %d failed, %d skipped\033[0m\n' "$PASSED" "$FAILED" "$SKIPPED"
 echo "Records created (run id $RUN_ID):"
 echo "  change:  $SN_URL/nav_to.do?uri=change_request.do?sys_id=$CHG_SYS"
 echo "  CIs:     name LIKE $SVC"
