@@ -85,23 +85,29 @@ func TestBuildIREPayload(t *testing.T) {
 	}
 }
 
-// CI-inventory writes are off unless explicitly enabled, because on a shared
-// instance the CMDB already has an owner and Fides would duplicate its CIs.
-// Evidence anchoring is not inventory and must keep working regardless.
+// The two CI-inventory writers are gated independently: the snapshot mirror is
+// off by default because it collides with whoever owns the CMDB, while the
+// per-binary artifact CI is on because ARC's reconcile depends on it. Anchoring
+// is not inventory and must keep working regardless of either.
 func TestCMDBSinkInventoryGate(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		event     string
-		inventory bool
-		wantCall  bool
+		name     string
+		event    string
+		snapshot bool
+		artifact bool
+		wantCall bool
 	}{
-		{"snapshot suppressed when inventory is off", CMDBEventType, false, false},
-		{"snapshot delivered when inventory is on", CMDBEventType, true, true},
-		{"artifact suppressed when inventory is off", ArtifactEventType, false, false},
-		{"artifact delivered when inventory is on", ArtifactEventType, true, true},
-		// The whole point of gating inventory rather than the sink: attaching
-		// evidence to a CI someone else owns stays on.
-		{"anchoring is never gated", AnchorEventType, false, true},
+		{"snapshot suppressed when its flag is off", CMDBEventType, false, true, false},
+		{"snapshot delivered when its flag is on", CMDBEventType, true, true, true},
+		{"artifact suppressed when its flag is off", ArtifactEventType, false, false, false},
+		{"artifact delivered when its flag is on", ArtifactEventType, false, true, true},
+		// The two are independent. Defaults are snapshot=off, artifact=on: ARC's
+		// scheduled reconcile reports an artifact and waits for its image CI, so
+		// gating them together left that job polling for a record that would
+		// never arrive.
+		{"artifact survives the snapshot flag being off", ArtifactEventType, false, true, true},
+		// Attaching evidence to a CI someone else owns is never gated.
+		{"anchoring is never gated", AnchorEventType, false, false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var called bool
@@ -115,7 +121,8 @@ func TestCMDBSinkInventoryGate(t *testing.T) {
 				cfg:     Config{InstanceURL: srv.URL, AuthType: AuthBasic, ClientID: "u", Secret: "p"},
 				enabled: true,
 			})
-			sink.inventory = func() bool { return tc.inventory }
+			sink.snapshotInventory = func() bool { return tc.snapshot }
+			sink.artifactCI = func() bool { return tc.artifact }
 			sink.newClient = func(cfg Config) (*Client, error) {
 				return testClient(cfg.InstanceURL, AuthBasic, srv.Client()), nil
 			}
@@ -161,8 +168,8 @@ func TestCMDBSinkPostsIRE(t *testing.T) {
 	sink.newClient = func(cfg Config) (*Client, error) {
 		return testClient(cfg.InstanceURL, cfg.AuthType, srv.Client()), nil
 	}
-	// CI inventory is opt-in; this test is about what gets posted once it is on.
-	sink.inventory = func() bool { return true }
+	// The snapshot mirror is opt-in; this test is about what gets posted once on.
+	sink.snapshotInventory = func() bool { return true }
 
 	payload, _ := json.Marshal(reportedPayload{
 		Environment: "prod",
