@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"strings"
 )
 
 // ----- CMDB: Identification & Reconciliation Engine (IRE) -----
@@ -27,9 +28,71 @@ type IREPayload struct {
 	Relations []IRERelation `json:"relations,omitempty"`
 }
 
+// IREResult is the subset of the IRE response Fides needs to tell success from
+// failure. IRE reports per-item rejections *inside a 200 response*, so a nil
+// error from the transport means nothing on its own — see IdentifyReconcile.
+type IREResult struct {
+	Result struct {
+		HasError  bool         `json:"hasError"`
+		Items     []IREOutcome `json:"items"`
+		Relations []IREOutcome `json:"relations"`
+	} `json:"result"`
+}
+
+// IREOutcome is one item's or relation's fate within an IRE response.
+type IREOutcome struct {
+	ClassName string `json:"className"`
+	SysID     string `json:"sysId"`
+	Errors    []struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// failures renders the distinct error messages across items and relations.
+func (r IREResult) failures() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, o := range append(append([]IREOutcome{}, r.Result.Items...), r.Result.Relations...) {
+		for _, e := range o.Errors {
+			// ABANDONED is a cascade of a real error reported elsewhere; the
+			// root cause is more useful than N copies of the symptom.
+			if e.Error == "ABANDONED" {
+				continue
+			}
+			msg := fmt.Sprintf("%s: %s: %s", o.ClassName, e.Error, e.Message)
+			if !seen[msg] {
+				seen[msg] = true
+				out = append(out, msg)
+			}
+		}
+	}
+	return out
+}
+
 // IdentifyReconcile upserts CIs via the CMDB Instance API IRE endpoint.
-func (c *Client) IdentifyReconcile(ctx context.Context, payload IREPayload, out any) error {
-	return c.doJSON(ctx, "POST", "/api/now/identifyreconcile", payload, out)
+//
+// Two things here are easy to get wrong and both fail silently:
+//
+//  1. IRE requires the discovery source as the sysparm_data_source *query
+//     parameter*. Passing it in the body is ignored, and every item is then
+//     rejected with INVALID_INPUT_DATA.
+//  2. IRE answers HTTP 200 even when it commits nothing, reporting the
+//     rejections per-item in the body. Returning the transport error alone
+//     therefore reports success for a payload ServiceNow threw away, so we
+//     decode the result and turn hasError into a real error.
+func (c *Client) IdentifyReconcile(ctx context.Context, payload IREPayload) error {
+	path := "/api/now/identifyreconcile?sysparm_data_source=" + url.QueryEscape(c.cfg.DataSource)
+
+	var res IREResult
+	if err := c.doJSON(ctx, "POST", path, payload, &res); err != nil {
+		return err
+	}
+	if res.Result.HasError {
+		return fmt.Errorf("servicenow: IRE rejected the payload (data source %q): %s",
+			c.cfg.DataSource, strings.Join(res.failures(), "; "))
+	}
+	return nil
 }
 
 // ----- ITOM: Event Management -----

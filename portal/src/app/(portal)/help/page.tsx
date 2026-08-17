@@ -15,6 +15,7 @@ const DOCS = [
   { title: "CLI Reference", path: "/cli-reference.md" },
   { title: "Environment MCP Compliance", path: "/environment-mcp-compliance.md" },
   { title: "ServiceNow Integration", path: "/servicenow-integration.md" },
+  { title: "ServiceNow Testing", path: "/servicenow-testing.md" },
   { title: "AWS Secrets Manager", path: "/aws-secrets-manager.md" },
   { title: "Architecture", path: "/architecture_proposal.md" },
   { title: "MCP Server (Claude Code)", path: "/mcp-server.md" },

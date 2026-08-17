@@ -1,0 +1,65 @@
+name: ServiceNow live e2e
+
+# The unit tests in pkg/servicenow run against an httptest mock, and a mock
+# accepts whatever it is sent. That is how a CMDB payload ServiceNow rejected in
+# full shipped green for months: IRE answers HTTP 200 with the rejections buried
+# in the body, so every layer above reported success.
+#
+# This workflow is the counterweight. It drives the surfaces against a real
+# instance and verifies each by reading the record back through ServiceNow's own
+# Table API. It cannot run on pull requests: it needs credentials forks must not
+# have, and it writes to a shared instance, so it runs on a schedule and on
+# demand instead.
+
+on:
+  schedule:
+    # Weekly, Monday 07:00 UTC — before the working week, so a ServiceNow-side
+    # change (a renamed choice, a revoked role, a plugin deactivated) surfaces
+    # as an alert rather than as a customer noticing the CMDB stopped updating.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+# One at a time: concurrent runs would race on the shared instance and on the
+# CIs they assert about.
+concurrency:
+  group: servicenow-e2e
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: Drive every ServiceNow surface and read it back
+    runs-on: ubuntu-latest
+    # Skipped automatically on forks, which have none of these secrets.
+    if: github.repository_owner == 'olafkfreund'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the credentials are present
+        id: creds
+        env:
+          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
+          SN_URL: ${{ secrets.SN_URL }}
+          SN_USER: ${{ secrets.SN_USER }}
+          SN_PASS: ${{ secrets.SN_PASS }}
+        run: |
+          # Secrets cannot be read in a step-level `if:`, so gate on an output.
+          if [ -n "$FIDES_SERVER_URL" ] && [ -n "$FIDES_API_TOKEN" ] \
+             && [ -n "$SN_URL" ] && [ -n "$SN_USER" ] && [ -n "$SN_PASS" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ServiceNow e2e skipped — set FIDES_SERVER_URL, FIDES_API_TOKEN, SN_URL, SN_USER, SN_PASS."
+          fi
+
+      - name: Run the live suite
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
+          FIDES_FLOW_ID: ${{ vars.FIDES_FLOW_ID }}
+          SN_URL: ${{ secrets.SN_URL }}
+          SN_USER: ${{ secrets.SN_USER }}
+          SN_PASS: ${{ secrets.SN_PASS }}
+          KEEP: '1'
+        run: ./scripts/servicenow-e2e.sh

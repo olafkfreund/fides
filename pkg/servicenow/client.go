@@ -28,12 +28,20 @@ const (
 	AuthOAuth2 AuthType = "oauth2" // OAuth2 client-credentials grant
 )
 
+// DefaultDataSource is the IRE discovery source used when none is configured.
+// It must be a valid choice of cmdb_ci.discovery_source on the target instance;
+// "Other Automated" is out-of-box on every instance. Deployments that want the
+// CMDB to attribute CIs to Fides specifically should add a "Fides" choice and
+// set FIDES_SNOW_DISCOVERY_SOURCE to it.
+const DefaultDataSource = "Other Automated"
+
 // Config holds connection settings with the credential already resolved.
 type Config struct {
 	InstanceURL string   // https://<instance>.service-now.com
 	AuthType    AuthType // basic | oauth2
 	ClientID    string   // OAuth client_id, or Basic username
 	Secret      string   // OAuth client_secret, or Basic password (resolved)
+	DataSource  string   // IRE discovery source; defaults to DefaultDataSource
 }
 
 // Client talks to a ServiceNow instance.
@@ -59,6 +67,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if cfg.AuthType != AuthBasic && cfg.AuthType != AuthOAuth2 {
 		return nil, fmt.Errorf("servicenow: unsupported auth type %q", cfg.AuthType)
+	}
+	if cfg.DataSource == "" {
+		cfg.DataSource = DefaultDataSource
 	}
 	return &Client{
 		cfg:        cfg,

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,12 +24,46 @@ func testClient(url string, auth AuthType, client *http.Client) *Client {
 	}
 }
 
+// IRE answers HTTP 200 even when it commits nothing, reporting rejections
+// per-item in the body. Fides shipped for months treating that as success, so
+// the CMDB sink reported delivered while ServiceNow created zero CIs. This is
+// the real response calitiiltddemo3 returned for the payload Fides was sending.
+func TestIdentifyReconcileErrorsInsideHTTP200(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"result":{"hasError":true,"items":[
+			{"className":"cmdb_ci_docker_image","sysId":"Unknown","errors":[
+			  {"error":"INVALID_INPUT_DATA","message":"In payload invalid data source [null] exist."}]}],
+		 "relations":[
+			{"className":"cmdb_rel_ci","sysId":"Unknown","errors":[
+			  {"error":"ABANDONED","message":"Abandoned due to too many errors"}]}]}}`))
+	}))
+	defer srv.Close()
+
+	c := testClient(srv.URL, AuthBasic, srv.Client())
+	err := c.IdentifyReconcile(context.Background(), IREPayload{
+		Items: []IREItem{{ClassName: "cmdb_ci_docker_image", Values: map[string]any{"name": "x"}}},
+	})
+	if err == nil {
+		t.Fatal("expected an error when IRE reports hasError inside a 200")
+	}
+	if !strings.Contains(err.Error(), "INVALID_INPUT_DATA") {
+		t.Fatalf("error should name the root cause, got: %v", err)
+	}
+	// ABANDONED is a cascade of the real error, not an independent failure.
+	if strings.Contains(err.Error(), "ABANDONED") {
+		t.Fatalf("error should suppress cascade noise, got: %v", err)
+	}
+}
+
 func TestIdentifyReconcileBasicAuth(t *testing.T) {
 	var gotAuth, gotPath string
+	var gotQuery neturl.Values
 	var gotBody IREPayload
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
 		b, _ := io.ReadAll(r.Body)
 		json.Unmarshal(b, &gotBody)
 		w.WriteHeader(http.StatusOK)
@@ -36,15 +72,21 @@ func TestIdentifyReconcileBasicAuth(t *testing.T) {
 	defer srv.Close()
 
 	c := testClient(srv.URL, AuthBasic, srv.Client())
+	c.cfg.DataSource = DefaultDataSource
 	payload := IREPayload{
 		Items:     []IREItem{{ClassName: "cmdb_ci_docker_image", Values: map[string]any{"name": "x"}}},
-		Relations: []IRERelation{{Parent: 0, Child: 0, Type: "Instantiated From"}},
+		Relations: []IRERelation{{Parent: 0, Child: 0, Type: "Instantiates::Instance of"}},
 	}
-	if err := c.IdentifyReconcile(context.Background(), payload, nil); err != nil {
+	if err := c.IdentifyReconcile(context.Background(), payload); err != nil {
 		t.Fatalf("IdentifyReconcile: %v", err)
 	}
 	if gotPath != "/api/now/identifyreconcile" {
 		t.Fatalf("path = %s", gotPath)
+	}
+	// The discovery source has to travel as a query parameter; in the body it is
+	// silently ignored and IRE rejects every item (INVALID_INPUT_DATA).
+	if got := gotQuery.Get("sysparm_data_source"); got != DefaultDataSource {
+		t.Fatalf("sysparm_data_source = %q, want %q", got, DefaultDataSource)
 	}
 	if gotAuth == "" || gotAuth[:6] != "Basic " {
 		t.Fatalf("expected Basic auth, got %q", gotAuth)

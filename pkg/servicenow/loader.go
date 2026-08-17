@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 
 	"github.com/google/uuid"
 
@@ -51,5 +52,9 @@ func (l *DBLoader) ServiceNowConfig(ctx context.Context, orgID uuid.UUID) (Confi
 	}
 	cfg.AuthType = AuthType(authType)
 	cfg.Secret = secret
+	// The IRE discovery source has to be a valid cmdb_ci.discovery_source
+	// choice on the target instance, so it is deployment-level rather than
+	// per-tenant. Empty falls back to DefaultDataSource in New().
+	cfg.DataSource = os.Getenv("FIDES_SNOW_DISCOVERY_SOURCE")
 	return cfg, true, nil
 }
