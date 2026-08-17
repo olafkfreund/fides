@@ -21,7 +21,7 @@ They cannot prove **ServiceNow understands**.
 The gap was not theoretical. The CMDB sink was posting an IRE payload that
 ServiceNow rejected *in full*, and reporting success every time, because:
 
-```
+```text
 POST /api/now/identifyreconcile   ->   HTTP 200
 {"result":{"hasError":true,"items":[{"errors":[
   {"error":"INVALID_INPUT_DATA",
@@ -89,7 +89,7 @@ For a CMDB that attributes CIs to Fides specifically — worth having, since it
 makes "which CIs came from Fides" a one-field query — add a `Fides` choice and
 point Fides at it:
 
-```
+```text
 System Definition > Choice Lists > new
   Table: cmdb_ci     Element: discovery_source     Value/Label: Fides
 ```
@@ -154,7 +154,7 @@ claim.
 
 ## What "done" looks like
 
-```
+```text
 == Result: 18 passed, 0 failed
 ```
 
