@@ -319,6 +319,22 @@ spec:
           value: "true"
         - name: FIDES_PUBLIC_URL
           value: "https://fides.13.134.88.9.nip.io"
+        # File each trail verdict as a ServiceNow control test
+        # (sn_audit_control_test) against the sn_compliance_control the
+        # attestation is evidence for.
+        #
+        # This writes into a GRC module ARC owns, so it is off in code by
+        # default and only active when this flag is exactly "true".
+        #
+        # It is inert until the catalogue is seeded: a Fides control with no
+        # sn_compliance_control counterpart is skipped, not created, because
+        # seeding is a governance decision rather than a side effect of a
+        # verdict. Verified 2026-08-18 against calitiiltddemo3 -- 0 of the 27
+        # Fides control keys match any of the 306 controls there, so enabling
+        # this today changes no ServiceNow data. Records begin appearing only
+        # once someone seeds controls whose names start with the Fides keys.
+        - name: FIDES_SNOW_GRC_ENABLED
+          value: "true"
         # Enable secure on-behalf-of approval delegation (SARC #436). The feature
         # is default-deny in code (pkg/api/approvals.go) and only active when this
         # flag is exactly "true".
