@@ -84,7 +84,22 @@ func (s *GRCSink) Name() string { return "servicenow-grc" }
 type grcPayload struct {
 	TrailID     string `json:"trail_id"`
 	Attestation string `json:"attestation"`
-	Compliant   bool   `json:"compliant"`
+	// AttestationType is what controls.required_types actually holds. The
+	// change gate has always matched on type_name; resolving controls by the
+	// display name instead only appears to work because the two are equal for
+	// nearly every attestation. "pull-request" is stored with type_name
+	// "pull_request", and that one would silently resolve to no control.
+	// Older events predate this field, so Attestation remains the fallback.
+	AttestationType string `json:"attestation_type"`
+	Compliant       bool   `json:"compliant"`
+}
+
+// controlKey is the value matched against controls.required_types.
+func (p grcPayload) controlKey() string {
+	if p.AttestationType != "" {
+		return p.AttestationType
+	}
+	return p.Attestation
 }
 
 // Deliver writes one sn_audit_control_test per control the attestation
@@ -108,7 +123,7 @@ func (s *GRCSink) Deliver(ctx context.Context, ev events.Event) error {
 		return nil
 	}
 
-	controls, err := s.controls.ControlsForAttestation(ctx, ev.OrgID, p.Attestation)
+	controls, err := s.controls.ControlsForAttestation(ctx, ev.OrgID, p.controlKey())
 	if err != nil || len(controls) == 0 {
 		return err
 	}

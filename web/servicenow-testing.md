@@ -263,6 +263,46 @@ ServiceNow reserves the table for its own indicator collection engine and blocks
 REST inserts outright. `sn_audit_control_test` is therefore the target, not a
 stand-in for a better one that a permission would unlock.
 
+### Seeding the catalogue
+
+`scripts/servicenow-seed-grc-catalogue.sh` creates the ServiceNow side of the
+Fides control catalogue: one `sn_compliance_policy` per framework, and one
+`sn_compliance_policy_statement` + `sn_compliance_control` per control. Dry run
+by default; `APPLY=1` writes. Idempotent — every object is looked up by name
+first, so a re-run reports `=` and changes nothing. Every created `sys_id` is
+appended to `seeded-grc-<timestamp>.txt` so a run can be undone precisely rather
+than by guessing which records were yours.
+
+```sh
+SERVICENOW_URL=… SERVICENOW_USER=… SERVICENOW_PASSWORD=… \
+FIDES_SERVER_URL=… FIDES_API_TOKEN=… \
+  scripts/servicenow-seed-grc-catalogue.sh          # dry run
+  APPLY=1 scripts/servicenow-seed-grc-catalogue.sh  # seed
+```
+
+Controls are named `"<FIDES_KEY> <description>"`, matching ServiceNow's own
+convention (`SOX-GLC-10 Quarter/year end checklist signoff`). **That name is
+load-bearing** — the sink resolves controls by key prefix.
+
+Three things the instance imposes, learned the hard way:
+
+- **Policies are created as `draft`.** Posting `state: published` with
+  `active: true` is rejected by the business rule `Enforce fields`; publishing a
+  policy is a reviewed action, not something a seeding script performs. Stock
+  policies sit at draft too. Whoever owns the compliance programme publishes.
+- **Statements carry no policy reference.** `sn_compliance_policy_statement` has
+  no `policy` field — posting one is accepted and silently discarded, the same
+  Table API behaviour that hid the `discovery_source` defect. The stock SOX
+  statements have empty `document`/`parent`/`authority_section` too. The
+  load-bearing link is control → statement via `content`.
+- **No `sn_grc_profile` entities are created.** Which services are in scope is a
+  scoping decision, and a wrong guess is harder to unpick than a missing link.
+
+Verified on `calitiiltddemo3`: seeding 27 controls, then reporting one
+`sbom-cyclonedx` attestation, produced exactly 5 `sn_audit_control_test` rows —
+the 5 controls that require that type — each with `control_effectiveness`
+computed by ServiceNow rather than written by Fides.
+
 ## Prerequisites on the instance
 
 **The discovery source must be a valid choice.** IRE validates

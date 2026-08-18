@@ -1181,9 +1181,19 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		if hasOrg {
 			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
-				"trail_id":    attestation.TrailID.String(),
-				"attestation": attestation.Name,
-				"compliant":   attestation.IsCompliant,
+				"trail_id": attestation.TrailID.String(),
+				// Both, because they are not the same thing and consumers want
+				// different ones. "attestation" is the human label a Slack
+				// message or commit status shows. "attestation_type" is what
+				// controls.required_types is matched against -- the change gate
+				// has always joined on type_name, so anything resolving controls
+				// must too. They are equal for almost every attestation on the
+				// live estate, which is exactly why the difference goes unnoticed
+				// until it does not: "pull-request" is stored with type_name
+				// "pull_request".
+				"attestation":      attestation.Name,
+				"attestation_type": attestation.TypeName,
+				"compliant":        attestation.IsCompliant,
 			}); err != nil {
 				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
 			}
