@@ -430,6 +430,10 @@ CREATE TABLE IF NOT EXISTS service_accounts (
     name VARCHAR(100) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'Writer', -- 'Admin','Auditor','Writer','Viewer'
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Permission to record an approval on behalf of a named human, without
+    -- needing the Admin role. Default-deny; see
+    -- migrations/0026_service_account_delegation.sql for why it is separate.
+    may_delegate_approvals BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(org_id, name)
 );
