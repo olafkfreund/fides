@@ -44,6 +44,34 @@ non-compliance — previously `1`.)
 | `fides snapshot ecs --env <id> --cluster <name>` | AWS ECS (via aws CLI) |
 | `fides snapshot lambda --env <id>` | AWS Lambda (via aws CLI) |
 
+### What a snapshot will and will not report
+
+A snapshot artifact is an **observation of what is running**. When the runtime
+cannot tell Fides the digest, the container is skipped with a warning on stderr
+rather than reported with a substitute value. A digest that is not the running
+image's can never equal a CI-registered artifact or an allowlist entry, so it
+becomes a shadow change no correct action can clear — an environment pinned at
+non-compliant for a reason its operator cannot fix.
+
+Two AWS cases where that happens, both outside Fides' control:
+
+- **ECS reports `imageDigest` only for images pulled from a private Amazon ECR
+  repository.** For Docker Hub, public ECR, GHCR or any other registry AWS omits
+  the field ([containers-roadmap#1640](https://github.com/aws/containers-roadmap/issues/1640)).
+  Those containers are skipped. To get full coverage, pull through private ECR.
+- **Lambda container functions** are resolved through `aws lambda get-function`
+  → `Code.ResolvedImageUri`, which is the ECR digest Lambda pinned at deploy
+  time. This costs one extra API call per image function, and needs
+  `lambda:GetFunction` in addition to `lambda:ListFunctions`. Zip functions use
+  `CodeSha256` and need no extra call.
+
+> `CodeSha256` is **not** the image digest for container functions. It is the
+> hash of the function's *deployment package*, which for `PackageType: Image` is
+> Lambda's own optimized copy — AWS states it is "not the same key that's used
+> to protect your container image in Amazon ECR". It is 64 hex characters, so it
+> looks exactly like a digest and passes every format check while never matching
+> the artifact the build registered.
+
 ## Environments, policies, approvals
 
 | Command | Purpose |
