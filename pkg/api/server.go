@@ -1447,9 +1447,19 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Shadow deployment: digest is running but not registered in database
-			shadows = append(shadows, fmt.Sprintf("service %s running unregistered digest %s", a.ServiceName, a.SHA256))
-			services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": false})
+			// Shadow deployment: digest is running but not registered in database.
+			//
+			// Two cases wear the same face here, and #432 is about telling them
+			// apart: a wholly unknown image, and a routine patch of an image
+			// this environment already approved. Both stay non-compliant -- the
+			// verdict is unchanged and still fails closed -- but an operator who
+			// cannot distinguish them learns to approve digests without looking.
+			priorApproval := serviceHasPriorApproval(r.Context(), tx, envID, a.ServiceName)
+			shadows = append(shadows, shadowMessage(a.ServiceName, a.SHA256, priorApproval))
+			services = append(services, map[string]any{
+				"service": a.ServiceName, "digest": a.SHA256, "registered": false,
+				"prior_approval": priorApproval,
+			})
 			isCompliant = false
 
 			// Insert runtime record anyway
