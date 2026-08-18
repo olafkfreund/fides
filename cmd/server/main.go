@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -67,22 +69,32 @@ func main() {
 	// Apply schema migrations on startup (idempotent) unless disabled. Keeps the
 	// live DB in sync with the code's expected schema.
 	if os.Getenv("FIDES_AUTO_MIGRATE") != "false" {
-		if err := fidesdb.Migrate(context.Background(), db); err != nil {
-			log.Fatalf("Failed to apply database migrations: %v", err)
-		}
-		log.Printf("Database migrations applied")
-
-		// The RLS policies are applied SEPARATELY and on every boot, not as a
-		// numbered migration: schema-rls.sql is idempotent and also self-heals
-		// databases carrying an older policy set, which a run-once migration
-		// could never do. Only when RLS is actually enabled -- applying tenant
-		// policies to a deployment that does not set app.current_org per
-		// request would hide every row from every query.
-		if os.Getenv("FIDES_RLS_ENABLED") == "true" {
-			if err := fidesdb.ApplyRLS(context.Background(), db); err != nil {
-				log.Fatalf("Failed to apply RLS policies: %v", err)
+		// Both steps run under one advisory lock. A rolling update has the
+		// outgoing and incoming pod doing schema setup against the same
+		// database simultaneously, and Postgres kills the loser with
+		// "tuple concurrently updated" -- fatal at startup. See WithSchemaLock.
+		if err := fidesdb.WithSchemaLock(context.Background(), db, func(ctx context.Context) error {
+			if err := fidesdb.Migrate(ctx, db); err != nil {
+				return fmt.Errorf("apply database migrations: %w", err)
 			}
-			log.Printf("RLS policies applied")
+			log.Printf("Database migrations applied")
+
+			// The RLS policies are applied SEPARATELY and on every boot, not as
+			// a numbered migration: schema-rls.sql is idempotent and also
+			// self-heals databases carrying an older policy set, which a
+			// run-once migration could never do. Only when RLS is actually
+			// enabled -- applying tenant policies to a deployment that does not
+			// set app.current_org per request would hide every row from every
+			// query.
+			if os.Getenv("FIDES_RLS_ENABLED") == "true" {
+				if err := fidesdb.ApplyRLS(ctx, db); err != nil {
+					return err
+				}
+				log.Printf("RLS policies applied")
+			}
+			return nil
+		}); err != nil {
+			log.Fatalf("Failed to prepare the database schema: %v", err)
 		}
 	}
 
@@ -216,8 +228,15 @@ func main() {
 			sinks = append(sinks, siem.NewOTLPSink(otlpURL, os.Getenv("FIDES_SIEM_OTLP_TOKEN")))
 			log.Printf("SIEM sink enabled (OTLP logs)")
 		}
+		names := make([]string, 0, len(sinks))
+		for _, sk := range sinks {
+			names = append(names, sk.Name())
+		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
-		log.Printf("Event dispatcher enabled (webhook, git-commit-status, ServiceNow ITOM + CMDB sinks)")
+		// Derived from the slice, never restated: this line is what people grep
+		// to confirm what is actually live, and a hand-written list drifts. It
+		// had already lost the Slack sink before it lost the GRC one.
+		log.Printf("Event dispatcher enabled (%d sinks: %s)", len(names), strings.Join(names, ", "))
 	}
 
 	<-ctx.Done()
