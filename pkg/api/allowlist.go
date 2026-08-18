@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -42,6 +43,16 @@ func (s *Server) handleAddAllowlist(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "artifact_sha256 is required", http.StatusBadRequest)
 		return
 	}
+	// An allowlist entry IS an accepted risk, and an accepted risk with no
+	// stated justification is not one an auditor can evaluate — it is just a
+	// digest someone waved through. The schema has always had the column and
+	// the snapshot handler's comment has always called this "an explicit,
+	// attributed exception (approved_by + reason)"; nothing enforced it, and
+	// the live entries on dora-aws-prod duly carry neither.
+	if strings.TrimSpace(req.Reason) == "" {
+		http.Error(w, "reason is required: an allowlist entry is an accepted risk and must say why", http.StatusBadRequest)
+		return
+	}
 	owned, err := s.envInOrg(r.Context(), envID, p.OrgID)
 	if err != nil {
 		internalError(w, err)
@@ -55,7 +66,7 @@ func (s *Server) handleAddAllowlist(w http.ResponseWriter, r *http.Request) {
 		`INSERT INTO environment_allowlist (environment_id, artifact_sha256, approved_by, reason)
 		 VALUES ($1, $2, $3, $4)
 		 ON CONFLICT (environment_id, artifact_sha256) DO UPDATE SET approved_by = EXCLUDED.approved_by, reason = EXCLUDED.reason, created_at = now()`,
-		envID, req.ArtifactSHA256, p.Email, req.Reason); err != nil {
+		envID, req.ArtifactSHA256, approverIdentity(p), strings.TrimSpace(req.Reason)); err != nil {
 		internalError(w, err)
 		return
 	}

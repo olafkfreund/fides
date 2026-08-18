@@ -76,7 +76,7 @@ Two AWS cases where that happens, both outside Fides' control:
 
 | Command | Purpose |
 |---|---|
-| `fides allowlist add\|list\|check\|remove --env <id> [--sha <hex> --reason <r>]` | Per-environment artifact approvals (`check` exits 2 if not approved) |
+| `fides allowlist add\|list\|check\|remove --env <id> [--sha <hex> --reason <r>]` | Per-environment artifact approvals (`check` exits 2 if not approved). `add` **requires** `--sha` and `--reason`: the entry records an accepted risk, and one with no stated justification cannot be evaluated by an auditor later. The approver is taken from the authenticated principal and is never blank, including for machine credentials. |
 | `fides flow list \| trails --flow <id> \| artifacts --flow <id>` | List flows and their trails / artifacts |
 | `fides flag record --flag-key <key> --env <env> --from <state> --to <state> [--actor --source unleash\|flagsmith\|manual --flow <id>]` | Record a feature-flag change as a `flag.changed` attestation on a per-change trail (governs flag flips like deploys) |
 | `fides flag list [--limit N]` | List recent feature-flag changes (flag_key, env, state, actor, compliant) for auditors |

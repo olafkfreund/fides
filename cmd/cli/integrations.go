@@ -1081,7 +1081,8 @@ func setIf(q neturl.Values, k, v string) {
 // fides allowlist add|list|check|remove
 func handleAllowlist(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>] [--reason <r>]")
+		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>] [--reason <r>]\n" +
+			"  add requires --sha and --reason (the entry records an accepted risk)")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("allowlist "+args[0], flag.ExitOnError)
@@ -1098,6 +1099,14 @@ func handleAllowlist(config CLIConfig, args []string) {
 	case "add":
 		if *sha == "" {
 			fmt.Println("Error: --sha is required")
+			os.Exit(1)
+		}
+		// Approving a digest records an accepted risk. Without a reason the
+		// record cannot be evaluated later by anyone, including the person who
+		// made it, so the server rejects it too -- fail here with the clearer
+		// message rather than surfacing an HTTP 400.
+		if strings.TrimSpace(*reason) == "" {
+			fmt.Println("Error: --reason is required (an allowlist entry is an accepted risk and must say why)")
 			os.Exit(1)
 		}
 		post(config, base, map[string]any{"artifact_sha256": *sha, "reason": *reason}, "Artifact approved for the environment")
