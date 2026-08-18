@@ -20,12 +20,15 @@ const GRCEventType = "compliance.evaluated"
 
 // GRC control-evidence tables. sn_audit_control_test rather than sn_grc_item,
 // which the CSDM plan originally named: sn_grc_item is a base class whose rows
-// are Risks and Controls, and writing to a base class directly is wrong. The
-// natural continuous-monitoring target, sn_grc_indicator_result, is ACL-blocked
-// for integration accounts and needs a role grant nobody has asked for yet.
-// sn_audit_control_test is writable today and its own columns are already a
-// control-evidence model. See the probe report in the ARC repo,
-// docs/clouds/SERVICENOW-GRC-COMPLIANCE-PROBE-REPORT.md.
+// are Risks and Controls, and writing to a base class directly is wrong.
+//
+// sn_grc_indicator_result would be the natural continuous-monitoring target and
+// is not an option: it returns 403 to a REST insert even for an account holding
+// admin, because ServiceNow reserves it for its own indicator collection engine.
+// That is a design constraint, not a permission to request, so there is no
+// better table waiting behind a role grant. sn_audit_control_test is writable
+// today and its own columns are already a control-evidence model. See the probe
+// report in the ARC repo, docs/clouds/SERVICENOW-GRC-COMPLIANCE-PROBE-REPORT.md.
 const (
 	grcControlTable = "sn_compliance_control"
 	grcTestTable    = "sn_audit_control_test"

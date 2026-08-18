@@ -256,10 +256,12 @@ Idempotency comes from a marker (`[fides:<trail>:<attestation>]`) written into
 verdicts do not accumulate duplicate tests against a real audit record.
 
 `sn_grc_indicator_result` would be the natural home for a recurring automated
-verdict and would light up native continuous-monitoring dashboards. It is
-**ACL-blocked** for integration accounts (`403 ACL Exception Insert Failed due
-to security constraints`) and needs a role grant. `sn_audit_control_test` works
-today without one.
+verdict and would light up native continuous-monitoring dashboards. It returns
+`403 ACL Exception Insert Failed due to security constraints` — **and still does
+for an account holding `admin`**, so this is not a role you can ask for.
+ServiceNow reserves the table for its own indicator collection engine and blocks
+REST inserts outright. `sn_audit_control_test` is therefore the target, not a
+stand-in for a better one that a permission would unlock.
 
 ## Prerequisites on the instance
 
