@@ -147,18 +147,18 @@ print(json.dumps({'name':sys.argv[1],
     POLICY_OF[$framework]=$(ensure sn_compliance_policy name "$pname" "$ppayload" "policy")
   fi
 
+  policy_id="${POLICY_OF[$framework]}"
+
   # ServiceNow's convention: "<KEY> <description>". The sink resolves on the
   # key prefix, so this name is load-bearing -- see grcSinkResolve in
   # pkg/servicenow/grc.go and the test that pins it.
   full_name="${key} ${desc}"
 
-  # No policy reference is set here, and that is not an omission.
-  # sn_compliance_policy_statement has no 'policy' field on this instance --
-  # posting one is accepted and silently discarded, the same Table API behaviour
-  # that hid the discovery_source defect. The stock SOX statements carry empty
-  # document/parent/authority_section too, so statements are simply not linked
-  # to policies in this data model. The policies are created as containers for
-  # the framework; the load-bearing link is control -> statement via 'content'.
+  # A statement carries no 'policy' field -- posting one is accepted and
+  # silently discarded, the same Table API behaviour that hid the
+  # discovery_source defect. The link is an m2m row instead, created below:
+  #   sn_compliance_m2m_policy_policy_statement (document=policy, content=statement)
+  # Missing that is why an earlier run left six policies with nothing in them.
   spayload=$(python3 -c "
 import json,sys
 name,desc=sys.argv[1],sys.argv[2]
@@ -175,6 +175,27 @@ d={'name':name,'description':desc,
 if content and content!='DRYRUN': d['content']=content
 print(json.dumps(d))" "$full_name" "$desc" "$stmt_id")
   ensure sn_compliance_control name "$full_name" "$cpayload" "control" >/dev/null
+
+  # Attach the statement to its framework policy. Without this the policy is an
+  # empty container: it lists no requirements, so it cannot be meaningfully
+  # reviewed or approved, and the framework grouping exists in name only.
+  if [ "$APPLY" = "1" ] && [ -n "$stmt_id" ] && [ "$stmt_id" != "DRYRUN" ] \
+     && [ -n "$policy_id" ] && [ "$policy_id" != "DRYRUN" ]; then
+    existing=$(sn_get sn_compliance_m2m_policy_policy_statement "document=${policy_id}^content=${stmt_id}")
+    if [ -z "$existing" ]; then
+      link=$(sn_post sn_compliance_m2m_policy_policy_statement \
+        "{\"document\":\"${policy_id}\",\"content\":\"${stmt_id}\"}")
+      if [ -n "$link" ]; then
+        bump created
+        echo "sn_compliance_m2m_policy_policy_statement ${link} ${full_name}" >> "$LEDGER"
+        echo "  + link: ${full_name} -> ${pname:-policy}" >&2
+      else
+        bump failed; echo "  ! link: ${full_name} FAILED" >&2
+      fi
+    else
+      bump existed
+    fi
+  fi
 
 done <<< "$CATALOGUE"
 

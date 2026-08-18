@@ -290,11 +290,13 @@ Three things the instance imposes, learned the hard way:
   `active: true` is rejected by the business rule `Enforce fields`; publishing a
   policy is a reviewed action, not something a seeding script performs. Stock
   policies sit at draft too. Whoever owns the compliance programme publishes.
-- **Statements carry no policy reference.** `sn_compliance_policy_statement` has
-  no `policy` field — posting one is accepted and silently discarded, the same
-  Table API behaviour that hid the `discovery_source` defect. The stock SOX
-  statements have empty `document`/`parent`/`authority_section` too. The
-  load-bearing link is control → statement via `content`.
+- **A statement's policy link is an m2m row, not a field.**
+  `sn_compliance_policy_statement` has no `policy` column — posting one is
+  accepted and silently discarded, the same Table API behaviour that hid the
+  `discovery_source` defect. The link lives in
+  `sn_compliance_m2m_policy_policy_statement` (`document` = policy,
+  `content` = statement). Missing it leaves the policies as empty containers
+  that list no requirements and so cannot be meaningfully reviewed or approved.
 - **No `sn_grc_profile` entities are created.** Which services are in scope is a
   scoping decision, and a wrong guess is harder to unpick than a missing link.
 
