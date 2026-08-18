@@ -58,3 +58,31 @@ func (l *DBLoader) ServiceNowConfig(ctx context.Context, orgID uuid.UUID) (Confi
 	cfg.DataSource = os.Getenv("FIDES_SNOW_DISCOVERY_SOURCE")
 	return cfg, true, nil
 }
+
+// ControlsForAttestation returns the org's active controls that this
+// attestation type is evidence for, so a verdict can be filed against each.
+//
+// Explicitly org-scoped: RLS is opt-in on this deployment, so the org_id
+// predicate here is the actual tenant boundary, not a backstop.
+func (l *DBLoader) ControlsForAttestation(ctx context.Context, orgID uuid.UUID, attestationType string) ([]ControlRef, error) {
+	var out []ControlRef
+	err := db.WithOrgScope(ctx, l.db, orgID.String(), func(tx *sql.Tx) error {
+		rows, e := tx.QueryContext(ctx,
+			`SELECT key, name FROM controls
+			 WHERE org_id = $1 AND NOT archived AND $2 = ANY(required_types)`,
+			orgID, attestationType)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c ControlRef
+			if e := rows.Scan(&c.Key, &c.Name); e != nil {
+				return e
+			}
+			out = append(out, c)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
