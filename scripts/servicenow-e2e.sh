@@ -215,6 +215,59 @@ MCP_N=$(fides -H 'Content-Type: application/json' -X POST -d '{"table":"change_r
 ok "MCP lookup returns change_request rows" "$([ "${MCP_N:-0}" -ge 1 ] && echo true || echo false)" "rows=$MCP_N"
 
 # ---------------------------------------------------------------------------
+section "GRC control tests (sn_audit_control_test)"
+
+# Fides files a trail verdict as a control test only when FIDES_SNOW_GRC_ENABLED
+# is set on the server AND the Fides control key exists in the ServiceNow
+# catalogue. Both are deployment decisions, so this asserts whichever state the
+# instance is actually in rather than demanding one. The check that always runs
+# is the negative one: control_effectiveness must never be set by Fides, because
+# ServiceNow accepts it, ignores it, and reads back "none".
+
+CTL_KEY=$(fides "$FIDES_SERVER_URL/api/v1/controls" 2>/dev/null \
+  | jqp 'd=json.load(sys.stdin);r=d if isinstance(d,list) else d.get("controls",[]);print(r[0]["key"] if r else "")' 2>/dev/null)
+
+if [ -z "$CTL_KEY" ]; then
+  skip "GRC control test filed" "no Fides controls defined for this org"
+else
+  SN_CTL=$(snget --data-urlencode "sysparm_query=nameSTARTSWITH$CTL_KEY" \
+    --data-urlencode 'sysparm_fields=sys_id' --data-urlencode 'sysparm_limit=1' \
+    "$SN_URL/api/now/table/sn_compliance_control" 2>/dev/null \
+    | jqp 'r=json.load(sys.stdin)["result"];print(r[0]["sys_id"] if r else "")' 2>/dev/null)
+
+  if [ -z "$SN_CTL" ]; then
+    skip "GRC control test filed" "control $CTL_KEY not seeded in sn_compliance_control"
+  else
+    TESTS=$(snget --data-urlencode "sysparm_query=control=$SN_CTL^actual_resultsLIKE[fides:" \
+      --data-urlencode 'sysparm_fields=sys_id,design_effectiveness,operation_effectiveness,control_effectiveness' \
+      "$SN_URL/api/now/table/sn_audit_control_test" 2>/dev/null)
+    N=$(printf '%s' "$TESTS" | jqp 'print(len(json.load(sys.stdin)["result"]))' 2>/dev/null)
+
+    if [ "${N:-0}" -eq 0 ]; then
+      skip "GRC control test filed" "none yet for $CTL_KEY (FIDES_SNOW_GRC_ENABLED unset?)"
+    else
+      ok "GRC control test filed for $CTL_KEY" true "n=$N"
+
+      # The derived field must be computed by ServiceNow, never written by
+      # Fides. If Fides wrote it, the two inputs would be empty while the
+      # rollup carried a value -- that inversion is the tell.
+      BAD=$(printf '%s' "$TESTS" | jqp 'r=json.load(sys.stdin)["result"];print(sum(1 for x in r if not x.get("design_effectiveness") and x.get("control_effectiveness") not in ("","none")))' 2>/dev/null)
+      ok "control_effectiveness left to ServiceNow to derive" \
+        "$([ "${BAD:-1}" -eq 0 ] && echo true || echo false)" "written-directly=$BAD"
+
+      # Idempotency: the [fides:<trail>:<attestation>] marker is unique per
+      # verdict, so duplicates mean redelivery is accumulating audit records.
+      DUPS=$(snget --data-urlencode "sysparm_query=control=$SN_CTL^actual_resultsLIKE[fides:" \
+        --data-urlencode 'sysparm_fields=actual_results' --data-urlencode 'sysparm_limit=100' \
+        "$SN_URL/api/now/table/sn_audit_control_test" 2>/dev/null \
+        | jqp 'import re;r=json.load(sys.stdin)["result"];m=[re.search(r"\[fides:[^]]*\]",x.get("actual_results","")) for x in r];k=[x.group(0) for x in m if x];print(len(k)-len(set(k)))' 2>/dev/null)
+      ok "no duplicate control tests per verdict" \
+        "$([ "${DUPS:-1}" -eq 0 ] && echo true || echo false)" "duplicates=$DUPS"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 printf '\n\033[1m== Result: %d passed, %d failed, %d skipped\033[0m\n' "$PASSED" "$FAILED" "$SKIPPED"
 echo "Records created (run id $RUN_ID):"
 echo "  change:  $SN_URL/nav_to.do?uri=change_request.do?sys_id=$CHG_SYS"

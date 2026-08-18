@@ -193,6 +193,10 @@ func main() {
 			gitstatus.NewSink(gitstatus.NewDBLoader(db, secrets), os.Getenv("FIDES_PUBLIC_URL")),
 			servicenow.NewITOMSink(servicenow.NewDBLoader(db, secrets)),
 			servicenow.NewCMDBSink(servicenow.NewDBLoader(db, secrets)),
+			func() events.Sink {
+				l := servicenow.NewDBLoader(db, secrets)
+				return servicenow.NewGRCSink(l, l)
+			}(),
 			slack.NewSink(slack.NewDBLoader(db, secrets)),
 		}
 		// Optional SIEM forwarding: stream every event to a Splunk HEC endpoint.

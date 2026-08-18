@@ -149,8 +149,9 @@ warning nobody reads — which is why they are now separate.
 
 **Evidence anchoring is never gated.** Attaching a signed attestation to a CI
 somebody else owns is the whole point on a shared instance, and it is precisely
-the integration ARC's own CSDM model asks Fides for (`sn_grc_item` evidence
-against an existing CI). Turning inventory off does not cost you any evidence.
+the integration ARC's own CSDM model asks Fides for (control evidence
+against an existing CI — see below for why the target is
+`sn_audit_control_test` and not the `sn_grc_item` that model names). Turning inventory off does not cost you any evidence.
 
 Enable it only where Fides is the CMDB's source of truth — a standalone tenant
 with no other integration writing CIs. When you do, add a matching
@@ -196,6 +197,69 @@ attributable, and run the suite with `CMDB_INVENTORY=1`.
 `TestResolveImageCIsByDigestMatchesForeignShortDescription` pins the query
 format. Switching it to `image_id` would look tidier and would silently stop
 resolving anything Fides did not write itself.
+
+## Filing control tests into GRC
+
+`compliance.evaluated` — the same trail verdict the commit-status sink turns
+into a green check — can also be filed as a **ServiceNow control test**. A check
+on a commit is for the engineer; a control test is for the auditor.
+
+Off by default, behind `FIDES_SNOW_GRC_ENABLED=true`, for the same reason the
+snapshot mirror is: the control catalogue belongs to whoever runs the compliance
+programme, and one control test per control per attestation per deploy is a
+volume they have to agree to carry before it starts arriving.
+
+| | |
+|---|---|
+| Event | `compliance.evaluated` |
+| Writes | one `sn_audit_control_test` per control the attestation satisfies |
+| Resolves | `controls.required_types` -> `sn_compliance_control` by name prefix |
+| Default | **off** |
+
+What it displaces is the point. A sampled live control on the probed instance
+reads:
+
+```text
+name:           SOX-GLC-10 Quarter/year end checklist signoff
+classification: Detective
+frequency:      Quarterly
+attestation:    SOX Control Attestation
+```
+
+`Detective` + `Quarterly` is a human ticking a box every three months. The same
+control fed from Fides is continuous and machine-evidenced, without changing its
+framework mapping or its auditor-facing identity.
+
+### Three things the table forces you to get right
+
+**`sn_audit_control_test`, not `sn_grc_item`.** `sn_grc_item` is a *base class* —
+its rows are Risks and Controls, and a sampled row carries
+`sys_class_name: Risk`. Writing to a base class directly is wrong even though it
+returns 201.
+
+**Never set `control_effectiveness`.** It is derived from
+`design_effectiveness` and `operation_effectiveness`. Setting it directly is
+accepted and silently ignored — the record reads back `none`. Fides sets the two
+inputs and lets the rollup compute. This is the same failure shape as an
+unregistered `discovery_source` and as IRE answering `200` with
+`hasError: true`: ServiceNow accepting a write and quietly not doing what was
+asked. `TestGRCSinkFilesControlTestWithoutDerivedEffectiveness` pins it.
+
+**An unseeded control is skipped, not created.** Seeding the catalogue is a
+governance decision, not something a verdict should do as a side effect. A
+control with no ServiceNow counterpart is a silent no-op rather than an error —
+a partially-seeded instance would otherwise fail every event and stall the whole
+outbox.
+
+Idempotency comes from a marker (`[fides:<trail>:<attestation>]`) written into
+`actual_results` and queried before each insert, so redelivery and re-emitted
+verdicts do not accumulate duplicate tests against a real audit record.
+
+`sn_grc_indicator_result` would be the natural home for a recurring automated
+verdict and would light up native continuous-monitoring dashboards. It is
+**ACL-blocked** for integration accounts (`403 ACL Exception Insert Failed due
+to security constraints`) and needs a role grant. `sn_audit_control_test` works
+today without one.
 
 ## Prerequisites on the instance
 
