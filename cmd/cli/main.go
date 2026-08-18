@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -649,20 +648,10 @@ func handleSnapshot(config CLIConfig, args []string) {
 			fmt.Printf("Failed to query Lambda: %v\n", err)
 			os.Exit(1)
 		}
-		var fl struct {
-			Functions []struct {
-				FunctionName string `json:"FunctionName"`
-				CodeSha256   string `json:"CodeSha256"`
-			} `json:"Functions"`
-		}
-		json.Unmarshal(out, &fl)
-		for _, f := range fl.Functions {
-			digest := f.CodeSha256
-			if b, derr := base64.StdEncoding.DecodeString(f.CodeSha256); derr == nil && len(b) == 32 {
-				digest = hex.EncodeToString(b)
-			}
-			reportedArtifacts = append(reportedArtifacts, map[string]string{"sha256": digest, "service_name": f.FunctionName})
-		}
+		reportedArtifacts = append(reportedArtifacts, lambdaSnapshotArtifacts(string(out), func(name string) (string, error) {
+			b, gerr := exec.Command("aws", "lambda", "get-function", "--function-name", name, "--output", "json").Output() // #nosec G204 -- fixed 'aws' binary; name comes from AWS
+			return string(b), gerr
+		})...)
 	}
 
 	if runtimeType == "ecs" {
@@ -688,23 +677,7 @@ func handleSnapshot(config CLIConfig, args []string) {
 				fmt.Printf("Failed to describe ECS tasks: %v\n", err)
 				os.Exit(1)
 			}
-			var dt struct {
-				Tasks []struct {
-					Containers []struct {
-						Name        string `json:"name"`
-						ImageDigest string `json:"imageDigest"`
-					} `json:"containers"`
-				} `json:"tasks"`
-			}
-			json.Unmarshal(descOut, &dt)
-			for _, task := range dt.Tasks {
-				for _, c := range task.Containers {
-					reportedArtifacts = append(reportedArtifacts, map[string]string{
-						"sha256":       strings.TrimPrefix(c.ImageDigest, "sha256:"),
-						"service_name": c.Name,
-					})
-				}
-			}
+			reportedArtifacts = append(reportedArtifacts, ecsSnapshotArtifacts(string(descOut))...)
 		}
 	}
 
