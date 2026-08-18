@@ -1081,13 +1081,15 @@ func setIf(q neturl.Values, k, v string) {
 // fides allowlist add|list|check|remove
 func handleAllowlist(config CLIConfig, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>] [--reason <r>]\n" +
-			"  add requires --sha and --reason (the entry records an accepted risk)")
+		fmt.Println("Usage: fides allowlist <add|list|check|remove> --env <id> [--sha <sha>|--image <ref>] [--reason <r>]\n" +
+			"  add requires --reason (the entry records an accepted risk), and either\n" +
+			"  --sha <hex> or --image <ref> to resolve the digest from the registry")
 		os.Exit(1)
 	}
 	cmd := flag.NewFlagSet("allowlist "+args[0], flag.ExitOnError)
 	env := cmd.String("env", "", "environment UUID")
 	sha := cmd.String("sha", "", "artifact SHA256")
+	image := cmd.String("image", "", "image reference to resolve the digest from, e.g. ghcr.io/org/app:1.2.3")
 	reason := cmd.String("reason", "", "approval reason")
 	cmd.Parse(args[1:])
 	if *env == "" {
@@ -1097,8 +1099,21 @@ func handleAllowlist(config CLIConfig, args []string) {
 	base := "/api/v1/environments/" + *env + "/allowlist"
 	switch args[0] {
 	case "add":
+		// --image resolves the digest from the registry so the operator does
+		// not have to extract it from a pod's imageID by hand (#432). For a
+		// multi-arch tag this resolves to the index digest, which is what a
+		// runtime actually reports.
+		if *sha == "" && *image != "" {
+			resolved, err := resolveImageDigest(*image)
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+				os.Exit(1)
+			}
+			*sha = resolved
+			fmt.Printf("resolved %s -> sha256:%s\n", *image, resolved)
+		}
 		if *sha == "" {
-			fmt.Println("Error: --sha is required")
+			fmt.Println("Error: --sha or --image is required")
 			os.Exit(1)
 		}
 		// Approving a digest records an accepted risk. Without a reason the
