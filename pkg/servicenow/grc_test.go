@@ -210,3 +210,76 @@ func TestGRCSinkIgnoresUnrelatedEventsAndUnmappedAttestations(t *testing.T) {
 		t.Fatalf("unrelated event: %v", err)
 	}
 }
+
+// controls.required_types holds attestation TYPES, and the change gate has
+// always matched on type_name. The GRC sink originally resolved on the display
+// name, which passes every test and every live check where the two are equal --
+// which is nearly always. "pull-request" is stored with type_name
+// "pull_request", and that one would resolve to no control and file no
+// evidence, silently.
+func TestGRCSinkResolvesControlsByTypeNotDisplayName(t *testing.T) {
+	inst := &grcInstance{controlHits: 1}
+	srv := httptest.NewServer(inst.handler(t))
+	defer srv.Close()
+
+	var asked []string
+	sink := NewGRCSink(fakeLoader{enabled: true}, controlSpy{asked: &asked})
+	sink.enabled = func() bool { return true }
+	sink.newClient = func(Config) (*Client, error) {
+		return testClient(srv.URL, AuthBasic, srv.Client()), nil
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"trail_id":         "c14feed8-dae0-49fc-9322-ebf995b003e7",
+		"attestation":      "pull-request", // display name
+		"attestation_type": "pull_request", // what controls key on
+		"compliant":        true,
+	})
+	if err := sink.Deliver(context.Background(), events.Event{
+		Type: GRCEventType, OrgID: uuid.New(), Payload: payload,
+	}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+
+	if len(asked) != 1 || asked[0] != "pull_request" {
+		t.Fatalf("controls must be resolved by attestation_type (pull_request), asked for %v", asked)
+	}
+}
+
+// Events enqueued before attestation_type existed are still in the outbox and
+// still get delivered. They must keep resolving on the only field they carry.
+func TestGRCSinkFallsBackToNameOnOlderEvents(t *testing.T) {
+	inst := &grcInstance{controlHits: 1}
+	srv := httptest.NewServer(inst.handler(t))
+	defer srv.Close()
+
+	var asked []string
+	sink := NewGRCSink(fakeLoader{enabled: true}, controlSpy{asked: &asked})
+	sink.enabled = func() bool { return true }
+	sink.newClient = func(Config) (*Client, error) {
+		return testClient(srv.URL, AuthBasic, srv.Client()), nil
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"trail_id":    "c14feed8-dae0-49fc-9322-ebf995b003e7",
+		"attestation": "sbom-cyclonedx",
+		"compliant":   true,
+	})
+	if err := sink.Deliver(context.Background(), events.Event{
+		Type: GRCEventType, OrgID: uuid.New(), Payload: payload,
+	}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(asked) != 1 || asked[0] != "sbom-cyclonedx" {
+		t.Fatalf("an event without attestation_type must fall back to the name, asked for %v", asked)
+	}
+}
+
+// controlSpy records what the sink asked for, and always returns one control so
+// delivery proceeds far enough to be meaningful.
+type controlSpy struct{ asked *[]string }
+
+func (c controlSpy) ControlsForAttestation(_ context.Context, _ uuid.UUID, attestationType string) ([]ControlRef, error) {
+	*c.asked = append(*c.asked, attestationType)
+	return oneControl, nil
+}
