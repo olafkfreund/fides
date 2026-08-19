@@ -13,6 +13,8 @@ import (
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
+
+	"fides/pkg/auth"
 )
 
 // A duplicate trail name for the same flow (UNIQUE(flow_id, name)) must return
@@ -40,7 +42,12 @@ func TestCreateTrailDuplicateNameReturns409(t *testing.T) {
 	s := &Server{DB: pool}
 	create := func() *httptest.ResponseRecorder {
 		body, _ := json.Marshal(createTrailReq{FlowID: flow.String(), Name: "dup-trail"})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/trails", bytes.NewReader(body)).WithContext(context.Background())
+		// handleCreateTrail now verifies the caller owns the parent flow, so the
+		// request needs a principal — in production authMiddleware always supplies
+		// one, and this fixture only worked before because the handler never looked.
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/trails", bytes.NewReader(body)).
+			WithContext(auth.WithPrincipal(context.Background(),
+				&auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "service"}))
 		rec := httptest.NewRecorder()
 		s.handleCreateTrail(rec, req)
 		return rec

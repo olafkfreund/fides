@@ -834,6 +834,9 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid flow_id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireFlowInOrg(w, r, flowID) {
+		return
+	}
 
 	trail := &models.Trail{
 		ID:            uuid.New(),
