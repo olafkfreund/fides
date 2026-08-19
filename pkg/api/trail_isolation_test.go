@@ -249,3 +249,52 @@ func TestTrailEndpointsStillWorkWithinYourOwnOrg(t *testing.T) {
 		}
 	}
 }
+
+// Found by TestEveryHandlerEstablishesTenantScope, not by manual review: three
+// sweeps over this package missed it. Creating a trail names its parent flow,
+// and the flow id was used unchecked — so a tenant could plant a build record
+// in another tenant's provenance.
+func TestCreateTrailCannotTargetAnotherTenantsFlow(t *testing.T) {
+	pool := trailProbeDB(t)
+	mine, theirTrail := twoTenantTrails(t, pool)
+	var theirFlow uuid.UUID
+	if err := pool.QueryRow(`SELECT flow_id FROM trails WHERE id=$1`, theirTrail).Scan(&theirFlow); err != nil {
+		t.Fatalf("flow: %v", err)
+	}
+
+	srv := NewServer(pool, nil, nil)
+	body := `{"flow_id":"` + theirFlow.String() + `","name":"planted-build","git_commit":"deadbeef"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/trails", strings.NewReader(body))
+	req = req.WithContext(principalCtx(mine))
+	rec := httptest.NewRecorder()
+	srv.handleCreateTrail(rec, req)
+	t.Logf("status=%d body=%s", rec.Code, rec.Body.String())
+
+	var n int
+	if err := pool.QueryRow(`SELECT count(*) FROM trails WHERE flow_id=$1 AND name='planted-build'`,
+		theirFlow).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("LEAK: planted a trail in another tenant's flow (status %d)", rec.Code)
+	}
+}
+
+func TestCreateTrailStillWorksInYourOwnFlow(t *testing.T) {
+	pool := trailProbeDB(t)
+	mine := uuid.New()
+	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, mine, "mine-"+mine.String()[:8])
+	flow := uuid.New()
+	mustExec(t, pool, `INSERT INTO flows (id,org_id,name) VALUES ($1,$2,'my-svc')`, flow, mine)
+	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, mine) })
+
+	srv := NewServer(pool, nil, nil)
+	body := `{"flow_id":"` + flow.String() + `","name":"my-build","git_commit":"cafebabe"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/trails", strings.NewReader(body))
+	req = req.WithContext(principalCtx(mine))
+	rec := httptest.NewRecorder()
+	srv.handleCreateTrail(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("own-flow trail creation should be 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
