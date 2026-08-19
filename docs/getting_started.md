@@ -45,8 +45,9 @@ To configure compliance tracing for a service, define its Flow (pipeline mapping
 ### Step 1: Create an Organization and a Flow
 Define the organization tenant and create a flow for a backend API service:
 ```bash
-# 1. Create Organization
+# 1. Create Organization (Admin only — the token must belong to an Admin)
 curl -X POST http://localhost:8080/api/v1/orgs \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "payments-team", "description": "Payments Engineering Division"}'
 

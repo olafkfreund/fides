@@ -50,11 +50,18 @@ func TestListOrgsDoesNotLeakOtherTenants(t *testing.T) {
 	body := rec.Body.String()
 	t.Logf("status=%d body=%s", rec.Code, body)
 
+	// Assert the status too: an error response decodes to zero orgs, which
+	// would otherwise read as "isolated" and pass this test vacuously.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, body)
+	}
 	var orgs []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	}
-	_ = json.Unmarshal([]byte(body), &orgs)
+	if err := json.Unmarshal([]byte(body), &orgs); err != nil {
+		t.Fatalf("decode: %v (body %s)", err, body)
+	}
 	for _, o := range orgs {
 		if o.ID == theirs.String() || strings.Contains(o.Name, "ACME-SECRET-CUSTOMER") {
 			t.Fatalf("LEAK: a Viewer in org %s was shown org %s (%q)", mine, o.ID, o.Name)
