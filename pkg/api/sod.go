@@ -223,7 +223,7 @@ func (s *Server) emitSegregationOfDutiesAttestation(ctx context.Context, orgID, 
 	// WithoutCancel keeps context values, including the request's pinned (now
 	// possibly closed) querier — so under RLS take a fresh tenant-scoped
 	// connection rather than inherit the poisoned one.
-	if s.DB != nil && orgID != uuid.Nil && os.Getenv("FIDES_RLS_ENABLED") == "true" {
+	if s.DB != nil && orgID != uuid.Nil && db.RLSEnabled() {
 		conn, release, err := db.ScopedConn(ctx, s.DB, orgID.String())
 		if err != nil {
 			log.Printf("segregation-of-duties attestation: trail %s: scoped conn: %v", trailID, err)

@@ -86,11 +86,29 @@ func main() {
 			// enabled -- applying tenant policies to a deployment that does not
 			// set app.current_org per request would hide every row from every
 			// query.
-			if os.Getenv("FIDES_RLS_ENABLED") == "true" {
+			if fidesdb.RLSEnabled() {
 				if err := fidesdb.ApplyRLS(ctx, db); err != nil {
 					return err
 				}
 				log.Printf("RLS policies applied")
+
+				// Applying the policies and being constrained by them are
+				// different things. A superuser ignores every policy, and the
+				// stock postgres image makes POSTGRES_USER one -- so the
+				// obvious deployment would apply RLS, log success, and isolate
+				// nothing. Say so rather than let the log imply otherwise.
+				ok, why, err := fidesdb.RLSEffective(ctx, db)
+				if err != nil {
+					return err
+				}
+				if !ok {
+					log.Printf("WARNING: tenant isolation is NOT being enforced by the database: %s. "+
+						"Handlers still scope every query to the caller's organization, so this is a "+
+						"missing backstop rather than an open door -- but the database layer is doing "+
+						"nothing. Connect as a non-superuser role that has been granted only "+
+						"SELECT/INSERT/UPDATE/DELETE (see the commented recipe at the top of "+
+						"schema-rls.sql), or set FIDES_RLS_ENABLED=false to stop claiming it.", why)
+				}
 			}
 			return nil
 		}); err != nil {
