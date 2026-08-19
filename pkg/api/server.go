@@ -739,7 +739,18 @@ type updateFlowReq struct {
 	Tags        map[string]string `json:"tags"`
 }
 
+// handleUpdateFlow renames or retags a flow the caller owns.
+//
+// The org filter is the security control, not a tidiness: a flow id is not a
+// secret — the API returns it and it appears in URLs — so without it any
+// authenticated tenant could rename another tenant's pipeline by id alone.
+// handleListFlows below has always scoped correctly; this was the inconsistency.
 func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	var req updateFlowReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -752,10 +763,17 @@ func (s *Server) handleUpdateFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID)
+	query := `UPDATE flows SET name = $1, description = $2, tags = $3, updated_at = CURRENT_TIMESTAMP
+	          WHERE id = $4 AND org_id = $5`
+	res, err := s.q(r.Context()).ExecContext(r.Context(), query, req.Name, req.Description, marshalJSONB(req.Tags), flowID, orgID)
 	if err != nil {
 		internalError(w, err)
+		return
+	}
+	// Reported as not found rather than forbidden, so the response cannot be
+	// used to test whether a given flow id exists in some other organization.
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		http.Error(w, "flow not found", http.StatusNotFound)
 		return
 	}
 
@@ -1588,7 +1606,18 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleCheckCompliance answers whether an artifact passed its controls.
+//
+// Scoped to the caller's organization because the answer names the artifact and
+// reports its compliance posture, and an image digest is not a secret — it is in
+// every manifest and registry listing. Unscoped, anyone with an account could
+// ask whether another organization's build passed, for any digest they knew.
 func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	sha := r.URL.Query().Get("sha256")
 	if sha == "" {
 		http.Error(w, "missing sha256 query param", http.StatusBadRequest)
@@ -1597,8 +1626,11 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 
 	var name string
 	var trailID sql.NullString
-	queryArt := `SELECT name, trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`
-	err := s.q(r.Context()).QueryRowContext(r.Context(), queryArt, sha).Scan(&name, &trailID)
+	// The attestation query below is keyed on this trail id, so scoping the
+	// artifact scopes the whole answer: a trail reached from an artifact in the
+	// caller's org is in the caller's org.
+	queryArt := `SELECT name, trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1`
+	err := s.q(r.Context()).QueryRowContext(r.Context(), queryArt, sha, orgID).Scan(&name, &trailID)
 	if err == sql.ErrNoRows {
 		http.Error(w, "artifact not found", http.StatusNotFound)
 		return
