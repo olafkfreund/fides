@@ -41,6 +41,9 @@ func (s *Server) handleVerifyTrailChain(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	rows, err := s.q(r.Context()).QueryContext(r.Context(),
 		`SELECT name, type_name, payload::text, is_compliant, COALESCE(content_hash, ''), COALESCE(prev_hash, '')
 		 FROM attestations WHERE trail_id = $1 ORDER BY created_at, id`, trailID)

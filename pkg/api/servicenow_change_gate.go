@@ -37,6 +37,9 @@ func (s *Server) handleServiceNowChangeGate(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "change_number is required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 
 	gate, err := s.computeChangeGate(r.Context(), orgID, trailID)
 	if err != nil {
