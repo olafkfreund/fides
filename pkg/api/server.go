@@ -562,7 +562,27 @@ type createOrgReq struct {
 	Description string `json:"description"`
 }
 
+// handleCreateOrg creates an organization.
+//
+// Admin-only. It used to be open to any authenticated principal, so a Viewer
+// with a read-only token could mint tenants — and under RLS the WITH CHECK on
+// organizations refuses it anyway, meaning the endpoint's behaviour depended on
+// whether FIDES_RLS_ENABLED happened to be set.
+//
+// Admin is the improvement, not the destination: an Admin of one organization
+// creating a second one is still odd, and a hosted deployment wants a separate
+// bootstrap credential rather than a tenant role. That is a product decision;
+// this is the fix that does not need one.
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if p.Role != auth.RoleAdmin {
+		http.Error(w, "only Admins can create organizations", http.StatusForbidden)
+		return
+	}
 	var req createOrgReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		badRequest(w, err)
@@ -588,9 +608,24 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(org)
 }
 
+// handleListOrgs lists the caller's organization.
+//
+// Scoped in the query, not left to the database. It previously selected every
+// row, which returned every tenant's name and id to any authenticated
+// principal — a Viewer in one organization could enumerate the customer list.
+// Under RLS the policy on organizations hid that, but RLS is opt-in
+// (FIDES_RLS_ENABLED), so with it unset the endpoint leaked, and the middleware
+// contract above — the Principal's OrgID is the ONLY source of tenant scoping —
+// was not being honoured here at all.
 func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT id, name, COALESCE(description, '') AS description, created_at FROM organizations ORDER BY name`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query)
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	query := `SELECT id, name, COALESCE(description, '') AS description, created_at
+	          FROM organizations WHERE id = $1 ORDER BY name`
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return

@@ -13,23 +13,30 @@ This document guides you through setting up **Fides** locally, using the CLI, an
 ## 1. Local Setup (Self-Hosting)
 
 To run the complete Fides server stack locally, ensure you have Docker installed. The stack includes:
+
 * **Fides Core Server** (API port: `:8080`)
 * **PostgreSQL Database** (Port: `:5432` for metadata)
 * **MinIO Object Store** (S3 compatible port: `:9000` / Console: `:9001` for the Evidence Vault)
 * **Ollama** (Port: `:11434` for local LLM evidence verification)
 
 ### Step 1: Start the services
+
 From your workspace directory, run:
+
 ```bash
 docker compose up -d
 ```
 
 ### Step 2: Build the CLI
+
 Statically compile the Fides CLI utility for your current operating system (the CLI is designed to run natively on macOS, Linux, and Windows):
+
 ```bash
 go build -o fides cmd/cli/main.go
 ```
+
 Verify the installation:
+
 ```bash
 ./fides --help
 ```
@@ -43,10 +50,13 @@ Verify the installation:
 To configure compliance tracing for a service, define its Flow (pipeline mapping) and Attestation Types (compliance templates).
 
 ### Step 1: Create an Organization and a Flow
+
 Define the organization tenant and create a flow for a backend API service:
+
 ```bash
-# 1. Create Organization
+# 1. Create Organization (Admin only — the token must belong to an Admin)
 curl -X POST http://localhost:8080/api/v1/orgs \
+  -H "Authorization: Bearer $FIDES_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "payments-team", "description": "Payments Engineering Division"}'
 
@@ -63,7 +73,9 @@ export FLOW_ID="f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122"
 ```
 
 ### Step 2: Create Attestation Type Templates
+
 Define the compliance parameters for vulnerability scans. For example, a custom JQ rule that forces Snyk scans to report 0 critical issues:
+
 ```bash
 curl -X POST http://localhost:8080/api/v1/attestation-types \
   -H "Content-Type: application/json" \
@@ -71,8 +83,10 @@ curl -X POST http://localhost:8080/api/v1/attestation-types \
 ```
 
 ### Step 3: Open a Trail and Report the Build Artifact
+
 Every build is a **trail**. Start one, then register the artifact it produced
 (its SHA256 is the fingerprint everything else hangs off):
+
 ```bash
 export TRAIL_ID="build-$(date +%s)"
 
@@ -90,8 +104,10 @@ export DIGEST="sha256:..."
 ```
 
 ### Step 4: Attest, Verify, and Gate a Change
+
 With the trail open and the artifact reported, attach evidence, prove the chain
 is intact, and ask for a release verdict:
+
 ```bash
 # Attach evidence (many types supported: junit, snyk, trivy, sbom-cyclonedx,
 # secret-scan, sast, iac, ...)
@@ -111,7 +127,9 @@ fides change-gate --trail $TRAIL_ID
 ```
 
 ### Step 5: Adopt & Enforce Regulated Controls
+
 Import a framework catalog, review coverage, and enforce a control on an environment — the CLI equivalent of the portal's **Controls & Coverage** page (grouped, drill-down, one-click **Enforce**):
+
 ```bash
 # Import a control catalog (SOC2, ISO27001, NIST-800-53, PCI-DSS, DORA, PSD2, SOX, SLSA, CRA)
 fides control import --framework SOC2
@@ -354,16 +372,17 @@ To verify your systems are free from unauthorized modifications, write a schedul
 fides snapshot docker --env "prod-environment-uuid" --container "auth-service"
 ```
 
-### Result Analysis in Server logs:
-- **Case 1: Standard Deployment**
+### Result Analysis in Server logs
+
+* **Case 1: Standard Deployment**
   The container digest running matches the artifact reported in the build pipeline. All JQ scan rules passed. Fides returns:
   `{"compliant": true, "drifts": [], "shadow_changes": []}`
   
-- **Case 2: Shadow Change Detected**
+* **Case 2: Shadow Change Detected**
   A developer logged directly into the container host and manually ran `docker run -d malicious-image`. The digest reported is unknown to Fides. Fides raises a compliance flag:
   `{"compliant": false, "drifts": [], "shadow_changes": ["service auth-service running unregistered artifact sha256:e3b0c442..."]}`
   
-- **Case 3: Configuration Drift Detected**
+* **Case 3: Configuration Drift Detected**
   The container running is a registered artifact, but its associated build trail contains a failing scan attestation (e.g. a newly discovered critical CVE failed rules post-deploy). Fides reports:
   `{"compliant": false, "drifts": ["service auth-service running drifted artifact (failing control: trivy-scan)"], "shadow_changes": []}`
 
@@ -374,13 +393,16 @@ fides snapshot docker --env "prod-environment-uuid" --container "auth-service"
 If `AI_PROVIDER` is set in Fides server configurations, Fides streams your scan results and SBOM files to the integrated LLM (e.g. Ollama Llama 3 locally or Gemini API in cloud).
 
 To review automated LLM risk analysis findings:
+
 ```bash
 # Query the LLM audit findings for a specific attestation
 curl -X GET http://localhost:8080/api/v1/compliance?sha256=<artifact-digest>
 ```
+
 The response will include the detailed Markdown audit review:
 > **Fides-AI Audit Finding Summary**:
-> * Analyzed SBOM attestation: 124 packages found. 
+>
+> * Analyzed SBOM attestation: 124 packages found.
 > * The model identified `GPL-3.0` license present in `readline` package. Policy strictly forbids GPL copyleft packages.
 > * Compliance Score: **45/100** (Vulnerable licensing found).
 
@@ -391,9 +413,10 @@ The response will include the detailed Markdown audit review:
 Fides prioritizes the secure flow of evidence. To prevent eavesdropping or tampering with compliance data in transit, the Fides CLI can symmetrically encrypt attestation payloads using **AES-256-GCM** before sending them to the API server.
 
 ### Key Derivation & Configuration
+
 1. **Passphrase**: Configure the environment variable `FIDES_ENCRYPTION_KEY` on both the client (CI/CD environment) and the Fides server.
 2. **Key Derivation**: The server and client use a key derivation function to expand or format the secret into a standard 32-byte key.
 3. **Usage**:
-   - Provide the `--encrypt` flag when running `fides attest`.
-   - The CLI will automatically encrypt the payload, flag the request as encrypted, and transmit the ciphertext.
-   - The Fides server will decrypt the payload on receipt using the matching key, validate policies, and store the resulting compliance data.
+   * Provide the `--encrypt` flag when running `fides attest`.
+   * The CLI will automatically encrypt the payload, flag the request as encrypted, and transmit the ciphertext.
+   * The Fides server will decrypt the payload on receipt using the matching key, validate policies, and store the resulting compliance data.
