@@ -19,6 +19,34 @@ func (s *Server) envInOrg(ctx context.Context, envID, orgID uuid.UUID) (bool, er
 	return ok, err
 }
 
+// requireEnvInOrg refuses an environment id that does not belong to the caller.
+//
+// On these routes environment_id arrives from a query param or a request body,
+// so it is attacker-chosen. Several handlers used it directly and relied on RLS
+// to sort out ownership — but RLS is opt-in behind FIDES_RLS_ENABLED, so with it
+// unset a tenant could name another tenant's environment and be served, or write
+// to, it.
+//
+// 404 rather than 403: a tenant should not learn that another tenant's
+// environment id exists.
+func (s *Server) requireEnvInOrg(w http.ResponseWriter, r *http.Request, envID uuid.UUID) bool {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	owned, err := s.envInOrg(r.Context(), envID, orgID)
+	if err != nil {
+		internalError(w, err)
+		return false
+	}
+	if !owned {
+		http.Error(w, "environment not found", http.StatusNotFound)
+		return false
+	}
+	return true
+}
+
 // handleAddAllowlist approves an artifact digest for an environment.
 func (s *Server) handleAddAllowlist(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())

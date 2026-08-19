@@ -1379,6 +1379,9 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid environment_id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireEnvInOrg(w, r, envID) {
+		return
+	}
 
 	tx, err := s.DB.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -3503,6 +3506,10 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 		return
 	}
 
+	if !s.requireEnvInOrg(w, r, envID) {
+		return
+	}
+
 	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at 
 	          FROM environment_mcp_servers WHERE environment_id = $1`
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, envID)
@@ -3553,6 +3560,10 @@ func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if !s.requireEnvInOrg(w, r, req.EnvironmentID) {
+		return
+	}
+
 	query := `
 		INSERT INTO environment_mcp_servers (environment_id, name, transport, command, args, env_vars, url, auth_header, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
@@ -3596,6 +3607,9 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 	envID, err := uuid.Parse(req.EnvironmentID)
 	if err != nil {
 		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+	if !s.requireEnvInOrg(w, r, envID) {
 		return
 	}
 
@@ -3653,6 +3667,9 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	envID, err := uuid.Parse(req.EnvironmentID)
 	if err != nil {
 		http.Error(w, "invalid environment_id", http.StatusBadRequest)
+		return
+	}
+	if !s.requireEnvInOrg(w, r, envID) {
 		return
 	}
 
