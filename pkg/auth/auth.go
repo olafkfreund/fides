@@ -46,6 +46,12 @@ type Principal struct {
 	// Kind is "session" for interactive SSO users or "service" for the static
 	// API token used by the CLI/MCP automation.
 	Kind string
+	// MayDelegateApprovals allows a service principal to record an approval on
+	// behalf of a named human. Deliberately a capability of its own rather than
+	// a consequence of the Admin role: a deploy tool that records who signed
+	// off should not also be able to create service accounts and rewrite
+	// controls. Default-deny — false unless explicitly granted.
+	MayDelegateApprovals bool
 }
 
 type ctxKey struct{}

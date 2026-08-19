@@ -48,18 +48,31 @@ func delegatedApprovalEnabled() bool {
 // resolveApprovalDelegation decides whether an on_behalf_of value may be
 // honored. Secure by default: a delegated approval is honored ONLY when
 //   - delegation is explicitly enabled via config, AND
-//   - the authenticated principal is a service token (Kind=="service") holding
-//     the Admin role.
+//   - the authenticated principal is a service token (Kind=="service"), AND
+//   - that principal is permitted to delegate — either by holding the
+//     may_delegate_approvals capability, or by holding the Admin role.
 //
-// Any other case (flag off, human session, non-admin service account, empty
+// Any other case (flag off, human session, service account with neither, empty
 // value) leaves honored=false so the caller is never silently upgraded from a
 // service token to a human session.
+//
+// **The capability exists so that Admin does not have to.** Requiring Admin
+// coupled two things that should not be: recording who signed off on a deploy,
+// and being able to create service accounts, rewrite controls and register
+// users. A deploy tool needs the first and should not be trusted with the
+// second — but the alternative was approvals the change gate silently refuses
+// to count, which is worse than either. A Writer-scoped account granted this
+// one permission can now record a countable sign-off and administer nothing.
+//
+// Admin is still accepted, so no deployment breaks on upgrade. It is the
+// broader grant, not the intended one.
 func resolveApprovalDelegation(enabled bool, p *auth.Principal, onBehalfOf string) delegationOutcome {
 	v := strings.TrimSpace(onBehalfOf)
 	if v == "" {
 		return delegationOutcome{}
 	}
-	honored := enabled && p != nil && p.Kind == "service" && p.Role == auth.RoleAdmin
+	permitted := p != nil && (p.MayDelegateApprovals || p.Role == auth.RoleAdmin)
+	honored := enabled && p != nil && p.Kind == "service" && permitted
 	return delegationOutcome{requested: true, honored: honored, onBehalfOf: v}
 }
 

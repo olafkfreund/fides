@@ -296,6 +296,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/tenant/service-accounts/{id}/keys", s.handleListServiceAccountKeys)
 	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/keys", s.handleIssueServiceAccountKey)
 	mux.HandleFunc("DELETE /api/v1/tenant/service-accounts/{id}/keys/{keyId}", s.handleRevokeServiceAccountKey)
+	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/delegation", s.handleSetServiceAccountDelegation)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
 	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
 
