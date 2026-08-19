@@ -42,7 +42,7 @@ jobs:
       - name: Check the credentials are present
         id: creds
         env:
-          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_SERVER_URL: ${{ vars.FIDES_SERVER_URL }}
           FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
           SN_URL: ${{ secrets.SN_URL }}
           SN_USER: ${{ secrets.SN_USER }}
@@ -60,7 +60,7 @@ jobs:
       - name: Run the live suite
         if: steps.creds.outputs.ready == 'true'
         env:
-          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_SERVER_URL: ${{ vars.FIDES_SERVER_URL }}
           FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
           FIDES_FLOW_ID: ${{ vars.FIDES_FLOW_ID }}
           SN_URL: ${{ secrets.SN_URL }}
