@@ -49,7 +49,48 @@ jobs:
           exit $fail
 
       - name: Run Tests
-        run: go test -race -v ./...
+        run: |
+          set -o pipefail
+          go test -race -json ./... | tee gotest.jsonl
+
+      # Record the unit-test result on the Fides trail as a `test-result`
+      # attestation (payload: passed/failed/skipped/total) — the same tamper-
+      # evident chain the portal CR "Tests" tab and ServiceNow u_fides_test_result
+      # mirror read back. Trail keyed by commit sha, flow from FIDES_FLOW_ID.
+      # always() so a failing suite still records compliant=false. Inert until
+      # the FIDES secrets/vars are set.
+      - name: Attest test results to Fides
+        if: ${{ always() }}
+        env:
+          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
+          FIDES_FLOW_ID: ${{ vars.FIDES_FLOW_ID }}
+          TRAIL_NAME: ${{ github.sha }}
+          COMMIT_SHA: ${{ github.sha }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [ -n "${FIDES_API_TOKEN}" ] && [ -n "${FIDES_SERVER_URL}" ] && [ -n "${FIDES_FLOW_ID}" ] || { echo "Fides not configured; skipping"; exit 0; }
+          [ -f gotest.jsonl ] || { echo "no gotest.jsonl; skipping"; exit 0; }
+          base="${FIDES_SERVER_URL%/}/api/v1"
+          auth="Authorization: Bearer ${FIDES_API_TOKEN}"
+          trail_id="$(curl -sf -H "$auth" "$base/flows/${FIDES_FLOW_ID}/trails" | jq -r --arg n "$TRAIL_NAME" '.[]?|select(.name==$n)|.id' | head -1 || true)"
+          if [ -z "${trail_id:-}" ] || [ "$trail_id" = "null" ]; then
+            trail_id="$(curl -sf -H "$auth" -H 'Content-Type: application/json' -X POST "$base/trails" \
+              -d "$(jq -n --arg f "$FIDES_FLOW_ID" --arg n "$TRAIL_NAME" --arg c "$COMMIT_SHA" --arg r "$REPO_URL" \
+                    '{flow_id:$f,name:$n,commit:$c,repository:$r}')" | jq -r '.id')"
+          fi
+          P=$(jq -rs 'map(select(.Test!=null and .Action=="pass"))|length' gotest.jsonl)
+          F=$(jq -rs 'map(select(.Test!=null and .Action=="fail"))|length' gotest.jsonl)
+          Sk=$(jq -rs 'map(select(.Test!=null and .Action=="skip"))|length' gotest.jsonl)
+          Tt=$((P + F + Sk))
+          if [ "$F" = "0" ]; then C=true; else C=false; fi
+          payload="$(jq -nc --argjson c "$C" --argjson p "$P" --argjson f "$F" --argjson s "$Sk" --argjson t "$Tt" \
+            '{compliant:$c,passed:$p,failed:$f,skipped:$s,total:$t,suite:"fides go test"}')"
+          curl -sf -H "$auth" -H 'Content-Type: application/json' -X POST "$base/attestations" \
+            -d "$(jq -n --arg tid "$trail_id" --arg pl "$payload" \
+                  '{trail_id:$tid,name:"unit-tests",type_name:"test-result",payload:$pl}')" >/dev/null
+          echo "attested test-result on trail $trail_id: passed=$P failed=$F skipped=$Sk total=$Tt"
 
       # PINNED, not @latest. An unpinned scanner changes without a commit, so a
       # scan verdict is not attributable to anything in git, and an upstream
