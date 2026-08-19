@@ -822,10 +822,47 @@ type createTrailReq struct {
 	Tags           map[string]string `json:"tags"`
 }
 
+// trailFieldHint turns Go's terse unknown-field error into one that names the
+// field the caller almost certainly meant.
+//
+// The mistakes are not hypothetical: a CI pipeline sent commit/repository/branch
+// for months and this endpoint answered 201 to every one of them, silently
+// dropping all three, because encoding/json ignores fields it does not know.
+// 316 trails were created with no git metadata and nothing anywhere said so.
+func trailFieldHint(err error) error {
+	msg := err.Error()
+	for wrong, right := range map[string]string{
+		"commit":       "git_commit",
+		"repository":   "git_repository",
+		"branch":       "git_branch",
+		"message":      "git_message",
+		"committed_at": "git_committed_at",
+		"repo":         "git_repository",
+		"sha":          "git_commit",
+	} {
+		if strings.Contains(msg, `unknown field "`+wrong+`"`) {
+			return fmt.Errorf("%w — did you mean %q? The git fields are prefixed: "+
+				"git_repository, git_commit, git_branch, git_message, git_committed_at", err, right)
+		}
+	}
+	return err
+}
+
 func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	var req createTrailReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
+	// Reject unknown fields rather than ignore them. A trail whose git metadata
+	// was silently dropped looks identical to one that never had any, and the
+	// consequences are invisible: the commit-status sink needs the repo and sha,
+	// so it does not fail for such a trail — it never attempts anything at all.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		// Answer with the detail rather than the usual generic "invalid request".
+		// badRequest hides internals on purpose, which is right in general — but
+		// here the detail IS the caller's own field name, nothing internal, and
+		// an unactionable 400 would repeat the original failure in a new form.
+		log.Printf("bad request: create trail: %v", err)
+		http.Error(w, trailFieldHint(err).Error(), http.StatusBadRequest)
 		return
 	}
 
