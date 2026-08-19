@@ -1156,9 +1156,19 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// trail_id is normally required, but `fides attest sbom` may omit --trail
 	// and rely on the artifact's own trail (every artifact is reported against
 	// exactly one trail via `fides artifact report`).
-	trailID, err := s.resolveAttestationTrailID(r.Context(), req.TrailID, artifactSHA)
+	callerOrg, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	trailID, err := s.resolveAttestationTrailID(r.Context(), callerOrg, req.TrailID, artifactSHA)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// trail_id is caller-supplied. This endpoint WRITES compliance evidence, so
+	// without this a tenant could attest onto another tenant's trail.
+	if !s.requireTrailInOrg(w, r, trailID) {
 		return
 	}
 
@@ -1343,7 +1353,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 // resolveAttestationTrailID parses trailIDStr, or — when it is empty — resolves
 // the trail from the reported artifact, so `fides attest sbom` can omit
 // --trail (every artifact already belongs to exactly one trail).
-func (s *Server) resolveAttestationTrailID(ctx context.Context, trailIDStr string, artifactSHA *string) (uuid.UUID, error) {
+func (s *Server) resolveAttestationTrailID(ctx context.Context, orgID uuid.UUID, trailIDStr string, artifactSHA *string) (uuid.UUID, error) {
 	if trailIDStr != "" {
 		id, err := uuid.Parse(trailIDStr)
 		if err != nil {
@@ -1355,7 +1365,11 @@ func (s *Server) resolveAttestationTrailID(ctx context.Context, trailIDStr strin
 		return uuid.UUID{}, fmt.Errorf("trail_id or artifact_sha256 is required")
 	}
 	var trailID uuid.NullUUID
-	err := s.q(ctx).QueryRowContext(ctx, `SELECT trail_id FROM artifacts WHERE sha256 = $1`, *artifactSHA).Scan(&trailID)
+	// Scoped by org: sha256 is the artifacts PRIMARY KEY, so a digest is global
+	// across tenants. Unscoped, a caller could name another tenant's digest and
+	// have its trail resolved — and then have an attestation written onto it.
+	err := s.q(ctx).QueryRowContext(ctx,
+		`SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2`, *artifactSHA, orgID).Scan(&trailID)
 	if err == sql.ErrNoRows {
 		return uuid.UUID{}, fmt.Errorf("artifact %s not found", *artifactSHA)
 	}
@@ -1474,8 +1488,14 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 	for _, a := range req.Artifacts {
 		// Verify artifact provenance
 		var dbSHA, dbTrailID string
-		queryArt := `SELECT sha256, trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`
-		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256).Scan(&dbSHA, &dbTrailID)
+		// Scoped by org. A digest is globally unique (artifacts PK), so an
+		// unscoped lookup let one tenant inherit another's provenance: reporting
+		// a digest someone else registered returned "compliant, no shadows" for
+		// an image this org never built. Out of scope now means unregistered,
+		// which falls through to the allowlist check below — correct, because an
+		// image you neither built nor approved IS unexplained.
+		queryArt := `SELECT sha256, trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1`
+		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256, orgID).Scan(&dbSHA, &dbTrailID)
 
 		if err == sql.ErrNoRows {
 			// Not registered — but it may be an APPROVED third-party image.
@@ -1765,7 +1785,8 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			var trailID sql.NullString
-			s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+			s.q(r.Context()).QueryRowContext(r.Context(),
+				"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID)
 			if trailID.Valid {
 				var compliantCount, totalCount int
 				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
@@ -1870,7 +1891,8 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 					continue
 				}
 				var trailID sql.NullString
-				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1", ra.SHA256).Scan(&trailID)
+				s.q(r.Context()).QueryRowContext(r.Context(),
+					"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID)
 				if trailID.Valid {
 					var compliantCount, totalCount int
 					s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
