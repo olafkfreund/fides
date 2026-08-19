@@ -74,6 +74,35 @@ jobs:
           [ -f gotest.jsonl ] || { echo "no gotest.jsonl; skipping"; exit 0; }
           base="${FIDES_SERVER_URL%/}/api/v1"
           auth="Authorization: Bearer ${FIDES_API_TOKEN}"
+
+          # Say WHICH part of the configuration is wrong. This step used to be
+          # a chain of `curl -sf`, so every misconfiguration surfaced as
+          # "exit code 22" and took an hour of cluster archaeology to place.
+          # All three of these have actually been wrong: the flow id pointed at
+          # a flow that did not exist, the token was stale, and the URL embeds
+          # a load balancer address that moves.
+          probe="$(curl -s -o /tmp/flows.json -w '%{http_code}' --max-time 20 \
+                    -H "$auth" "$base/flows" || echo 000)"
+          case "$probe" in
+            200) ;;
+            000) echo "::error::cannot reach $base — is FIDES_SERVER_URL current? The demo ingress" \
+                      "hostname embeds the load balancer address, so it changes when that does."; exit 1 ;;
+            401|403) echo "::error::Fides rejected the CI credential (HTTP $probe) — FIDES_API_TOKEN" \
+                          "no longer matches the server's."; exit 1 ;;
+            *) echo "::error::unexpected HTTP $probe from $base/flows"; exit 1 ;;
+          esac
+
+          # Membership of /flows, not a GET on the flow itself: asking for a
+          # flow that does not exist answers 200 with an empty list, exactly
+          # like a flow that exists and has no trails yet. That is what let a
+          # FIDES_FLOW_ID pointing at nothing survive from 2026-08-13 until it
+          # finally failed three curls later as "exit code 22".
+          if ! jq -e --arg f "$FIDES_FLOW_ID" 'any(.[]?; .id == $f)' /tmp/flows.json >/dev/null; then
+            echo "::error::flow $FIDES_FLOW_ID is not one this token can see. Flows available:" \
+                 "$(jq -r '[.[]?|"\(.name)=\(.id)"]|join(", ")' /tmp/flows.json)"
+            exit 1
+          fi
+
           trail_id="$(curl -sf -H "$auth" "$base/flows/${FIDES_FLOW_ID}/trails" | jq -r --arg n "$TRAIL_NAME" '.[]?|select(.name==$n)|.id' | head -1 || true)"
           if [ -z "${trail_id:-}" ] || [ "$trail_id" = "null" ]; then
             trail_id="$(curl -sf -H "$auth" -H 'Content-Type: application/json' -X POST "$base/trails" \
