@@ -40,6 +40,9 @@ func (s *Server) handleVerifyBranchProtection(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid trail_id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	branch := req.Branch
 	if branch == "" {
 		branch = "main"

@@ -53,6 +53,9 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "valid trail_id is required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	sha := strings.ToLower(strings.TrimSpace(req.ArtifactSHA256))
 	if len(sha) != 64 {
 		http.Error(w, "artifact_sha256 must be a 64-character hex digest", http.StatusBadRequest)

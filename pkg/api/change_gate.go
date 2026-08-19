@@ -203,6 +203,9 @@ func (s *Server) handleChangeGate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	out, err := s.computeChangeGate(r.Context(), orgID, trailID)
 	if err != nil {
 		internalError(w, err)
