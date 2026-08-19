@@ -25,6 +25,11 @@ concurrency:
   group: servicenow-e2e
   cancel-in-progress: false
 
+# Read-only: the only thing this workflow needs the token for is the checkout.
+# Everything it writes to, it writes to ServiceNow with ServiceNow credentials.
+permissions:
+  contents: read
+
 jobs:
   e2e:
     name: Drive every ServiceNow surface and read it back
