@@ -40,11 +40,29 @@ Measured, rather than assumed:
 | non-superuser, tenant set | its own |
 | superuser, either way | **everything** |
 
-**The server now tells you.** On startup it checks whether the policies can
-constrain its own connection and, if they cannot, logs a warning naming the role
-and what to do about it. It warns rather than refusing to start: the handlers
-scope every query themselves, so this is a missing backstop and not an open
-door.
+**The server now refuses to start.** On startup it checks whether the policies
+can constrain its own connection and, if they cannot, it stops with an error
+naming the role and both ways forward.
+
+This was a warning first, and a warning was the wrong shape. The deployment it
+fires on is precisely the one that believes it has database-level isolation and
+does not — and a `WARNING` at boot is read by nobody three weeks later, sitting
+directly beneath a cheerful `RLS policies applied`.
+
+It is safe to adopt because it only fires when RLS is switched **on**. A
+deployment that has deliberately turned it off never reaches the check. Every
+boot this interrupts is one claiming an isolation it does not have.
+
+If you are that deployment, you have two ways forward and the error message
+carries both:
+
+1. **Connect as a role RLS can constrain** — not a superuser, no `BYPASSRLS`.
+   The recipe is below.
+2. **Set `FIDES_RLS_ENABLED=false`** and run on handler-level scoping alone.
+   This is a real option rather than a workaround — the handlers scope every
+   query themselves, and that is the primary control. The point of making it
+   explicit is that it becomes a decision someone typed, instead of a line in a
+   log nobody read.
 
 To make it real, connect as a least-privilege role — the recipe is commented at
 the top of `schema-rls.sql`:
@@ -58,8 +76,8 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO fides_app;
 The Helm chart already does this — its seed job creates `fides_app` and applies
 the policies, and `rls.enabled` has always defaulted to `true`. `docker-compose`
 deliberately leaves RLS off, because it connects as `POSTGRES_USER` and enabling
-it there would warn on every boot about something unfixable without a second
-role.
+it there would now stop the stack from booting over something unfixable without
+a second role.
 
 #### A rolling update can see an empty database
 

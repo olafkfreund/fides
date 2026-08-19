@@ -55,3 +55,42 @@ func RLSEffective(ctx context.Context, db *sql.DB) (bool, string, error) {
 	}
 	return true, "", nil
 }
+
+// RequireRLSEffective turns a backstop that is not working into a refusal to
+// start.
+//
+// RLSEffective only reports; this decides. It was a warning first, and a
+// warning is the wrong shape for this: the deployment it fires on is precisely
+// the one that believes it has database-level tenant isolation and does not,
+// and a WARNING line at boot is read by nobody three weeks later. "RLS policies
+// applied" in the log above it actively encourages the wrong conclusion.
+//
+// Refusing is safe to adopt because it only fires when RLS is switched ON. A
+// deployment that has deliberately turned it off (docker-compose does, because
+// it connects as POSTGRES_USER) never reaches this check. So the boot failures
+// this can cause are all deployments claiming isolation they do not have —
+// which is the case worth interrupting.
+//
+// Both ways out are in the message, because an operator hitting this at 3am
+// needs the fix, not the diagnosis.
+func RequireRLSEffective(ctx context.Context, db *sql.DB) error {
+	ok, why, err := RLSEffective(ctx, db)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to start: tenant isolation is switched on but the database is not enforcing it — %s.\n"+
+			"  Handlers still scope every query to the caller's organization, so this is a missing\n"+
+			"  backstop rather than an open door. It is fatal because the alternative is logging\n"+
+			"  \"RLS policies applied\" next to a database that ignores them.\n"+
+			"  Fix it in one of two ways:\n"+
+			"    1. Connect as a role that RLS can constrain — not a superuser, no BYPASSRLS.\n"+
+			"       The recipe is at the top of pkg/db/schema-rls.sql (CREATE ROLE fides_app ...).\n"+
+			"    2. Set FIDES_RLS_ENABLED=false to run without the database backstop, relying on\n"+
+			"       handler-level scoping alone. This is a real option, not a workaround — but it\n"+
+			"       should be a decision someone typed, which is the point of making it explicit.",
+		why)
+}
