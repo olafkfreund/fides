@@ -1,6 +1,7 @@
 package tsa
 
 import (
+	"context"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -9,6 +10,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -139,5 +143,90 @@ func TestValidateURL(t *testing.T) {
 		if err := ValidateURL(u); err == nil {
 			t.Errorf("ValidateURL(%q) = nil, want error", u)
 		}
+	}
+}
+
+// dialGuard runs the TSA client's dial guard against an already-resolved
+// address, which is the form Dialer.Control receives. A short timeout keeps a
+// permitted address from actually opening a connection: what matters is whether
+// the guard refused, not whether the host answered.
+func dialGuard(t *testing.T, address string) error {
+	t.Helper()
+	tr, ok := safeClient().Transport.(*http.Transport)
+	if !ok || tr.DialContext == nil {
+		t.Fatal("the TSA client has no custom dialer, so nothing checks the resolved address")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := tr.DialContext(ctx, "tcp", address)
+	return err
+}
+
+// The dial guard is the SSRF boundary, so it is tested against the address the
+// client actually connects to rather than the URL the caller supplied.
+// ValidateURL cannot hold that boundary: it resolves the host once and the HTTP
+// client resolves it again, and it never sees a redirect target at all.
+func TestDialGuardRefusesInternalAddresses(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		address string
+		refused bool
+	}{
+		// The one that matters: an SSRF reaching this returns cloud credentials.
+		{"the cloud metadata endpoint", "169.254.169.254:80", true},
+		{"loopback", "127.0.0.1:80", true},
+		{"IPv6 loopback", "[::1]:80", true},
+		{"a private network", "10.0.0.5:80", true},
+		{"another private range", "192.168.1.1:80", true},
+		{"the unspecified address", "0.0.0.0:80", true},
+		// Not refused, or the guard would block every real TSA. Asserted on the
+		// refusal message rather than on success, so the test does not need the
+		// host to be reachable from wherever it runs.
+		{"a public address", "8.8.8.8:80", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := dialGuard(t, tc.address)
+			blocked := err != nil && strings.Contains(err.Error(), "disallowed")
+			if tc.refused && !blocked {
+				t.Errorf("connecting to %s was not refused by the guard (err = %v)", tc.address, err)
+			}
+			if !tc.refused && blocked {
+				t.Errorf("connecting to %s was refused: %v", tc.address, err)
+			}
+		})
+	}
+}
+
+// A TSA answering with a redirect must not be followed to an internal address.
+// This is the bypass that needs no DNS control at all: net/http follows
+// redirects by default and the pre-flight URL check never sees them, so a 302
+// to the metadata service was enough to reach it.
+func TestTSARedirectToAnInternalAddressIsRefused(t *testing.T) {
+	// Stands in for the metadata service. It must never be reached.
+	var reached bool
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte("credentials"))
+	}))
+	defer internal.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internal.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	// safeClient directly rather than RequestToken: both servers are on
+	// loopback, so RequestToken's pre-flight ValidateURL would refuse the first
+	// URL and the redirect would never be exercised. What is under test is
+	// whether the client follows a redirect to an internal address.
+	resp, err := safeClient().Get(redirector.URL)
+	if err == nil {
+		defer resp.Body.Close()
+	}
+	if reached {
+		t.Error("the client followed a redirect to an internal address — this is the SSRF")
+	}
+	if err == nil {
+		t.Error("following a redirect to an internal address returned no error")
 	}
 }
