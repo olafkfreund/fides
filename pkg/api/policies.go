@@ -194,6 +194,15 @@ func (s *Server) handlePolicyCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The environment is named in the path and was not checked, while every
+	// other handler in this file checks it. Unscoped, the policy names and their
+	// required types came back for another tenant's environment — that is their
+	// compliance regime, and the response prints it verbatim.
+	if owned, err := s.envInOrg(r.Context(), envID, orgID); err != nil || !owned {
+		http.Error(w, "environment not found", http.StatusNotFound)
+		return
+	}
+
 	// The trail's flow tags (also verifies the trail belongs to the org).
 	var tagsBytes []byte
 	err = s.q(r.Context()).QueryRowContext(r.Context(),
