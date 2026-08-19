@@ -96,19 +96,13 @@ func main() {
 				// different things. A superuser ignores every policy, and the
 				// stock postgres image makes POSTGRES_USER one -- so the
 				// obvious deployment would apply RLS, log success, and isolate
-				// nothing. Say so rather than let the log imply otherwise.
-				ok, why, err := fidesdb.RLSEffective(ctx, db)
-				if err != nil {
+				// nothing. Refuse to start rather than let the line above imply
+				// an isolation that is not there; FIDES_RLS_ENABLED=false is
+				// the way to run without it deliberately.
+				if err := fidesdb.RequireRLSEffective(ctx, db); err != nil {
 					return err
 				}
-				if !ok {
-					log.Printf("WARNING: tenant isolation is NOT being enforced by the database: %s. "+
-						"Handlers still scope every query to the caller's organization, so this is a "+
-						"missing backstop rather than an open door -- but the database layer is doing "+
-						"nothing. Connect as a non-superuser role that has been granted only "+
-						"SELECT/INSERT/UPDATE/DELETE (see the commented recipe at the top of "+
-						"schema-rls.sql), or set FIDES_RLS_ENABLED=false to stop claiming it.", why)
-				}
+				log.Printf("RLS policies are being enforced for this connection")
 			}
 			return nil
 		}); err != nil {

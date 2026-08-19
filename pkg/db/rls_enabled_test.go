@@ -144,3 +144,74 @@ func dsnToURL(t *testing.T, dsn string) string {
 	}
 	return u.String()
 }
+
+// The warning became a refusal, so the thing worth testing is that it actually
+// refuses — and that it still lets an ordinary role through.
+func TestRequireRLSEffectiveRefusesARoleThatBypassesPolicies(t *testing.T) {
+	dsn := os.Getenv("FIDES_TEST_DB_DSN")
+	if dsn == "" {
+		t.Skip("set FIDES_TEST_DB_DSN")
+	}
+	admin, err := sql.Open("postgres", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { admin.Close() })
+
+	var canCreateRoles bool
+	if err := admin.QueryRow(`SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user`).
+		Scan(&canCreateRoles); err != nil {
+		t.Fatalf("reading the current role: %v", err)
+	}
+	if !canCreateRoles {
+		t.Skip("the test role cannot create the fixtures this needs")
+	}
+	base, err := url.Parse(dsnToURL(t, dsn))
+	if err != nil {
+		t.Fatalf("parsing the dsn: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		role      string
+		attrs     string
+		wantError bool
+	}{
+		{"a superuser", "req_rls_su", "SUPERUSER NOBYPASSRLS", true},
+		{"BYPASSRLS", "req_rls_bypass", "NOSUPERUSER BYPASSRLS", true},
+		{"an ordinary role", "req_rls_plain", "NOSUPERUSER NOBYPASSRLS", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			admin.Exec(`DROP ROLE IF EXISTS ` + tc.role)
+			if _, err := admin.Exec(`CREATE ROLE ` + tc.role + ` LOGIN PASSWORD 'p' ` + tc.attrs); err != nil {
+				t.Fatalf("creating %s: %v", tc.role, err)
+			}
+			t.Cleanup(func() { admin.Exec(`DROP ROLE IF EXISTS ` + tc.role) })
+
+			u := *base
+			u.User = url.UserPassword(tc.role, "p")
+			pool, err := sql.Open("postgres", u.String())
+			if err != nil {
+				t.Fatalf("open as %s: %v", tc.role, err)
+			}
+			defer pool.Close()
+
+			err = RequireRLSEffective(context.Background(), pool)
+			if tc.wantError && err == nil {
+				t.Fatalf("%s should refuse to start, got nil", tc.attrs)
+			}
+			if !tc.wantError && err != nil {
+				t.Fatalf("%s should start, got: %v", tc.attrs, err)
+			}
+			if !tc.wantError {
+				return
+			}
+			// An operator hitting this needs the way out, not just the diagnosis.
+			for _, want := range []string{"FIDES_RLS_ENABLED=false", "schema-rls.sql"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal must tell the operator how to proceed; missing %q in:\n%v", want, err)
+				}
+			}
+		})
+	}
+}

@@ -35,7 +35,7 @@ to reach the server. The sensor additionally uses `MCP_SENSOR_RESPONSE`
 | Variable | Purpose |
 |---|---|
 | `DB_DSN` | Postgres DSN (e.g. `postgres://user:pass@host:5432/fides?sslmode=require`) |
-| `FIDES_RLS_ENABLED` | Postgres Row-Level Security tenant isolation. **On unless set to `false`.** Applies `schema-rls.sql` at boot and scopes every request connection. Needs a non-superuser DB role — a superuser ignores every policy, and the server logs a warning naming the role when that is the case |
+| `FIDES_RLS_ENABLED` | Postgres Row-Level Security tenant isolation. **On unless set to `false`.** Applies `schema-rls.sql` at boot and scopes every request connection. Needs a non-superuser DB role — a superuser ignores every policy, and the server refuses to start, naming the role and both ways forward, when that is the case |
 | `FIDES_TEST_DB_DSN` | DSN used by the Postgres integration tests only |
 
 ## Server — evidence storage
