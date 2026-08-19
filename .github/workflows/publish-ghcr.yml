@@ -78,7 +78,7 @@ jobs:
       GITOPS_DEPLOY_KEY: ${{ secrets.GITOPS_DEPLOY_KEY }}
       # Same reason as above: secrets/vars contexts are not allowed in a
       # step-level `if:`. The flow id is not a credential, so it is a variable.
-      FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+      FIDES_SERVER_URL: ${{ vars.FIDES_SERVER_URL }}
       FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
       FIDES_FLOW_ID: ${{ vars.FIDES_FLOW_ID }}
     steps:
@@ -267,7 +267,7 @@ jobs:
       # parallel and trails are UNIQUE(flow_id, name) — one trail per commit
       # would have the second job race the first into a 409.
       #
-      # Inert until configured: needs secrets FIDES_SERVER_URL / FIDES_API_TOKEN
+      # Inert until configured: needs variable FIDES_SERVER_URL and secret FIDES_API_TOKEN
       # and variable FIDES_FLOW_ID. Same opt-in shape as the deploy key below.
       # ----------------------------------------------------------------------
       # Build the CLI from THIS commit rather than installing a release.
@@ -402,7 +402,7 @@ jobs:
         run: |
           echo "::warning::Fides recorded NO provenance for this build — its own"
           echo "::warning::runtime environments cannot be compliant without it."
-          echo "::notice::Set secrets FIDES_SERVER_URL and FIDES_API_TOKEN, and"
+          echo "::notice::Set variable FIDES_SERVER_URL and secret FIDES_API_TOKEN, and"
           echo "::notice::variable FIDES_FLOW_ID, to enable. See issue #417."
 
       # The key never reaches the filesystem outside this job's runner, and it

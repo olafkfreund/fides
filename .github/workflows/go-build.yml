@@ -62,7 +62,7 @@ jobs:
       - name: Attest test results to Fides
         if: ${{ always() }}
         env:
-          FIDES_SERVER_URL: ${{ secrets.FIDES_SERVER_URL }}
+          FIDES_SERVER_URL: ${{ vars.FIDES_SERVER_URL }}
           FIDES_API_TOKEN: ${{ secrets.FIDES_API_TOKEN }}
           FIDES_FLOW_ID: ${{ vars.FIDES_FLOW_ID }}
           TRAIL_NAME: ${{ github.sha }}
