@@ -25,8 +25,14 @@ func (c *DBChecker) CheckImage(ctx context.Context, orgID uuid.UUID, sha256 stri
 	var status ImageStatus
 	err := db.WithOrgScope(ctx, c.db, orgID.String(), func(tx *sql.Tx) error {
 		var trailID sql.NullString
+		// Scoped by org in-query, not just by the RLS session GUC that
+		// WithOrgScope sets: RLS is opt-in behind FIDES_RLS_ENABLED, so with it
+		// unset this admission gate would admit an image on ANOTHER tenant's
+		// provenance. A digest is globally unique (artifacts PK), so that is a
+		// reachable state, not a theoretical one.
 		err := tx.QueryRowContext(ctx,
-			`SELECT trail_id FROM artifacts WHERE sha256 = $1 LIMIT 1`, sha256).Scan(&trailID)
+			`SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1`,
+			sha256, orgID).Scan(&trailID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil // not registered -> shadow
 		}
