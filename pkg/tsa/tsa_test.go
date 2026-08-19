@@ -230,3 +230,47 @@ func TestTSARedirectToAnInternalAddressIsRefused(t *testing.T) {
 		t.Error("following a redirect to an internal address returned no error")
 	}
 }
+
+// RequestToken must obtain its client from safeClient.
+//
+// This is the mutation that survived #454: the guard tests all call safeClient
+// directly, so replacing this one call site with a plain &http.Client{} would
+// reinstate the SSRF — redirects to the metadata service and all — while every
+// other test in this file still passed. The property cannot be observed from
+// outside the package (reaching the dial guard through RequestToken needs DNS
+// rebinding), so it is pinned at the seam instead.
+func TestRequestTokenUsesTheGuardedClient(t *testing.T) {
+	original := newTSAClient
+	t.Cleanup(func() { newTSAClient = original })
+
+	var built int
+	newTSAClient = func() *http.Client {
+		built++
+		c := original()
+		// Assert the default factory returns a guarded client, not merely that
+		// it was called. Without this, repointing newTSAClient at a bare
+		// &http.Client{} passes: the call happens, and nothing looks at what
+		// comes back.
+		tr, ok := c.Transport.(*http.Transport)
+		if !ok || tr.DialContext == nil {
+			t.Error("the TSA client has no custom dialer, so nothing checks the resolved address")
+		}
+		if c.CheckRedirect == nil {
+			t.Error("the TSA client does not check redirects, so a 302 to an internal address is followed")
+		}
+		return c
+	}
+
+	// TEST-NET-3 (RFC 5737): a public address, so ValidateURL lets it through
+	// and the client is constructed, but one that never answers. The context
+	// deadline ends the attempt — what is asserted is that a client was built
+	// by the factory, not what the request returned.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, _ = RequestToken(ctx, "http://203.0.113.1/tsa", "abc123", nil)
+
+	if built == 0 {
+		t.Fatal("RequestToken built its own HTTP client instead of the guarded one — " +
+			"the SSRF dial guard is not on the request path")
+	}
+}

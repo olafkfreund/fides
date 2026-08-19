@@ -146,6 +146,18 @@ func safeClient() *http.Client {
 	}
 }
 
+// newTSAClient is the seam that lets a test assert RequestToken actually uses
+// the guarded client, and it exists for no other reason — it is not a
+// configuration point and nothing outside tests reassigns it.
+//
+// The seam is here because the property cannot be tested from the outside.
+// Reaching the dial guard through RequestToken needs a host that resolves to a
+// public address for ValidateURL and an internal one for the client, i.e. DNS
+// rebinding, i.e. an in-process DNS server. Without it, replacing this call
+// with a plain http.Client silently reinstates the SSRF that #454 closed, and
+// every test still passes — which was the one mutation that survived there.
+var newTSAClient = safeClient
+
 // RequestToken asks an RFC3161 TSA to timestamp the given chain-head hash and
 // returns the DER-encoded timestamp response. The response is validated before
 // it is returned, so a stored token is always verifiable.
@@ -165,7 +177,7 @@ func RequestToken(ctx context.Context, tsaURL, headHex string, roots *x509.CertP
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/timestamp-query")
-	client := safeClient()
+	client := newTSAClient()
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("tsa request: %w", err)
