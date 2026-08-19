@@ -60,6 +60,53 @@ func disallowedIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
+// allowedTSAHosts is the set of hosts a caller may name, lowercased.
+//
+// Built from the server's own configuration rather than a list shipped here, so
+// that every deployment which works today keeps working: the host of
+// FIDES_TSA_URL is always permitted, and FIDES_TSA_ALLOWED_HOSTS adds any
+// others an operator wants callers to be able to choose between.
+//
+// With neither set the anchor endpoint already refuses for want of a TSA, so an
+// empty set costs nothing.
+func allowedTSAHosts() map[string]bool {
+	out := map[string]bool{}
+	if u, err := url.Parse(os.Getenv("FIDES_TSA_URL")); err == nil && u.Hostname() != "" {
+		out[strings.ToLower(u.Hostname())] = true
+	}
+	for _, h := range strings.Split(os.Getenv("FIDES_TSA_ALLOWED_HOSTS"), ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
+			out[h] = true
+		}
+	}
+	return out
+}
+
+// hostIsAllowed refuses any host the operator has not named.
+//
+// This is the difference between "an attacker cannot reach an internal address"
+// and "an attacker cannot choose the destination at all". The dial guard gives
+// the first: it stops the request landing on 169.254.169.254 however the name
+// resolves. It does not stop a caller pointing Fides at a host they control on
+// the public internet and reading what it sends — the timestamp request carries
+// a trail's chain-head hash, and the connection carries whatever an operator has
+// put in front of it.
+//
+// tsa_url arrives in an API request body, so the destination is attacker-chosen
+// unless something says otherwise. This is that something.
+func hostIsAllowed(host string) error {
+	allowed := allowedTSAHosts()
+	if len(allowed) == 0 {
+		return fmt.Errorf("no tsa hosts are configured: set FIDES_TSA_URL, " +
+			"or FIDES_TSA_ALLOWED_HOSTS to the hosts callers may name")
+	}
+	if !allowed[strings.ToLower(host)] {
+		return fmt.Errorf("tsa host %q is not allowed: add it to FIDES_TSA_ALLOWED_HOSTS "+
+			"if callers should be able to name it", host)
+	}
+	return nil
+}
+
 // ValidateURL guards the TSA endpoint against SSRF: it must be http(s) — many
 // public TSAs use http, so https is not required — and must not resolve to a
 // loopback, private, link-local, or cloud-metadata address.
@@ -80,6 +127,9 @@ func ValidateURL(raw string) error {
 	host := u.Hostname()
 	if host == "" {
 		return fmt.Errorf("tsa url has no host")
+	}
+	if err := hostIsAllowed(host); err != nil {
+		return err
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {

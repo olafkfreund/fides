@@ -132,16 +132,27 @@ func TestVerifyTokenRootPinning(t *testing.T) {
 }
 
 func TestValidateURL(t *testing.T) {
-	bad := []string{
-		"ftp://tsa.example.com",          // wrong scheme
-		"http://127.0.0.1/tsa",           // loopback
-		"https://169.254.169.254/latest", // cloud metadata (link-local)
-		"http://localhost:318",           // loopback by name
-		"not a url with spaces",
-	}
-	for _, u := range bad {
-		if err := ValidateURL(u); err == nil {
-			t.Errorf("ValidateURL(%q) = nil, want error", u)
+	// Every one of these hosts is allowlisted on purpose. Without that they
+	// would be refused for not being configured, and this test would pass
+	// whatever happened to the scheme and address rules it exists to check —
+	// deleting disallowedIP outright would not have failed it.
+	t.Setenv("FIDES_TSA_ALLOWED_HOSTS", "127.0.0.1, 169.254.169.254, localhost, tsa.example.com")
+
+	for _, tc := range []struct{ url, because string }{
+		{"ftp://tsa.example.com", "must be http or https"},
+		{"http://127.0.0.1/tsa", "disallowed address"},
+		{"https://169.254.169.254/latest", "disallowed address"},
+		{"http://localhost:318", "disallowed address"},
+		{"not a url with spaces", "must be http or https"}, // no scheme, so it fails there first
+	} {
+		err := ValidateURL(tc.url)
+		if err == nil {
+			t.Errorf("ValidateURL(%q) = nil, want error", tc.url)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.because) {
+			t.Errorf("ValidateURL(%q) failed with %q, want it to mention %q",
+				tc.url, err, tc.because)
 		}
 	}
 }
@@ -265,6 +276,10 @@ func TestRequestTokenUsesTheGuardedClient(t *testing.T) {
 	// and the client is constructed, but one that never answers. The context
 	// deadline ends the attempt — what is asserted is that a client was built
 	// by the factory, not what the request returned.
+	// Allowlisted so the request reaches the point of building a client;
+	// ValidateURL now refuses a host the operator never named.
+	t.Setenv("FIDES_TSA_ALLOWED_HOSTS", "203.0.113.1")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	_, _ = RequestToken(ctx, "http://203.0.113.1/tsa", "abc123", nil)
@@ -272,5 +287,72 @@ func TestRequestTokenUsesTheGuardedClient(t *testing.T) {
 	if built == 0 {
 		t.Fatal("RequestToken built its own HTTP client instead of the guarded one — " +
 			"the SSRF dial guard is not on the request path")
+	}
+}
+
+// The destination has to be one the operator named.
+//
+// The dial guard stops a request reaching an internal address however the name
+// resolves. It does not stop a caller pointing Fides at a host they control on
+// the public internet — and tsa_url arrives in an API request body, so without
+// an allowlist the destination is attacker-chosen.
+func TestOnlyConfiguredTSAHostsAreAllowed(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		tsaURL      string
+		allowedList string
+		target      string
+		wantErr     string
+	}{
+		{
+			name:   "the server's own TSA is always allowed",
+			tsaURL: "https://timestamp.example/tsa", target: "https://timestamp.example/tsa",
+		},
+		{
+			name:   "a host the operator did not name is refused",
+			tsaURL: "https://timestamp.example/tsa", target: "https://attacker.example/collect",
+			wantErr: "not allowed",
+		},
+		{
+			name:        "an extra host may be named",
+			allowedList: "one.example, two.example",
+			target:      "https://two.example/tsa",
+		},
+		{
+			name:        "matching ignores case, because hostnames do",
+			allowedList: "One.Example",
+			target:      "https://ONE.example/tsa",
+		},
+		{
+			name: "with nothing configured, nothing is allowed",
+			// Rather than everything: an unconfigured server refuses to anchor
+			// anyway, so the permissive reading would only ever help an
+			// attacker.
+			target: "https://anything.example/tsa", wantErr: "no tsa hosts are configured",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FIDES_TSA_URL", tc.tsaURL)
+			t.Setenv("FIDES_TSA_ALLOWED_HOSTS", tc.allowedList)
+
+			err := ValidateURL(tc.target)
+			if tc.wantErr == "" {
+				// It may still fail on DNS — these hosts do not resolve — but
+				// it must not fail on the allowlist.
+				if err != nil && strings.Contains(err.Error(), "allowed") {
+					t.Errorf("refused a configured host: %v", err)
+				}
+				if err != nil && strings.Contains(err.Error(), "no tsa hosts") {
+					t.Errorf("refused with nothing configured, but a host was: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("%s was permitted", tc.target)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
 	}
 }
