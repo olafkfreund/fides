@@ -111,8 +111,18 @@ services:
       # Tenant the static service token is scoped to (required with FIDES_API_TOKEN)
       - FIDES_API_ORG_ID=${FIDES_API_ORG_ID:?FIDES_API_ORG_ID must be set}
 
-      # Enable the Postgres RLS backstop. Requires schema-rls.sql applied and a
-      # non-superuser DB role (see schema-rls.sql). Defaults off.
+      # The Postgres RLS backstop is ON by default in the server now, but it is
+      # switched off here on purpose: this stack connects as POSTGRES_USER,
+      # which the postgres image creates as a SUPERUSER, and superusers ignore
+      # every policy. Leaving it on would apply the policies, log success, and
+      # isolate nothing — so the server would warn on every boot about a
+      # deployment that cannot be fixed without a second role.
+      #
+      # Tenant isolation is still enforced: every handler scopes its queries to
+      # the caller's organization. This is the database-level backstop, and the
+      # Helm chart is where it actually runs (its seed job creates the
+      # least-privilege fides_app role). Set this to true here only after
+      # pointing DB_DSN at a non-superuser role.
       - FIDES_RLS_ENABLED=${FIDES_RLS_ENABLED:-false}
 
       # Enable the integration event outbox + dispatcher (webhooks, ServiceNow,

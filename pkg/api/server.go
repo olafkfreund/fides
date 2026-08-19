@@ -473,7 +473,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
 	ctx := auth.WithPrincipal(r.Context(), p)
 
-	if os.Getenv("FIDES_RLS_ENABLED") == "true" && s.DB != nil {
+	if db.RLSEnabled() && s.DB != nil {
 		conn, release, err := db.ScopedConn(ctx, s.DB, p.OrgID.String())
 		if err != nil {
 			internalError(w, err)

@@ -35,7 +35,7 @@ to reach the server. The sensor additionally uses `MCP_SENSOR_RESPONSE`
 | Variable | Purpose |
 |---|---|
 | `DB_DSN` | Postgres DSN (e.g. `postgres://user:pass@host:5432/fides?sslmode=require`) |
-| `FIDES_RLS_ENABLED` | Enable Postgres Row-Level Security tenant isolation (connects as least-privilege `fides_app`; applies `schema-rls.sql`) |
+| `FIDES_RLS_ENABLED` | Postgres Row-Level Security tenant isolation. **On unless set to `false`.** Applies `schema-rls.sql` at boot and scopes every request connection. Needs a non-superuser DB role — a superuser ignores every policy, and the server logs a warning naming the role when that is the case |
 | `FIDES_TEST_DB_DSN` | DSN used by the Postgres integration tests only |
 
 ## Server — evidence storage
@@ -75,7 +75,7 @@ silently upgraded to a human session.
 
 Request contract:
 
-```
+```http
 POST /api/v1/trails/{id}/approvals
 { "reason": "reviewed by platform lead", "role": "approver", "on_behalf_of": "user@example.com" }
 
@@ -128,6 +128,7 @@ as `--secret-path` references resolved by `SECRETS_PROVIDER`.
 ## Minimal configs
 
 **CI runner (using the CLI):**
+
 ```bash
 export FIDES_SERVER_URL="https://fides.example.com"
 export FIDES_API_TOKEN="fides_ci_xxx"     # a Writer service-account key
@@ -135,6 +136,7 @@ export FIDES_ENCRYPTION_KEY="$CI_SECRET"  # only if you encrypt payloads
 ```
 
 **Server (local dev):**
+
 ```bash
 export DB_DSN="postgres://fides:fides@localhost:5432/fides?sslmode=disable"
 export FIDES_AUTO_MIGRATE=true
@@ -144,6 +146,7 @@ export AI_PROVIDER=ollama AI_OLLAMA_ENDPOINT=http://localhost:11434 AI_MODEL=lla
 ```
 
 **Server (production hardening):**
+
 ```bash
 export FIDES_RLS_ENABLED=true
 export SECRETS_PROVIDER=aws AWS_REGION=eu-west-2
