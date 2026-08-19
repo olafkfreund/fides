@@ -98,12 +98,12 @@ func (s *Server) handleCreateTrailAnchor(w http.ResponseWriter, r *http.Request)
 		TSAURL string `json:"tsa_url"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	tsaURL := req.TSAURL
-	if tsaURL == "" {
-		tsaURL = os.Getenv("FIDES_TSA_URL")
-	}
-	if tsaURL == "" {
-		http.Error(w, "no TSA configured: set tsa_url or FIDES_TSA_URL", http.StatusBadRequest)
+	// The URL that goes to the network is the configured one, not the one that
+	// arrived in the body. tsa_url selects among the server's endpoints; it
+	// does not supply a destination. See tsa.Resolve.
+	tsaURL, err := tsa.Resolve(req.TSAURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

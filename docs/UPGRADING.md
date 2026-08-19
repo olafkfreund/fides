@@ -9,29 +9,35 @@ that can bite an existing deployment get written down.
 
 ## Unreleased
 
-### The TSA host must be one you named
+### The TSA endpoint must be one you configured
 
-`POST /api/v1/trails/{id}/anchor` accepts a `tsa_url` in its body. It now has to
-name a host the server was configured with:
+`POST /api/v1/trails/{id}/anchor` accepts a `tsa_url` in its body. It no longer
+supplies a destination — it **selects** one:
 
-- the host of **`FIDES_TSA_URL`**, always; or
-- any host listed in the new **`FIDES_TSA_ALLOWED_HOSTS`** (comma-separated).
+- **`FIDES_TSA_URL`** is the default, used when `tsa_url` is absent; and
+- **`FIDES_TSA_URLS`** (comma-separated) offers further endpoints callers may
+  choose between.
 
-**Nothing to do if callers rely on the server's configured TSA** — that host is
-permitted automatically, which is the common case and the reason the allowlist
-is built from configuration rather than shipped as a list here.
+A `tsa_url` that does not match one of those exactly is refused, and what
+reaches the network is the string **as you configured it**, not the one that
+arrived in the request.
 
-**If callers pass their own `tsa_url`, list those hosts** or the request is
-refused with a message naming the variable to add.
+**Nothing to do if callers rely on the server's TSA** — an absent or matching
+`tsa_url` behaves as before. **If callers pass their own**, list those endpoints
+in `FIDES_TSA_URLS`.
 
-#### Why this is not just the dial guard again
+#### Why matching is not enough on its own
 
-The dial guard added earlier stops a timestamp request landing on an internal
-address however the name resolves. It does not stop a caller pointing Fides at a
-host *they* control on the public internet — and the request carries a trail's
-chain-head hash, over a connection carrying whatever an operator put in front of
-it. `tsa_url` arrives in a request body, so the destination was attacker-chosen
-unless something said otherwise. This is that something.
+An earlier version of this allowed any URL on an approved *host*. That still let
+the caller supply the path, the query and the userinfo — so
+`https://tsa.example/../../collect?leak=1` passed a host check while being a
+different request entirely. Substituting our own copy after matching is what
+ends that: the request chooses among endpoints, and cannot describe one.
+
+It also matters more than a dial guard here. The guard stops a request landing
+on an internal address however the name resolves; it has nothing to say about a
+caller naming a host they control on the public internet, and a timestamp
+request carries a trail's chain-head hash.
 
 ### Tenant isolation (RLS) is on by default
 

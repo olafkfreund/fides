@@ -132,12 +132,9 @@ func TestVerifyTokenRootPinning(t *testing.T) {
 }
 
 func TestValidateURL(t *testing.T) {
-	// Every one of these hosts is allowlisted on purpose. Without that they
-	// would be refused for not being configured, and this test would pass
-	// whatever happened to the scheme and address rules it exists to check —
-	// deleting disallowedIP outright would not have failed it.
-	t.Setenv("FIDES_TSA_ALLOWED_HOSTS", "127.0.0.1, 169.254.169.254, localhost, tsa.example.com")
-
+	// ValidateURL is scheme and address only now: choosing the destination is
+	// tsa.Resolve's job. Each case asserts the reason, so deleting disallowedIP
+	// fails here rather than passing on some other error.
 	for _, tc := range []struct{ url, because string }{
 		{"ftp://tsa.example.com", "must be http or https"},
 		{"http://127.0.0.1/tsa", "disallowed address"},
@@ -276,10 +273,6 @@ func TestRequestTokenUsesTheGuardedClient(t *testing.T) {
 	// and the client is constructed, but one that never answers. The context
 	// deadline ends the attempt — what is asserted is that a client was built
 	// by the factory, not what the request returned.
-	// Allowlisted so the request reaches the point of building a client;
-	// ValidateURL now refuses a host the operator never named.
-	t.Setenv("FIDES_TSA_ALLOWED_HOSTS", "203.0.113.1")
-
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	_, _ = RequestToken(ctx, "http://203.0.113.1/tsa", "abc123", nil)
@@ -290,69 +283,61 @@ func TestRequestTokenUsesTheGuardedClient(t *testing.T) {
 	}
 }
 
-// The destination has to be one the operator named.
+// The destination has to be one the operator configured, and the string that
+// reaches the network has to be theirs rather than the caller's.
 //
-// The dial guard stops a request reaching an internal address however the name
-// resolves. It does not stop a caller pointing Fides at a host they control on
-// the public internet — and tsa_url arrives in an API request body, so without
-// an allowlist the destination is attacker-chosen.
-func TestOnlyConfiguredTSAHostsAreAllowed(t *testing.T) {
-	for _, tc := range []struct {
-		name        string
-		tsaURL      string
-		allowedList string
-		target      string
-		wantErr     string
-	}{
-		{
-			name:   "the server's own TSA is always allowed",
-			tsaURL: "https://timestamp.example/tsa", target: "https://timestamp.example/tsa",
-		},
-		{
-			name:   "a host the operator did not name is refused",
-			tsaURL: "https://timestamp.example/tsa", target: "https://attacker.example/collect",
-			wantErr: "not allowed",
-		},
-		{
-			name:        "an extra host may be named",
-			allowedList: "one.example, two.example",
-			target:      "https://two.example/tsa",
-		},
-		{
-			name:        "matching ignores case, because hostnames do",
-			allowedList: "One.Example",
-			target:      "https://ONE.example/tsa",
-		},
-		{
-			name: "with nothing configured, nothing is allowed",
-			// Rather than everything: an unconfigured server refuses to anchor
-			// anyway, so the permissive reading would only ever help an
-			// attacker.
-			target: "https://anything.example/tsa", wantErr: "no tsa hosts are configured",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("FIDES_TSA_URL", tc.tsaURL)
-			t.Setenv("FIDES_TSA_ALLOWED_HOSTS", tc.allowedList)
+// A host allowlist (which this replaces) still let the caller supply the path,
+// query and userinfo. Matching and then substituting our own copy means the
+// request only ever selects among configured endpoints.
+func TestResolveReturnsTheConfiguredEndpoint(t *testing.T) {
+	const configured = "https://timestamp.example/tsa"
 
-			err := ValidateURL(tc.target)
-			if tc.wantErr == "" {
-				// It may still fail on DNS — these hosts do not resolve — but
-				// it must not fail on the allowlist.
-				if err != nil && strings.Contains(err.Error(), "allowed") {
-					t.Errorf("refused a configured host: %v", err)
-				}
-				if err != nil && strings.Contains(err.Error(), "no tsa hosts") {
-					t.Errorf("refused with nothing configured, but a host was: %v", err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("%s was permitted", tc.target)
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
-			}
-		})
-	}
+	t.Run("an empty choice takes the first configured endpoint", func(t *testing.T) {
+		t.Setenv("FIDES_TSA_URL", configured)
+		t.Setenv("FIDES_TSA_URLS", "")
+		got, err := Resolve("")
+		if err != nil || got != configured {
+			t.Fatalf("Resolve(\"\") = %q, %v; want %q", got, err, configured)
+		}
+	})
+
+	t.Run("a matching choice returns our copy, not the caller's", func(t *testing.T) {
+		t.Setenv("FIDES_TSA_URL", configured)
+		t.Setenv("FIDES_TSA_URLS", "")
+		// Same endpoint, different case: what comes back must be the string as
+		// configured, because that is the one nobody outside chose.
+		got, err := Resolve("HTTPS://TIMESTAMP.EXAMPLE/tsa")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != configured {
+			t.Errorf("Resolve returned %q; want the configured spelling %q", got, configured)
+		}
+	})
+
+	t.Run("a path on an allowed host is still refused", func(t *testing.T) {
+		// The case a host allowlist could not catch.
+		t.Setenv("FIDES_TSA_URL", configured)
+		t.Setenv("FIDES_TSA_URLS", "")
+		if got, err := Resolve("https://timestamp.example/../../collect?x=1"); err == nil {
+			t.Errorf("Resolve permitted %q", got)
+		}
+	})
+
+	t.Run("a second endpoint may be offered", func(t *testing.T) {
+		t.Setenv("FIDES_TSA_URL", configured)
+		t.Setenv("FIDES_TSA_URLS", "https://other.example/ts, https://third.example/ts")
+		got, err := Resolve("https://third.example/ts")
+		if err != nil || got != "https://third.example/ts" {
+			t.Fatalf("Resolve = %q, %v", got, err)
+		}
+	})
+
+	t.Run("an unconfigured server refuses rather than accepting anything", func(t *testing.T) {
+		t.Setenv("FIDES_TSA_URL", "")
+		t.Setenv("FIDES_TSA_URLS", "")
+		if _, err := Resolve("https://anything.example/tsa"); err == nil {
+			t.Error("Resolve accepted a destination with nothing configured")
+		}
+	})
 }

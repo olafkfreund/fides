@@ -60,51 +60,55 @@ func disallowedIP(ip net.IP) bool {
 		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
-// allowedTSAHosts is the set of hosts a caller may name, lowercased.
-//
-// Built from the server's own configuration rather than a list shipped here, so
-// that every deployment which works today keeps working: the host of
-// FIDES_TSA_URL is always permitted, and FIDES_TSA_ALLOWED_HOSTS adds any
-// others an operator wants callers to be able to choose between.
-//
-// With neither set the anchor endpoint already refuses for want of a TSA, so an
-// empty set costs nothing.
-func allowedTSAHosts() map[string]bool {
-	out := map[string]bool{}
-	if u, err := url.Parse(os.Getenv("FIDES_TSA_URL")); err == nil && u.Hostname() != "" {
-		out[strings.ToLower(u.Hostname())] = true
-	}
-	for _, h := range strings.Split(os.Getenv("FIDES_TSA_ALLOWED_HOSTS"), ",") {
-		if h = strings.ToLower(strings.TrimSpace(h)); h != "" {
-			out[h] = true
+// Configured returns the TSA endpoints an operator has set, in the order
+// FIDES_TSA_URL then FIDES_TSA_URLS.
+func Configured() []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(raw string) {
+		if raw = strings.TrimSpace(raw); raw != "" && !seen[raw] {
+			seen[raw] = true
+			out = append(out, raw)
 		}
+	}
+	add(os.Getenv("FIDES_TSA_URL"))
+	for _, u := range strings.Split(os.Getenv("FIDES_TSA_URLS"), ",") {
+		add(u)
 	}
 	return out
 }
 
-// hostIsAllowed refuses any host the operator has not named.
+// Resolve turns a caller's choice of TSA into one of the configured endpoints,
+// and returns the **configured** string rather than the caller's.
 //
-// This is the difference between "an attacker cannot reach an internal address"
-// and "an attacker cannot choose the destination at all". The dial guard gives
-// the first: it stops the request landing on 169.254.169.254 however the name
-// resolves. It does not stop a caller pointing Fides at a host they control on
-// the public internet and reading what it sends — the timestamp request carries
-// a trail's chain-head hash, and the connection carries whatever an operator has
-// put in front of it.
+// That substitution is the point, not a detail. tsa_url arrives in an API
+// request body, so before this the destination was chosen by the caller and
+// every guard downstream was trying to constrain a value it did not trust: the
+// dial guard stopped it reaching an internal address, a host allowlist stopped
+// it naming an unexpected host, and the path, query and userinfo were still
+// whatever was sent. Matching and then using our own copy ends that — what
+// reaches the network is a string an operator configured, and the request only
+// selects among them.
 //
-// tsa_url arrives in an API request body, so the destination is attacker-chosen
-// unless something says otherwise. This is that something.
-func hostIsAllowed(host string) error {
-	allowed := allowedTSAHosts()
-	if len(allowed) == 0 {
-		return fmt.Errorf("no tsa hosts are configured: set FIDES_TSA_URL, " +
-			"or FIDES_TSA_ALLOWED_HOSTS to the hosts callers may name")
+// An empty choice means the first configured endpoint, so a caller that does
+// not care keeps working unchanged.
+func Resolve(requested string) (string, error) {
+	configured := Configured()
+	if len(configured) == 0 {
+		return "", fmt.Errorf("no TSA is configured: set FIDES_TSA_URL, or FIDES_TSA_URLS " +
+			"to the endpoints callers may choose between")
 	}
-	if !allowed[strings.ToLower(host)] {
-		return fmt.Errorf("tsa host %q is not allowed: add it to FIDES_TSA_ALLOWED_HOSTS "+
-			"if callers should be able to name it", host)
+	if strings.TrimSpace(requested) == "" {
+		return configured[0], nil
 	}
-	return nil
+	want := strings.TrimSpace(requested)
+	for _, c := range configured {
+		if strings.EqualFold(c, want) {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("tsa_url %q is not one of this server's configured endpoints; "+
+		"add it to FIDES_TSA_URLS if callers should be able to choose it", want)
 }
 
 // ValidateURL guards the TSA endpoint against SSRF: it must be http(s) — many
@@ -127,9 +131,6 @@ func ValidateURL(raw string) error {
 	host := u.Hostname()
 	if host == "" {
 		return fmt.Errorf("tsa url has no host")
-	}
-	if err := hostIsAllowed(host); err != nil {
-		return err
 	}
 	ips, err := net.LookupIP(host)
 	if err != nil {
