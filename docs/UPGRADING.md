@@ -9,6 +9,30 @@ that can bite an existing deployment get written down.
 
 ## Unreleased
 
+### The TSA host must be one you named
+
+`POST /api/v1/trails/{id}/anchor` accepts a `tsa_url` in its body. It now has to
+name a host the server was configured with:
+
+- the host of **`FIDES_TSA_URL`**, always; or
+- any host listed in the new **`FIDES_TSA_ALLOWED_HOSTS`** (comma-separated).
+
+**Nothing to do if callers rely on the server's configured TSA** — that host is
+permitted automatically, which is the common case and the reason the allowlist
+is built from configuration rather than shipped as a list here.
+
+**If callers pass their own `tsa_url`, list those hosts** or the request is
+refused with a message naming the variable to add.
+
+#### Why this is not just the dial guard again
+
+The dial guard added earlier stops a timestamp request landing on an internal
+address however the name resolves. It does not stop a caller pointing Fides at a
+host *they* control on the public internet — and the request carries a trail's
+chain-head hash, over a connection carrying whatever an operator put in front of
+it. `tsa_url` arrives in a request body, so the destination was attacker-chosen
+unless something said otherwise. This is that something.
+
 ### Tenant isolation (RLS) is on by default
 
 `FIDES_RLS_ENABLED` used to be opt-in. It is now **on unless you set it to

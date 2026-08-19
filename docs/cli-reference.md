@@ -32,7 +32,7 @@ non-compliance — previously `1`.)
 | `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
 | `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--image <repo> \| --bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure). `--image ghcr.io/org/name` resolves the signature straight from the registry; `--bundle` uses a pre-fetched one (offline/air-gapped) |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken); also reports the external RFC3161 anchor status (`external_anchor`) if the trail was anchored |
-| `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (proves the head existed at a point in time, independently of the Fides DB). TSA URL from `--tsa` or the server's `FIDES_TSA_URL` |
+| `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (proves the head existed at a point in time, independently of the Fides DB). TSA URL from `--tsa` or the server's `FIDES_TSA_URL`; a `--tsa` host must be allowed by `FIDES_TSA_ALLOWED_HOSTS` |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
 
 ## Runtime snapshots
