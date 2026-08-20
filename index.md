@@ -351,11 +351,13 @@ Fides ships a premium web portal for security auditors and DevSecOps controllers
 Below is a tour of the portal pages. A light/dark theme toggle lives in the sidebar;
 the screenshots below use dark mode.
 
-### 1. Overview Dashboard
+### 1. Assurance Console
 
-Real-time compliance status: **clickable KPI cards** (Tracked Artifacts, Compliance
-Pass %, Active Alerts, AI Evaluations), workload environment health, a live audit-log
-trail, per-framework controls coverage, and ServiceNow / webhook integration events.
+The live posture of every tracked artifact: compliance pass rate, a controls-coverage
+donut segmented by framework, environment health with drift counts, cumulative and
+24-hour check throughput, and a **streaming feed of checks as they land**. Integration
+delivery (ServiceNow, webhooks) is on the same page, so a failed sink is visible
+rather than silent.
 ![Fides Overview Dashboard](docs/images/portal/00-overview.jpg)
 
 ### 2. Flows & Trails
@@ -453,6 +455,27 @@ authenticated session.
 Every guide, in-product — Getting Started, Small & Large Teams, User Stories, CI/CD Gate,
 CLI Reference, and more.
 ![Help & Documentation](docs/images/portal/10-help.jpg)
+
+### 12. Risk Register
+
+The risks the SDLC controls exist to reduce — supply-chain compromise, unauthorised
+deployment, insider threat, configuration drift — each with its attack vectors and
+the mitigating controls derived from the control catalog. Risks with **no control
+mapped** are labelled as such rather than quietly omitted.
+![Risk Register](docs/images/portal/12-risks.jpg)
+
+### 13. Secure SDLC
+
+Your secure software lifecycle — **Build, Process, Runtime** — generated from the
+control catalog, with every control marked preventive or detective and cross-mapped
+to SOC 2, NIST 800-53, SLSA and SOX. One click downloads the audit pack.
+![Secure SDLC](docs/images/portal/14-sdlc.jpg)
+
+### 14. Service Registry
+
+Services and their ownership, so a gate verdict points at a team rather than a
+repository name.
+![Service Registry](docs/images/portal/13-services.jpg)
 
 ---
 
