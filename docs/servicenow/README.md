@@ -34,6 +34,6 @@ sinks, the ITSM change-check gate) start at
 
 ## Related epics/PRs
 
-The signed-bundle enrichments referenced by the action specs land via sibling PRs
-#226 (evidence bundle + risk → change_request), #227 (change↔control linkage), and
-#228 (CMDB deployment provenance).
+The signed-bundle enrichments referenced by the action specs land via sibling
+PRs #226 (evidence bundle + risk → change_request), #227 (change↔control
+linkage), and #228 (CMDB deployment provenance).

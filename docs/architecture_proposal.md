@@ -17,6 +17,7 @@ This document outlines the detailed architecture for **Fides**, a self-hosted, m
 The established supply-chain provenance model solves a critical problem in modern, fast-paced DevOps: **securing the software supply chain and automating compliance auditing**. Instead of using manual checklists, static spreadsheets, or scrolling through weeks of CI/CD logs to reconstruct what was built, tested, and deployed, such tools track and evaluate every state change in real-time.
 
 ### Core Concepts & Building Blocks
+
 These tools typically organize their data using the following concepts:
 
 1. **Organization (Tenant)**: The high-level boundary for users, permissions, and resources.
@@ -38,6 +39,7 @@ These tools typically organize their data using the following concepts:
 ## 2. Fides: System Architecture
 
 Fides consists of four main architectural blocks:
+
 1. **Fides CLI (`fides`)**: A lightweight, statically compiled command-line utility built in Go, ensuring cross-platform support (macOS, Windows, Linux) without dependencies. It runs inside CI/CD runners or host daemons.
 2. **Fides Core API Server**: The central gateway. Written in Go, it coordinates database operations, communicates with the Object Storage and Secret Vault engines, and evaluates compliance policy rules.
 3. **LLM Verification Gateway (Fides-AI)**: A pluggable intelligence layer. It translates natural language compliance requirements, parses large logs/reports (like SBOMs and compiler outputs), flags credential exposures, and assesses risk using both commercial and local models (Ollama, llama.cpp).
@@ -245,23 +247,24 @@ ALTER TABLE system_audit_logs REPLICA IDENTITY FULL; -- Ensure audit triggers ha
 ## 4. Multi-Cloud Evidence Vault Storage
 
 A core requirement is that Fides can run in any environment and support pluggable storage providers. By abstracting the read/write mechanism in Go, the server maps attachments to:
-* **Local Disk**: Mounted folders (useful for local development or on-premises server networks).
-* **AWS S3 / MinIO**: Standard object storage bucket commands.
-* **Google Cloud Storage (GCS)**: Authenticates natively via Application Default Credentials (ADC) or Service Account JSON.
-* **Azure Blob Storage**: Interacts using Blob client endpoints and Account Keys.
+
+- **Local Disk**: Mounted folders (useful for local development or on-premises server networks).
+- **AWS S3 / MinIO**: Standard object storage bucket commands.
+- **Google Cloud Storage (GCS)**: Authenticates natively via Application Default Credentials (ADC) or Service Account JSON.
+- **Azure Blob Storage**: Interacts using Blob client endpoints and Account Keys.
 
 ```go
 package storage
 
 import (
-	"context"
-	"io"
+ "context"
+ "io"
 )
 
 type StorageBackend interface {
-	Upload(ctx context.Context, bucket, key string, r io.Reader, contentType string) (string, error)
-	Download(ctx context.Context, bucket, key string) (io.ReadCloser, error)
-	Delete(ctx context.Context, bucket, key string) error
+ Upload(ctx context.Context, bucket, key string, r io.Reader, contentType string) (string, error)
+ Download(ctx context.Context, bucket, key string) (io.ReadCloser, error)
+ Delete(ctx context.Context, bucket, key string) error
 }
 ```
 
@@ -277,16 +280,17 @@ package secrets
 import "context"
 
 type SecretsProvider interface {
-	GetSecret(ctx context.Context, path string, key string) (string, error)
+ GetSecret(ctx context.Context, path string, key string) (string, error)
 }
 ```
 
 Supported secrets providers:
-* **HashiCorp Vault**: Accesses KV engine paths using Token or K8s Service Account Token.
-* **AWS Secrets Manager**: Queries secret values via AWS STS roles.
-* **GCP Secret Manager**: Fetches secret payloads using service accounts.
-* **Azure Key Vault**: Queries vaults using Active Directory secrets.
-* **Local System Env**: Falls back to reading process environment variables for lightweight Docker setups.
+
+- **HashiCorp Vault**: Accesses KV engine paths using Token or K8s Service Account Token.
+- **AWS Secrets Manager**: Queries secret values via AWS STS roles.
+- **GCP Secret Manager**: Fetches secret payloads using service accounts.
+- **Azure Key Vault**: Queries vaults using Active Directory secrets.
+- **Local System Env**: Falls back to reading process environment variables for lightweight Docker setups.
 
 ---
 
@@ -294,7 +298,7 @@ Supported secrets providers:
 
 Fides acts as the central ingestion portal for external security tools. The CLI runs the tools locally, parses the reports (or uploads the full report as an attachment), and posts the structured summary payload to the REST API.
 
-```
+```text
        +--------------------+
        |  CI/CD Runner Host |
        +---------+----------+
@@ -315,6 +319,7 @@ Fides acts as the central ingestion portal for external security tools. The CLI 
 ```
 
 ### Supported Ingestions
+
 1. **Supply Chain (SBOM)**:
    - Tooling: **Syft** or **Trivy**.
    - Input format: SPDX JSON / CycloneDX JSON.
@@ -369,7 +374,7 @@ cluster, rejecting unregistered/non-compliant images.
 
 A key differentiator is Fides's LLM engine. When an attestation is posted, the server can trigger an automated LLM evaluation. This supports commercial APIs and local LLM runners.
 
-```
+```text
                                   +-------------------+
                                   |   Fides API   |
                                   +---------+---------+
@@ -390,6 +395,7 @@ A key differentiator is Fides's LLM engine. When an attestation is posted, the s
 ```
 
 ### LLM Use Cases
+
 1. **Vulnerability Evaluation & Risk Context**:
    An LLM reviews high CVE counts against the deployment target's environment metadata and answers: *"Does this container vulnerability expose us, considering this container has no public internet ingress?"*
 2. **Log Interpretation**:
@@ -400,59 +406,60 @@ A key differentiator is Fides's LLM engine. When an attestation is posted, the s
    Confirming if Gitleaks flagged a real, operational credential or a false positive (e.g., mock keys in test suites).
 
 ### Provider Architecture API Client Example (Go)
+
 ```go
 package ai
 
 import (
-	"context"
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"net/http"
+ "context"
+ "bytes"
+ "encoding/json"
+ "fmt"
+ "net/http"
 )
 
 type LLMRequest struct {
-	Model  string   `json:"model"`
-	Prompt string   `json:"prompt"`
-	Stream bool     `json:"stream"`
+ Model  string   `json:"model"`
+ Prompt string   `json:"prompt"`
+ Stream bool     `json:"stream"`
 }
 
 type LLMResponse struct {
-	Response string `json:"response"`
+ Response string `json:"response"`
 }
 
 type OllamaClient struct {
-	Endpoint string
-	Model    string
+ Endpoint string
+ Model    string
 }
 
 func (c *OllamaClient) EvaluateAttestation(ctx context.Context, payload string) (string, error) {
-	prompt := fmt.Sprintf("Review the following security payload. Analyze the risk and confirm compliance:\n%s", payload)
-	
-	reqBody, _ := json.Marshal(LLMRequest{
-		Model:  c.Model,
-		Prompt: prompt,
-		Stream: false,
-	})
+ prompt := fmt.Sprintf("Review the following security payload. Analyze the risk and confirm compliance:\n%s", payload)
+ 
+ reqBody, _ := json.Marshal(LLMRequest{
+  Model:  c.Model,
+  Prompt: prompt,
+  Stream: false,
+ })
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.Endpoint+"/api/generate", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
+ req, err := http.NewRequestWithContext(ctx, "POST", c.Endpoint+"/api/generate", bytes.NewBuffer(reqBody))
+ if err != nil {
+  return "", err
+ }
+ req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
+ resp, err := http.DefaultClient.Do(req)
+ if err != nil {
+  return "", err
+ }
+ defer resp.Body.Close()
 
-	var llmResp LLMResponse
-	if err := json.NewDecoder(resp.Body).Decode(&llmResp); err != nil {
-		return "", err
-	}
+ var llmResp LLMResponse
+ if err := json.NewDecoder(resp.Body).Decode(&llmResp); err != nil {
+  return "", err
+ }
 
-	return llmResp.Response, nil
+ return llmResp.Response, nil
 }
 ```
 
@@ -462,7 +469,7 @@ func (c *OllamaClient) EvaluateAttestation(ctx context.Context, payload string) 
 
 Tracking runtime state is essential to prevent unauthorized modifications (shadow deployments) or accidental updates (drift).
 
-```
+```bash
    1. Collect Runtime State
    ------------------------
    Host Daemon executes:
@@ -485,8 +492,8 @@ Tracking runtime state is essential to prevent unauthorized modifications (shado
       |        +--[NO]---> Flag SHADOW CHANGE (Bypassed CI/CD pipeline!)
 ```
 
-* **Drift**: A running container image is known, but it fails to meet the current environment policy (e.g. its Snyk scan has expired, or it lacks a signed approval).
-* **Shadow Change**: A container digest is detected in production but is **completely missing** from the Fides database. This indicates that a developer bypassed the CI/CD pipeline and deployed directly using `kubectl` or local Docker commands. This triggers a high-severity alert.
+- **Drift**: A running container image is known, but it fails to meet the current environment policy (e.g. its Snyk scan has expired, or it lacks a signed approval).
+- **Shadow Change**: A container digest is detected in production but is **completely missing** from the Fides database. This indicates that a developer bypassed the CI/CD pipeline and deployed directly using `kubectl` or local Docker commands. This triggers a high-severity alert.
 
 ---
 
@@ -495,12 +502,15 @@ Tracking runtime state is essential to prevent unauthorized modifications (shado
 Fides contains distinct features mapping directly to the controls required by standard framework audits:
 
 ### SOC 2 & ISO 27001
+
 - **SDLC Control Verification**: Policies ensure that code cannot reach production without code coverage, pull request approvals, and static analysis scans.
 - **Traceability (Provenance)**: The database forms a chain of custody linking the Git commit, the build runner identity, the test/security artifacts, and the eventual container deployment digest.
 - **Access Logs**: The `system_audit_logs` table logs all administrator actions, token updates, policy shifts, and query exports.
 
 ### FDA 21 CFR Part 11
+
 This regulation mandates electronic records, electronic signatures, and audit trails for life-sciences software systems.
+
 - **Electronic Signatures**: In the `attestations` table, the signature block records the signer's identity, the cryptographic hash of the evidence, and the manifestation reason (e.g., *"I attest that these unit tests passed successfully"*).
 - **Time-Stamped Audit Trail**: Records in `system_audit_logs` are write-once and can be combined with write-once PostgreSQL configurations (replica identity full, table locks, or export-to-ledger) to guarantee that history cannot be deleted or modified, even by database administrators.
 - **Validation of Systems**: System validation scripts (verification tests) confirm that the policy engine behaves deterministically.
@@ -512,6 +522,7 @@ This regulation mandates electronic records, electronic signatures, and audit tr
 The compose configuration below includes the relational database, local object storage, the Fides server, and a local **Ollama** service to demonstrate local, self-hosted LLM assessment.
 
 ### `docker-compose.yml`
+
 ```yaml
 version: '3.8'
 

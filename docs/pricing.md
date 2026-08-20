@@ -120,5 +120,6 @@ value on **enterprise features + hosting + support**, not on the license.
    `/pricing` in-portal? (Say the word and I'll wire it once the numbers land.)
 
 ## Related
+
 - `docs/market-analysis-2026.md` §5 Tier-3 (#8) and §3 (competitive benchmark).
 - Epic #217 (delivery-intelligence moat & new-buyer plays) — this is its last child.

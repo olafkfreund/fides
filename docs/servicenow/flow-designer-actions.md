@@ -36,14 +36,14 @@ Writes the evidence-backed **change-gate verdict + 0–100 risk score** onto a
 ServiceNow Change Request as a work note and the `risk` field. Fides advises,
 ServiceNow decides.
 
-**Inputs**
+### Inputs
 
 | Name | Type | Required | Notes |
 |---|---|---|---|
 | `trail_id` | String (UUID) | yes | The Fides trail for the build/deploy under change |
 | `change_number` | String | yes | e.g. `CHG0030192` |
 
-**Outputs**
+### Outputs
 
 | Name | Type | Notes |
 |---|---|---|
@@ -74,14 +74,14 @@ A **guard** action for approval/deploy flows: it reads the trail's change-gate a
 **fails the flow step** unless Fides recommends approval, so a CR cannot advance
 without passing controls, evidence, and a human sign-off (segregation of duties).
 
-**Inputs**
+### Inputs
 
 | Name | Type | Required | Notes |
 |---|---|---|---|
 | `trail_id` | String (UUID) | yes | The Fides trail to gate on |
 | `max_risk_score` | Integer | no | Fail if `risk_score` exceeds this (default 0 = require `approve`) |
 
-**Outputs**
+### Outputs
 
 | Name | Type | Notes |
 |---|---|---|
@@ -121,14 +121,14 @@ On change close, attach the **signed deployment attestation** (image digest,
 commit, build log reference, runtime snapshot) to the deployment's CMDB CI,
 proving what was deployed matched the change intent.
 
-**Inputs**
+### Inputs
 
 | Name | Type | Required | Notes |
 |---|---|---|---|
 | `trail_id` | String (UUID) | yes | The trail whose deployment provenance to anchor |
 | `ci_name` | String | yes | CMDB CI name (service/app) to attach the evidence to |
 
-**Outputs**
+### Outputs
 
 | Name | Type | Notes |
 |---|---|---|
@@ -136,7 +136,7 @@ proving what was deployed matched the change intent.
 | `anchored` | Boolean | true when the CI was updated |
 | `audit_package_url` | String | link to the Fides audit package for the trail |
 
-**REST steps**
+### REST steps
 
 1. **Locate the CI** — `GET {{base}}/api/v1/servicenow/cmdb?name={{inputs.ci_name}}`
    ([`handleServiceNowSearchCMDB`](https://github.com/olafkfreund/fides/blob/main/pkg/api/server.go)) returns matching

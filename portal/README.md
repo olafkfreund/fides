@@ -9,6 +9,7 @@ same-origin Fides REST API.
 ## Status: Phase 1 (scaffold)
 
 Working skeleton to validate the approach:
+
 - Next.js 16 (App Router) + TypeScript + Tailwind, `output: "export"`.
 - `src/lib/api.ts` — same-origin API client (session-cookie auth).
 - **Login** (`/login`) wired to `POST /api/v1/auth/local-login`.

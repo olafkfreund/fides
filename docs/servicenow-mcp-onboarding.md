@@ -4,6 +4,7 @@
 > (Word document with all screenshots). Regenerate with
 > `pandoc docs/servicenow-mcp-onboarding.md -o docs/servicenow-mcp-onboarding.docx --toc`.
 
+<!-- markdownlint-disable-next-line MD028 -->
 
 > Register the **Fides MCP server** in ServiceNow so **Now Assist** (and AI Agents) can
 > call Fides tools — `ground_change` and `get_controls_coverage` — directly.
@@ -19,12 +20,14 @@ where Fides consumes ServiceNow's MCP server). For the grounding endpoint itself
 
 - **Fides MCP server is live** at `https://<fides-host>/api/v1/mcp` (the Streamable‑HTTP
   MCP endpoint). Confirm from a shell:
+
   ```sh
   curl -s -X POST https://<fides-host>/api/v1/mcp \
     -H "Authorization: Bearer $FIDES_API_TOKEN" -H 'Content-Type: application/json' \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
   # -> { "result": { "tools": [ "ground_change", "get_controls_coverage" ] } }
   ```
+
 - A **Fides API token** (org‑scoped). You'll paste it into the ServiceNow credential.
 - A **ServiceNow admin** with access to *Connections & Credentials* and the *MCP Server* app.
 - ServiceNow must be able to reach the Fides host over HTTPS (no MID server needed if the
@@ -32,7 +35,7 @@ where Fides consumes ServiceNow's MCP server). For the grounding endpoint itself
 
 ## Overview — the record chain
 
-```
+```text
 sn_mcp_server "Fides MCP server"
       └── Connection Alias  →  sn_alias  (Type: Connection and Credential, HTTP)
                                    ├── HTTP Connection  →  URL /api/v1/mcp
@@ -103,19 +106,21 @@ Fill it:
 
 - **Name:** `Fides API token`
 - **Header Name:** `Authorization`
-- **API Key:** type `Bearer ` (with a trailing space), then paste the Fides token, so the
+- **API Key:** type `Bearer` (with a trailing space), then paste the Fides token, so the
   value reads exactly:
-  ```
+
+  ```text
   Bearer <your-fides-api-token>
   ```
+
 - **Authorization Algorithm:** `Custom Header API Key Algorithm` (default)
 
 **Submit.**
 
 ![Custom Header API Key Credential — Header Name Authorization](images/servicenow-mcp-onboarding/05-custom-header-credential.png)
 
-> ⚠️ **The `Bearer ` prefix is mandatory.** The Custom‑Header type sends the header
-> verbatim as `Authorization: <API Key>`. Without the `Bearer ` prefix Fides returns
+> ⚠️ **The `Bearer` prefix is mandatory.** The Custom‑Header type sends the header
+> verbatim as `Authorization: <API Key>`. Without the `Bearer` prefix Fides returns
 > **401** and ServiceNow's tool call fails silently.
 
 ---
@@ -158,7 +163,7 @@ Bearer auth** work end‑to‑end:
 ] } }
 ```
 
-If you get **401** → the credential is missing the `Bearer ` prefix or the wrong header.
+If you get **401** → the credential is missing the `Bearer` prefix or the wrong header.
 If you get **no records / not found** → re‑check the connection is *Active* and its
 Credential is set.
 
@@ -206,6 +211,8 @@ Now Assist answered with Fides's authoritative grounding:
 > Recommendation: HOLD; Tamper‑Evidence: chain intact. *Source: Fides (advisory —
 > ServiceNow decides).*
 
+<!-- markdownlint-disable-next-line MD028 -->
+
 > **Note:** the `sn_wdf_mcp_client/.../tools/{tool}/invoke` REST path is a *different*
 > framework and reports "No sync record found" — ignore it. AI Agent Studio invokes the
 > tool through the `sn_aia` runtime (as proven above).
@@ -219,12 +226,13 @@ control‑coverage + risk, instead of guessing.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Tool call returns **401** | API Key missing the `Bearer ` prefix, or wrong header name | API Key = `Bearer <token>`, Header Name = `Authorization` |
+| Tool call returns **401** | API Key missing the `Bearer` prefix, or wrong header name | API Key = `Bearer <token>`, Header Name = `Authorization` |
 | Credential **alias** field shows *Invalid reference* | Its reference qualifier doesn't match this alias; no type‑ahead match | Leave it empty — link from the **connection → Credential** side instead |
 | *"No configuration template"* banner | Clicked the guided *Create New Connection & Credential* link | Ignore it; add the Connection + Credential directly from the alias's related lists |
 | Invoke returns *"No sync record found"* | Tools discovered but not yet **synced** into the registry | Attach the server to an agent in AI Agent Studio (Step 7) — that syncs the tools |
 
 ## Related
+
 - [servicenow-mcp.md](servicenow-mcp.md) — Fides consuming ServiceNow's MCP server.
 - [servicenow-now-assist-grounding.md](servicenow-now-assist-grounding.md) — the grounding endpoint + `ground_change`.
 - [servicenow-integration.md](servicenow-integration.md) — change‑gate write‑back, control linkage, CMDB anchoring.

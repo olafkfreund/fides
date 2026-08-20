@@ -49,6 +49,7 @@ edit, deletion, or reorder is detectable.
 ```bash
 fides verify-chain --trail $TRAIL          # exits non-zero (2) if the chain is broken
 ```
+
 ```bash
 curl -H "Authorization: Bearer $FIDES_API_TOKEN" \
   $FIDES_SERVER_URL/api/v1/trails/$TRAIL/verify-chain
@@ -170,6 +171,7 @@ fides servicenow change-check --trail $TRAIL --change CHG0030192
 # store the incoming-webhook URL as a secret (env var or Secrets Manager id), then:
 fides slack config --secret-path fides/slack-webhook
 ```
+
 Compliance events (`compliance.evaluated`, `snapshot.noncompliant`) are posted to
 the channel when the event engine is enabled (`FIDES_EVENTS_ENABLED=true`).
 
@@ -528,7 +530,7 @@ fides change-gate --trail $FLAG_TRAIL               # green only when committer 
 it to send a Fides service-account key as the `Authorization` header — Fides
 normalizes the payload and records the `flag.changed` attestation:
 
-```
+```text
 Unleash:   Addon → Webhook → URL https://fides.example.com/api/v1/flags/webhook/unleash
 Flagsmith: Integrations → Webhooks → URL …/api/v1/flags/webhook/flagsmith
            (Authorization: Bearer fides_<service-account-key>)

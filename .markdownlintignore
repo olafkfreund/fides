@@ -9,3 +9,10 @@ demo/screencasts/out/
 
 # Vendored / generated docs
 **/CHANGELOG.md
+
+# Machine-facing markdown, not documentation: a PR template must not open with
+# an H1 (it would land in every PR body), and CLAUDE.md / AGENTS.md are agent
+# directives whose first line is an import, not a heading.
+.github/pull_request_template.md
+**/CLAUDE.md
+**/AGENTS.md

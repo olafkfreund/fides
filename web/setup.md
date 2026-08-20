@@ -28,7 +28,7 @@ ORG_NAME="Acme Corp" FIDES_APP_PASSWORD="<pick-a-strong-password>" \
 
 It is **idempotent** — safe to re-run. It prints the two values you need next:
 
-```
+```text
 FIDES_API_ORG_ID = 4e70c5ad-...        # the tenant UUID
 DB_DSN           = host=... user=fides_app password=... dbname=fides sslmode=disable
 ```

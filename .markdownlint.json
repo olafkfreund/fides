@@ -7,7 +7,17 @@
   "MD060": false,
   "MD033": false,
   "MD024": { "siblings_only": true },
-  "MD029": { "style": "ordered" },
+
+  // Jekyll front matter carries `title:`, which MD025 counts as an H1 -- so a
+  // Pages doc with both fails for being correct. GitHub does not render front
+  // matter, so the H1 has to stay.
+  "MD025": { "front_matter_title": "" },
+  // Off, not tuned. A ranked list whose items are split by intervening content
+  // parses as several lists, so --fix renumbers 6/7/9 into 2/3/2 and a priority
+  // order silently becomes three lists (caught in market-analysis-2026.md).
+  // Numbering style is cosmetic; a rule that can rewrite meaning to enforce it
+  // is a bad trade.
+  "MD029": false,
   "MD046": false,
   "MD004": { "style": "consistent" }
 }

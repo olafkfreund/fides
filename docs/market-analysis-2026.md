@@ -37,6 +37,7 @@ SaaS pricing.
 evidence-based change gates, runtime snapshots, framework catalogs, Git/Slack/ServiceNow.
 
 **Where Fides is genuinely differentiated:**
+
 1. **AI-native governance** — MCP server (15 tools + docs-as-resources), in-browser WebMCP,
    in-cluster MCP sensor. Agents can *query compliance and record provenance directly*.
    They have AI Q&A; we have an **agent-actionable control plane**. This is our sharpest edge.
@@ -46,6 +47,7 @@ evidence-based change gates, runtime snapshots, framework catalogs, Git/Slack/Se
 4. **LLM-drafted policies** (`fides policy generate --framework ... --description`).
 
 **Where competitors are ahead (our gaps):**
+
 - Brand/credibility (DB + FINOS); hybrid/mainframe reach; polished evidence-vault UX.
 - **JFrog AppTrust (Sept 2025)** is running the *same* "DevGovOps → ServiceNow" play we are,
   with an evidence-provider ecosystem (GitHub, Sonar, Aqua…). Validates our thesis, but they move fast.
@@ -63,6 +65,7 @@ These are now baseline expectations across the market:
 ## 5. Gap list — what's missing & how to add it (prioritized)
 
 ### Tier 1 — ride the regulatory wave (next 1–2 quarters)
+
 1. **SLSA provenance + Sigstore/cosign verifier.**
    *How:* new `fides attest slsa` / `fides verify-image --sha --signer` that validates cosign
    signatures + in-toto provenance and records the verdict as an attestation. Wire into the
@@ -81,6 +84,7 @@ These are now baseline expectations across the market:
    gate emits and ServiceNow can read. PCI-DSS 4.0 + SOX ITGC require exactly this.
 
 ### Tier 2 — deepen the moat
+
 5. **DORA-metrics ↔ compliance correlation** (named market white-space).
    *How:* extend `fides metrics` to overlay change-failure rate vs control-coverage / risk-score
    trend. "Did velocity cost us compliance?" No competitor bridges delivery intelligence + GRC.
@@ -90,6 +94,7 @@ These are now baseline expectations across the market:
    a best-in-class evidence timeline per trail/artifact, not just CLI/JSON.
 
 ### Tier 3 — positioning
+
 8. **Publish pricing / open-core story.** Competitors' opaque, SaaS-only pricing is a named weakness;
    our self-hostable architecture is a wedge. An OSS/free tier attacks the "open-source alternative to
    closed-source SaaS provenance tools" white-space.
@@ -105,6 +110,7 @@ uploads** (PDFs/screenshots, versioning conflicts). Change ↔ Compliance ↔ Au
 Every one of these is a Fides strength. "Fides advises; ServiceNow decides."
 
 ### Tier 1 ServiceNow integrations (highest value)
+
 1. **Signed evidence feed into DevOps Change Velocity.** Fides posts its change-gate verdict +
    risk score + tamper-evident evidence bundle to the `change_request`; a change-approval policy
    input requires "Fides attests all gates passed." Turns SN auto-approval from *pipeline-metric*
@@ -118,6 +124,7 @@ Every one of these is a Fides strength. "Fides advises; ServiceNow decides."
    "deployment matched change intent." We already push ITOM/CMDB events; add the evidence anchor.
 
 ### Tier 2
+
 4. **Automated control-testing feed into IRM/Audit Management.** Fides continuous checks +
    runtime snapshots replace manual evidence uploads: IRM shows live "control tested at T via
    Fides, N% compliant" instead of a screenshot in a spreadsheet.
@@ -127,6 +134,7 @@ Every one of these is a Fides strength. "Fides advises; ServiceNow decides."
    flag control non-compliance in real time (SN has no post-approval re-scoring today).
 
 ### Integration mechanics (leverage what SN already exposes)
+
 - **HMAC-signed webhooks** — SN webhooks are unsigned by default; ours are already HMAC-signed.
   Ship a Scripted REST API + Flow Designer template that verifies the Fides signature. Instant
   security upgrade + audit trail SN lacks natively.
@@ -138,6 +146,7 @@ Every one of these is a Fides strength. "Fides advises; ServiceNow decides."
 ## 7. Regulatory tailwinds (why now)
 
 Convergent demand for automated, tamper-evident, continuous build→deploy evidence:
+
 - **PCI-DSS 4.0** — mandatory since Mar 2025; auditors want 12 months of change-control + SoD evidence by end-2026.
 - **DORA (EU financial regulation)** — in force Jan 2025; change-approval chains + third-party ICT evidence. *(Note: distinct from DORA delivery metrics — Fides serves both.)*
 - **EU CRA** — SBOM + secure-build attestation; reporting obligations Sept 2026, full Dec 2027.
@@ -150,6 +159,7 @@ The buying thesis writes itself: *you cannot satisfy six frameworks with manual 
 one-tool-per-regulation.* Fides generates audit-ready evidence for all of them from one pipeline.
 
 ## 8. Recommended focus (the short list)
+
 1. **SLSA/cosign verify + SBOM ingestion + OSCAL export** — close table-stakes, unlock CRA/SSDF/FedRAMP.
 2. **Ship the ServiceNow spoke** (signed evidence → CR, change↔control link, CMDB anchor) — beat JFrog AppTrust to the "DevGovOps" story with tamper-evidence they don't have.
 3. **Lean into AI-native (MCP) + self-hostable** as the two things closed-source SaaS competitors structurally can't copy quickly.

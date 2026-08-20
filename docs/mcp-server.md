@@ -91,7 +91,7 @@ Each tool calls the **same-origin, cookie-authenticated** Fides API using the
 current user's session, so an agent only sees what the signed-in user is allowed
 to see.
 
-**Read-only**
+#### Read-only
 
 | Tool | What it does |
 |------|--------------|
@@ -104,7 +104,7 @@ to see.
 | `fides_deployment_frequency` | Weekly deployment frequency per environment |
 | `fides_compliance_summary` | Overall compliance summary |
 
-**Safe actions**
+#### Safe actions
 
 | Tool | What it does |
 |------|--------------|

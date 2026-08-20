@@ -25,7 +25,7 @@ In **Environments → MCP Connections → Add**:
 - **Tool name**: `get_pods`
 - **jq rules** (one per line), e.g.:
 
-  ```
+  ```text
   .pods[].status == "Ready"
   .pods[].replicas == .pods[].readyReplicas
   ```
