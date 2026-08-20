@@ -49,4 +49,4 @@ GitHub `production` environment's required reviewers as a second human gate.
 - `app/` — a trivial sample artifact (an Alpine image) so the build step has
   something to fingerprint. Replace with your real build.
 
-> ✅ Proven live in `olafkfreund/fides-release-demo` against https://fides.freundcloud.org.uk.
+> ✅ Proven live in `olafkfreund/fides-release-demo` against <https://fides.freundcloud.org.uk>.

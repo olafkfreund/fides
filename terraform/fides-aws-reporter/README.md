@@ -7,7 +7,7 @@ shadow-change findings. The AWS analogue of the `fides-k8s-reporter` Helm chart.
 
 ## How it works
 
-```
+```text
 EventBridge Scheduler ──RunTask──▶ Fargate task (fides + aws-cli)
                                      └─ fides snapshot ecs --env <id> --cluster <name>
                                         (aws ecs list-tasks/describe-tasks) ──▶ POST /api/v1/snapshots
@@ -19,10 +19,12 @@ is injected from Secrets Manager (never in state or task env).
 ## Prerequisites
 
 1. The reporter image — build `Dockerfile.aws-reporter` (fides CLI + AWS CLI) and push to ECR/GHCR:
+
    ```bash
    docker build -f Dockerfile.aws-reporter -t <acct>.dkr.ecr.<region>.amazonaws.com/fides-aws-reporter:1.0.0 .
    docker push <acct>.dkr.ecr.<region>.amazonaws.com/fides-aws-reporter:1.0.0
    ```
+
 2. A Fides **environment** (`fides env create --name my-ecs --type ecs`) — note its UUID.
 3. The `FIDES_API_TOKEN` stored in **Secrets Manager**.
 

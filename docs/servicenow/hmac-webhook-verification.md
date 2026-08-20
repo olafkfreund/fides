@@ -15,7 +15,7 @@ compare it, in a length-independent scan, to the signature header.
 Implemented in [`pkg/webhooks/webhook.go`](https://github.com/olafkfreund/fides/blob/main/pkg/webhooks/webhook.go) (`Sign`)
 and delivered by the tenant webhook sink:
 
-```
+```text
 X-Fides-Signature   sha256=<hex>      HMAC_SHA256(secret, timestamp + "." + rawBody)
 X-Fides-Timestamp   <unix seconds>    part of the signed payload; also a replay guard
 X-Fides-Event-Id    <uuid>            dedupe key — delivery is at-least-once
@@ -34,7 +34,7 @@ string, a `.`, then the exact bytes of the body. Two rules follow:
 
 ### Worked example
 
-```
+```text
 secret     = "s3cr3t"
 timestamp  = "1735732800"
 rawBody    = {"id":"e1","type":"compliance.evaluated","org_id":"o1","payload":{},"sent_at":"1735732800"}
@@ -77,7 +77,7 @@ window on `X-Fides-Timestamp`.
 
 Published URL:
 
-```
+```text
 https://<instance>.service-now.com/api/<scope>/fides_inbound/events
 ```
 

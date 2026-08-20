@@ -47,7 +47,7 @@ You don't need all of it on day one. Fides is designed to be adopted one rung at
 a time — start by *recording* evidence (no gates, nothing blocks), then turn on
 gates in **warn-only** mode, then enforce.
 
-```
+```text
 Record evidence  →  Gate in warn-only  →  Enforce gates  →  Adopt control frameworks
    (visibility)        (no failures)       (blocks bad          (auditor-ready
                                             releases)             reports)
@@ -59,21 +59,26 @@ Record evidence  →  Gate in warn-only  →  Enforce gates  →  Adopt control 
 
 **Goal:** provenance and a safety net, with near-zero ceremony.
 
-**Setup**
+### Setup
+
 - Run one Fides server (single container + Postgres; see
   [installation](installation.md) / [getting started](getting_started.md)).
 - One **Flow** per service. One shared **org**.
 - Auth with a single service-account token (`FIDES_API_TOKEN`) — no user
   directory needed.
 
-**In CI (GitHub Actions or GitLab CI)**
+### In CI (GitHub Actions or GitLab CI)
+
 - Record a trail + artifact on every build, attach your existing scan output:
+
   ```bash
   fides trail start --flow $FLOW_ID --trail $CI_SHA --commit $CI_SHA --committer "$AUTHOR"
   fides artifact report --org $ORG_ID --trail $CI_SHA --file image.tar --name app --type docker
   fides attest trivy --trail $CI_SHA --file trivy.json
   ```
+
 - Add **one** gate, in warn-only, so nothing breaks while you learn it:
+
   ```yaml
   # GitHub — see docs/ci-gate.md
   - uses: olafkfreund/fides/.github/actions/fides-gate@v0.3.0
@@ -95,24 +100,30 @@ logical environments. You can turn these on later without redoing anything.
 **Goal:** enforce a baseline, split responsibilities, start mapping to a
 framework.
 
-**Add**
+### Add
+
 - **Service accounts per pipeline** instead of one shared token:
+
   ```bash
   fides service-account create --name ci-auth-service
   fides service-account issue-key --name ci-auth-service
   ```
+
 - **Flip gates from warn-only to enforce.** Drop `warn-only` and the job now
   fails (exit `2`) on a bad verdict. Common gates: `assert` (policy),
   `verify-image` (signed by your CI), `verify-chain` (untampered).
 - **Adopt your first framework** and enforce its controls:
+
   ```bash
   fides control import --framework SOC2
   fides control coverage                       # what's covered, what's missing
   fides control enforce --key CC7.2 --env $PROD_ENV_ID
   ```
+
 - **Notifications**: `fides slack config …` so verdicts land in a channel.
 - **Environments + drift**: snapshot what's actually running and detect shadow
   changes:
+
   ```bash
   fides snapshot k8s --env $PROD_ENV_ID --namespace production
   fides env verify --env $PROD_ENV_ID --server k8s-prod --tool get_pods \
@@ -128,15 +139,18 @@ controls, and the portal's **Controls & Coverage** page shows coverage climbing.
 
 **Goal:** multi-team isolation, segregation-of-duties, audit-ready reporting.
 
-**Add**
+### Add
+
 - **Multiple orgs / tenants** (Postgres RLS via `app.current_org`) so teams'
   evidence is isolated.
 - **Segregation of duties & four-eyes.** `change-gate` holds until the trail has
   the approvals your policy demands, and the committer can't self-approve:
+
   ```bash
   fides approve --trail $TRAIL_ID --role approver     # a *different* human
   fides change-gate --trail $TRAIL_ID                 # exit 2 until SoD is met
   ```
+
   See [segregation-of-duties](segregation-of-duties.md).
 - **Logical environments** to aggregate many physical envs (e.g. all prod
   regions) for a single coverage view: `fides logical-env create|add-member`.
@@ -144,9 +158,11 @@ controls, and the portal's **Controls & Coverage** page shows coverage climbing.
   Change Request, and Now Assist can be *grounded* on Fides evidence. See
   [servicenow-integration](servicenow-integration.md).
 - **Auditor-ready exports**: per-framework reports, including NIST **OSCAL**:
+
   ```bash
   fides report --framework SOC2 --format oscal
   ```
+
 - **External trust anchoring** for high-assurance trails:
   `fides anchor --trail $TRAIL_ID` (RFC3161 timestamp, independent of the DB).
 - **AI in the loop**: the `fides-mcp` server lets Claude Code / Cursor / Claude

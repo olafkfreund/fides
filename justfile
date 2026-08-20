@@ -49,7 +49,7 @@ check:
 
 # ---------- markdown ----------
 
-# Lint markdown you've changed vs main — this is what CI enforces.
+# Lint markdown you've changed vs main — quick local pass while writing.
 lint-md:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -62,7 +62,7 @@ lint-md:
     echo "$files" | sed 's/^/  /'
     echo "$files" | tr '\n' '\0' | xargs -0 -r markdownlint
 
-# Lint every tracked markdown file (includes the pre-existing backlog).
+# Lint every tracked markdown file — this is what CI enforces.
 lint-md-all:
     @git ls-files '*.md' -z | xargs -0 -r markdownlint
 

@@ -40,7 +40,8 @@ The gate commands and their exit codes:
 Prove the artifact you're about to ship carries a valid keyless cosign signature
 from your own GitHub Actions workflow — otherwise fail.
 
-**GitHub**
+#### GitHub
+
 ```yaml
 name: Deploy gate
 on: [deployment]
@@ -59,7 +60,8 @@ jobs:
           trail: ${{ env.TRAIL_ID }}   # optional: records the verdict as evidence
 ```
 
-**GitLab**
+#### GitLab
+
 ```yaml
 include:
   - remote: 'https://raw.githubusercontent.com/olafkfreund/fides/main/ci/gitlab/fides-gate.yml'
@@ -75,7 +77,8 @@ include:
 `change-gate` returns *hold* until the trail has the approvals your policy demands
 (and the author can't self-approve). Wire it into the PR/MR pipeline.
 
-**GitHub**
+#### GitHub
+
 ```yaml
 - uses: olafkfreund/fides/.github/actions/fides-gate@v0.3.0
   with:
@@ -85,7 +88,8 @@ include:
     trail: ${{ env.TRAIL_ID }}
 ```
 
-**GitLab**
+#### GitLab
+
 ```yaml
 include:
   - remote: 'https://raw.githubusercontent.com/olafkfreund/fides/main/ci/gitlab/fides-gate.yml'

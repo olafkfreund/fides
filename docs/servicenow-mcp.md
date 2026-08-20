@@ -95,10 +95,12 @@ fides servicenow mcp call   --server sn_mcp_server_default --tool <tool> --args 
 
 - The **MCP Server** capability (part of Now Assist / AI Agents) must be
   installed. Verify at `/now/sn-mcp-server/list`, or:
+
   ```bash
   curl -u "$SN_USER:$SN_PASS" \
     "$SN_URL/api/now/table/sn_mcp_server_registry?sysparm_fields=name,url,status"
   ```
+
   At least one server should show `status=active` (e.g. `sn_mcp_server_default`).
 - The service account needs read access to the tables you intend to look up
   (`change_request`, `cmdb_ci*`, `sn_compliance_control`, …) and to

@@ -70,7 +70,7 @@ signed evidence and risk score.
 
 Fides exposes a **remote MCP server over HTTP** (Streamable transport) at:
 
-```
+```http
 POST https://<fides-host>/api/v1/mcp        # Authorization: Bearer <fides-token>
 ```
 
@@ -156,7 +156,9 @@ change-summarization or change-approval skill, and instruct the skill to base ev
 compliance statement solely on `grounding_summary` / the returned fields.
 
 ### Live demo reference
+
 `CHG0032508` on the demo instance is wired end-to-end:
+
 - **Fides → ServiceNow (governed MCP read):** `fides servicenow mcp lookup --table change_request` returns real CRs through SN's MCP governance.
 - **ServiceNow change record carries Fides evidence:** a work note ("this change implements control SOC2-CC8.1 … attested via Fides attestation …") and the change **risk field set to Moderate** by the change gate.
 - **Now Assist grounding:** `GET /api/v1/servicenow/grounding?change=CHG0032508` → `grounded:true`, **37/37 controls satisfied**, risk 40/100 (medium), recommendation HOLD, tamper-evidence chain intact — the `grounding_summary` is the sentence Now Assist quotes.
@@ -164,5 +166,6 @@ compliance statement solely on `grounding_summary` / the returned fields.
 Reproduce with `scripts/servicenow-demo.sh` (env-driven; see the script header).
 
 ## Related
+
 - [servicenow-integration.md](servicenow-integration.md) — write-back (change gate, control linkage, CMDB anchor).
 - [servicenow-mcp.md](servicenow-mcp.md) — Fides consuming ServiceNow's MCP server (#167).

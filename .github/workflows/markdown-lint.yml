@@ -1,11 +1,20 @@
 name: markdown-lint
 
-# Lints only the markdown a PR actually touches. The repo has a pre-existing
-# backlog of lint errors in docs/ and web/; gating on changed files stops new
-# drift without demanding a repo-wide reformat first. Switch to linting
-# everything once `just lint-md-all` is clean.
+# Lints every tracked markdown file. This used to lint only the files a PR
+# touched, because the repo carried a backlog of 434 pre-existing errors and
+# gating on all of them would have blocked every PR. The backlog is cleared, so
+# the weaker gate is no longer worth its blind spot: changed-files-only never
+# catches a file that breaks because a *config* changed, and it silently exempts
+# anything nobody happens to edit.
 on:
   pull_request:
+    paths:
+      - '**/*.md'
+      - '.markdownlint.json'
+      - '.markdownlintignore'
+      - '.github/workflows/markdown-lint.yml'
+  push:
+    branches: [main]
     paths:
       - '**/*.md'
       - '.markdownlint.json'
@@ -15,23 +24,16 @@ permissions:
   contents: read
 
 jobs:
-  changed:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Collect changed markdown
-        id: files
-        run: |
-          git diff --name-only --diff-filter=d \
-            "origin/${{ github.base_ref }}...HEAD" -- '*.md' > changed.txt
-          echo "count=$(wc -l < changed.txt)" >> "$GITHUB_OUTPUT"
-          cat changed.txt
+      - name: Install markdownlint-cli
+        run: npm install -g markdownlint-cli
 
-      - name: markdownlint
-        if: steps.files.outputs.count != '0'
-        run: |
-          npm install -g markdownlint-cli
-          xargs -r -a changed.txt markdownlint
+      # git ls-files, not a glob: it lints exactly what is tracked, so it can
+      # never wander into node_modules or a build output that .markdownlintignore
+      # would otherwise have to keep chasing.
+      - name: Lint every tracked markdown file
+        run: git ls-files '*.md' -z | xargs -0 -r markdownlint

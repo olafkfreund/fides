@@ -21,7 +21,7 @@ packaging over the `fides` CLI — no server-side changes.
 Both take a build through the full flow, each step mapped to a control in
 `fides control catalog`:
 
-```
+```text
 trail start          → Version Control          (FIDES-CTRL-0001)
 artifact report      → Artifact Provenance      (FIDES-CTRL-0002)
 attest sbom          → Software Bill of Materials(FIDES-CTRL-0003)

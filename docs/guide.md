@@ -13,6 +13,7 @@ This guide provides deep-dive walkthroughs, configuration examples, and producti
 ## 1. Installation & Self-Hosting Setup
 
 Fides is designed to run in Docker environments. Below is a production-grade `docker-compose.yml` stack incorporating:
+
 * **Fides Core API Server**: The central control plane.
 * **PostgreSQL Database**: Relational storage for audit history.
 * **MinIO Object Store**: S3-compatible Evidence Vault.
@@ -110,7 +111,9 @@ export FIDES_ENCRYPTION_KEY="passphrase-secret-passphrase-secret"
 ### Command Reference
 
 #### Creating a Compliance Flow
+
 Register a pipeline tracking stream:
+
 ```bash
 ./fides flow create \
   --org "5d57b8c7-4328-4e1b-93df-4161b9a918a3" \
@@ -120,7 +123,9 @@ Register a pipeline tracking stream:
 ```
 
 #### Starting an Execution Run (Trail)
+
 Register a build execution instance (typically mapping to a Git Commit SHA or Build ID):
+
 ```bash
 ./fides trail start \
   --flow "f83b3e8c-8dc7-4a0b-ae95-716d1ba1f122" \
@@ -132,7 +137,9 @@ Register a build execution instance (typically mapping to a Git Commit SHA or Bu
 ```
 
 #### Attesting Scans (Payload Encryption)
+
 Securely upload evidence reports. The CLI will derive a key from `FIDES_ENCRYPTION_KEY` and symmetrically encrypt the JSON scan metrics using **AES-256-GCM** before transmission:
+
 ```bash
 ./fides attest \
   --trail "a1b2c3d4e5f67890" \
@@ -324,7 +331,7 @@ deploy-service:
 
 ## 4. Policy Configuration & Flows Editing
 
-Policies are registered in JSON format using rules containing `jq` expressions. 
+Policies are registered in JSON format using rules containing `jq` expressions.
 
 ### Creating a Release Policy
 
@@ -355,6 +362,7 @@ Policies are registered in JSON format using rules containing `jq` expressions.
 ```
 
 Upload policies via the Core API:
+
 ```bash
 curl -X POST http://localhost:8191/api/v1/policies \
   -H "Content-Type: application/json" \
@@ -397,6 +405,7 @@ Fides utilizes a pluggable storage driver interface for evidence uploads (eviden
 ### Storage Drivers Config (`storage_driver` in settings)
 
 #### 1. AWS S3 Storage Config
+
 ```json
 {
   "storage_driver": "s3",
@@ -409,6 +418,7 @@ Fides utilizes a pluggable storage driver interface for evidence uploads (eviden
 ```
 
 #### 2. Google Cloud Storage (GCS) Config
+
 ```json
 {
   "storage_driver": "gcs",
@@ -418,12 +428,15 @@ Fides utilizes a pluggable storage driver interface for evidence uploads (eviden
 ```
 
 ### Pluggable Vault Providers Settings
+
 In the **Settings** view under *Cloud Vault*, choose from the following provider backends to pull secure parameters:
+
 * **ENV**: Server reads keys directly from environment variables.
 * **HashiCorp Vault**: Server queries Key-Value (KV) engine over REST.
 * **AWS Secrets Manager / GCP Secret Manager / Azure Key Vault**: Queries cloud vault paths.
 
-#### HashiCorp Vault Settings Config:
+#### HashiCorp Vault Settings Config
+
 ```json
 {
   "vault_provider": "vault",
@@ -457,12 +470,15 @@ Register OAuth endpoints inside the **Settings** panel:
 ```
 
 ### SSO Group Mappings
+
 Map authentication scopes to internal roles:
+
 * **Admin**: full rules/flows modifications.
 * **Auditor**: read-only audit exports.
 * **Writer**: registers artifacts/attestations.
 
-#### SQL Mappings Seed Example:
+#### SQL Mappings Seed Example
+
 ```sql
 INSERT INTO sso_group_mappings (org_id, external_group, role)
 VALUES 
@@ -479,11 +495,14 @@ Fides-AI performs automated evaluations of large log outputs and complex softwar
 ### Selecting and configuring Providers
 
 #### 1. Ollama (Self-hosted)
+
 Runs models locally on your server host without external api calls:
+
 * **Endpoint URL**: `http://localhost:11434`
 * **Model Name**: `gemma4` or `llama3:8b`
 
 #### 2. Google Gemini
+
 * **Endpoint URL**: Cloud API
 * **Model Name**: `gemini-1.5-pro`
 * **API Key Path**: `secret/data/ai/gemini:api_key`
@@ -508,6 +527,7 @@ scrape_configs:
 ```
 
 ### Sample Metrics Payload (`GET /api/v1/telemetry/metrics`)
+
 ```json
 {
   "request_count": 1045,
@@ -525,6 +545,7 @@ scrape_configs:
 Expose the entire compliance registry directly to LLMs using the Model Context Protocol (MCP).
 
 ### Stdio Configuration for Claude Desktop
+
 Add this tool mapping to your configuration profile (`~/.config/Claude/claude_desktop_config.json`):
 
 ```json
@@ -543,6 +564,7 @@ Add this tool mapping to your configuration profile (`~/.config/Claude/claude_de
 ### Querying Fides via AI Assistant (Examples)
 
 AI agents can run queries conversational style inside cursor/claude interface:
+
 * **User Query**: *"List all compliance pipelines for payments-team"*
   * **Agent Action**: Calls `list_flows` tool on `fides-mcp`.
 * **User Query**: *"Check if docker image sha256:e3b0c442... is compliant"*

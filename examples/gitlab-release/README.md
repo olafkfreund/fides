@@ -30,11 +30,13 @@ build path to your app).
 
 - The **gate** job runs `fides change-gate` inline. You can instead `include` the
   reusable template shipped in this repo:
+
   ```yaml
   include:
     - remote: 'https://raw.githubusercontent.com/olafkfreund/fides/main/ci/gitlab/fides-gate.yml'
       inputs: { args: "change-gate --trail $CI_COMMIT_SHA", server-url: "$FIDES_SERVER_URL" }
   ```
+
 - **Deploy is `when: manual`** so a human triggers it (four-eyes). The change-gate
   itself also holds until a human approver has signed off with a session token —
   distinct from the CI service-account token.
