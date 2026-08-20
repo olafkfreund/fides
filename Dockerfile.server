@@ -38,6 +38,13 @@ RUN rm -rf web
 COPY --from=portal /portal-root/. ./web/
 COPY --from=portal /portal-next/. ./web/next/
 RUN (cp /keep/*.md web/ 2>/dev/null || true) && (cp /keep/llms*.txt web/ 2>/dev/null || true)
+# The Help-page docs reference screenshots as ../docs/images/... — right on GitHub
+# (web/README.md -> repo docs/), and in the portal it resolves to /docs/images/...
+# too: the Help page renders at /help, one segment deep, and a browser clamps the
+# leading ".." at the root. Staging the images under web/docs/ makes one link work
+# in both places, so the docs/ and web/ copies stay byte-identical. Without this
+# every screenshot in the portal's own docs is a broken image.
+RUN mkdir -p web/docs && cp -r docs/images web/docs/images
 
 # Build static binaries: the server and the stdio MCP sensor (real MCP server
 # used by environment compliance checks).

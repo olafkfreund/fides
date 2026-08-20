@@ -8,6 +8,9 @@ Fides is a self-hosted, multi-cloud compatible compliance tracking system. It re
 > walkthroughs, CI/CD templates, database setups, secret vaults, and AI-audits,
 > read the **[Fides Integration & Setup Guide](/docs/guide.html)**.
 
+<!-- Two distinct GitHub callouts, not one split quote; MD028 can't tell them apart. -->
+<!-- markdownlint-disable-next-line MD028 -->
+
 > [!NOTE]
 > **New — [Fides × ServiceNow showcase](/servicenow-showcase.html)**: the bidirectional,
 > governed DevGovOps spoke, verified live. Fides consumes ServiceNow's MCP server,
@@ -146,15 +149,15 @@ graph TD
     Start([Assert Request]) --> GetPolicy[Resolve Policy Rules]
     GetPolicy --> FetchAttestations[Fetch Attestations for Artifact SHA256]
     FetchAttestations --> LoopStart{For each Rule in Policy}
-    
+
     LoopStart -->|Next Rule| MatchType{Attestation Type Matches?}
     MatchType -->|No| SkipRule[Skip Rule] --> LoopStart
     MatchType -->|Yes| EvalJQ[Evaluate JQ Expression on Payload]
-    
+
     EvalJQ --> IsCompliant{Evaluates to True?}
     IsCompliant -->|Yes| RecordPass[Record Rule Pass] --> LoopStart
     IsCompliant -->|No| RecordFail[Record Rule Failure] --> LoopStart
-    
+
     LoopStart -->|All Rules Evaluated| FinalCheck{Any Failures Recorded?}
     FinalCheck -->|Yes| FailGate[Exit Code 1: Abort Deployment]
     FinalCheck -->|No| PassGate[Exit Code 0: Allow Deployment]
@@ -282,7 +285,6 @@ Fides includes a built-in **Model Context Protocol (MCP)** server (`fides-mcp`) 
 * **`fides-mcp` (out-of-browser)** — shipped in the image at `/usr/local/bin/fides-mcp` for Claude Code, Cursor, and Claude Desktop.
 * **In-browser WebMCP** — the portal registers the same Fides tools via the native `document.modelContext` API (with the `@mcp-b/global` polyfill fallback), so browser agents and local LLMs can act inside the auditor's authenticated session.
 
-
 ### Downloadable Agent Skill (Claude Code & other agents)
 
 Fides ships a portable **Agent Skill** that teaches Claude Code (and other AI agents)
@@ -343,7 +345,6 @@ flowchart TD
     Deploy -->|HOLD| Stop[Block Deployment]
 </pre>
 
-
 ## Web Portal Tour
 
 Fides ships a premium web portal for security auditors and DevSecOps controllers.
@@ -351,58 +352,87 @@ Below is a tour of the portal pages. A light/dark theme toggle lives in the side
 the screenshots below use dark mode.
 
 ### 1. Overview Dashboard
+
 Real-time compliance status: **clickable KPI cards** (Tracked Artifacts, Compliance
 Pass %, Active Alerts, AI Evaluations), workload environment health, a live audit-log
 trail, per-framework controls coverage, and ServiceNow / webhook integration events.
 ![Fides Overview Dashboard](docs/images/portal/00-overview.jpg)
 
 ### 2. Flows & Trails
+
 Delivery pipelines (**Flows**) and their build **Trails**. Expand a flow to see each
 trail's attestation count and act on it — **Change Gate**, **Approve**, **Verify chain**,
 or **Download audit**.
 ![Flows & Trails](docs/images/portal/01-flows.jpg)
 
+Expanded, a flow lists every trail with its commit, attestation count and
+per-trail actions:
+
+![A flow expanded to its trails](docs/images/portal/01b-flows-trails.jpg)
+
 ### 3. Artifacts, SBOM & Attestation drill-down
+
 Search build artifacts by SHA256 and drill into an artifact's **SBOM** (CycloneDX / SPDX /
 Syft components, licenses, vulnerabilities) and its full set of signed **attestations**.
 ![Artifacts, SBOM & Attestations](docs/images/portal/02-artifacts.jpg)
 
+Expanding an artifact shows its SBOM verdict and every attestation attached to
+it:
+
+![Artifact drill-down: SBOM and attestations](docs/images/portal/02b-artifact-detail.jpg)
+
 ### 4. Attestations
+
 Every piece of evidence recorded against build trails, with compliance status, evidence
 type, and totals — filterable by name, type, and compliance.
 ![Attestations](docs/images/portal/03-attestations.jpg)
 
+Each attestation opens to its raw payload, the artifact it covers, and its
+position in the hash chain:
+
+![Attestation payload and chain hash](docs/images/portal/03b-attestation-detail.jpg)
+
 ### 5. Environments & MCP Connections
+
 Monitor runtime environments (EKS / ECS) with running / drift / shadow counts, and let
 Fides run **live compliance checks** against each environment's **MCP sensors** (e.g. the
 in-cluster `fides-mcp-sensor`) — plus per-environment artifact allow-lists.
 ![Environments & MCP Connections](docs/images/portal/04-environments.jpg)
 
 ### 6. Policies Editor (Monaco + AI)
+
 Author deterministic JQ compliance gates in a full **Monaco editor** with **Format** and an
 AI **"Check & fix"** action, or generate rules from a described goal with the LLM Policy Wizard.
 ![Policies & JQ Rule Editor](docs/images/portal/05-policies.jpg)
 
+![Policy editor with jq rules](docs/images/portal/05b-policy-editor.jpg)
+
 ### 7. Controls & Coverage
+
 Adopt regulated frameworks (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX) and see
 coverage **grouped by framework**, with average coverage and gaps at a glance.
 ![Controls & Coverage](docs/images/portal/06-controls.jpg)
+
+![Control drill-down: per-environment enforcement](docs/images/portal/06b-controls-enforcement.jpg)
 
 Drill into any control to see the evidence it requires and its **per-environment
 enforcement**, with one-click actions to enforce or archive it.
 
 ### 8. AI Audits & LLM Evaluator Reports
+
 Deep, **parsed and scored** risk / compliance assessments generated by local or cloud LLMs
 for every reported attestation — vulnerabilities, failures, licensing risks, and an overall score.
 ![AI Audits & LLM Evaluator Reports](docs/images/portal/07-ai-audits.jpg)
 
 ### 9. Telemetry & OpenTelemetry Metrics
+
 Live API backend observability — request / error rates, latency, DB connection pools, request
 outcomes — plus **DORA weekly deployment frequency per environment**. Export to Prometheus
 `/metrics` or OpenTelemetry.
 ![Telemetry & OpenTelemetry Metrics](docs/images/portal/08-telemetry.jpg)
 
 ### 10. Settings & Integrations
+
 Tabbed settings — **Infrastructure** (SSO / OAuth; evidence storage S3 / GCS / Azure / local;
 secrets vault AWS / Vault / …; LLM provider — all by **secret reference**, never raw secrets),
 **Directory & Group mappings** (map IdP groups to Fides roles), **ServiceNow**, **Slack**,
@@ -410,11 +440,16 @@ secrets vault AWS / Vault / …; LLM provider — all by **secret reference**, n
 CI/CD API keys).
 ![Settings](docs/images/portal/09-settings.jpg)
 
+![Directory & Groups — map IdP groups to Fides roles](docs/images/portal/09b-settings-directory.jpg)
+
+![Service Accounts — issue CI/CD API keys](docs/images/portal/09e-settings-service-accounts.jpg)
+
 A built-in **AI Assistant** — voice input and spoken replies, backed by the same Fides tools
 exposed through in-browser WebMCP — floats on every page so agents can act inside the
 authenticated session.
 
 ### 11. Help & Docs
+
 Every guide, in-product — Getting Started, Small & Large Teams, User Stories, CI/CD Gate,
 CLI Reference, and more.
 ![Help & Documentation](docs/images/portal/10-help.jpg)

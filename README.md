@@ -196,17 +196,32 @@ trail's attestation count and act on it — **Change Gate**, **Approve**, **Veri
 or **Download audit**.
 ![Flows & Trails](docs/images/portal/01-flows.jpg)
 
+Expanded, a flow lists every trail with its commit, attestation count and
+per-trail actions:
+
+![A flow expanded to its trails](docs/images/portal/01b-flows-trails.jpg)
+
 ### 3. Artifacts, SBOM & Attestation drill-down
 
 Search build artifacts by SHA256 and drill into an artifact's **SBOM** (CycloneDX / SPDX /
 Syft components, licenses, vulnerabilities) and its full set of signed **attestations**.
 ![Artifacts, SBOM & Attestations](docs/images/portal/02-artifacts.jpg)
 
+Expanding an artifact shows its SBOM verdict and every attestation attached to
+it:
+
+![Artifact drill-down: SBOM and attestations](docs/images/portal/02b-artifact-detail.jpg)
+
 ### 4. Attestations
 
 Every piece of evidence recorded against build trails, with compliance status, evidence
 type, and totals — filterable by name, type, and compliance.
 ![Attestations](docs/images/portal/03-attestations.jpg)
+
+Each attestation opens to its raw payload, the artifact it covers, and its
+position in the hash chain:
+
+![Attestation payload and chain hash](docs/images/portal/03b-attestation-detail.jpg)
 
 ### 5. Environments & MCP Connections
 
@@ -221,6 +236,8 @@ Author deterministic JQ compliance gates in a full **Monaco editor** with **Form
 AI **"Check & fix"** action, or generate rules from a described goal with the LLM Policy Wizard.
 ![Policies & JQ Rule Editor](docs/images/portal/05-policies.jpg)
 
+![Policy editor with jq rules](docs/images/portal/05b-policy-editor.jpg)
+
 ### 7. Controls & Coverage
 
 Adopt regulated frameworks (SOC 2, ISO 27001, NIST 800-53, PCI-DSS, DORA, PSD2, SOX) and see
@@ -229,6 +246,8 @@ coverage **grouped by framework**, with average coverage and gaps at a glance.
 
 Drill into any control to see the evidence it requires and its **per-environment
 enforcement**, with one-click actions to enforce or archive it.
+
+![Control drill-down: per-environment enforcement](docs/images/portal/06b-controls-enforcement.jpg)
 
 ### 8. AI Audits & LLM Evaluator Reports
 
@@ -252,9 +271,19 @@ secrets vault AWS / Vault / …; LLM provider — all by **secret reference**, n
 CI/CD API keys).
 ![Settings](docs/images/portal/09-settings.jpg)
 
+The remaining tabs, in order:
+
+| | |
+|:--|:--|
+| [![Directory & Groups](docs/images/portal/09b-settings-directory.jpg)](docs/images/portal/09b-settings-directory.jpg) | [![ServiceNow](docs/images/portal/09c-settings-servicenow.jpg)](docs/images/portal/09c-settings-servicenow.jpg) |
+| [![Slack](docs/images/portal/09d-settings-slack.jpg)](docs/images/portal/09d-settings-slack.jpg) | [![Service Accounts](docs/images/portal/09e-settings-service-accounts.jpg)](docs/images/portal/09e-settings-service-accounts.jpg) |
+| [![Git & Webhooks](docs/images/portal/09f-settings-git-webhooks.jpg)](docs/images/portal/09f-settings-git-webhooks.jpg) | [![Users](docs/images/portal/09g-settings-users.jpg)](docs/images/portal/09g-settings-users.jpg) |
+
 A built-in **AI Assistant** — voice input and spoken replies, backed by the same Fides tools
 exposed through in-browser WebMCP — floats on every page so agents can act inside the
 authenticated session.
+
+![Fides Assistant](docs/images/portal/11-assistant.jpg)
 
 ### 11. Help & Docs
 

@@ -29,6 +29,7 @@ and every scan attached to it.
 ```bash
 fides attest authorship --trail $TRAIL_ID --commit HEAD
 ```
+
 AI-authored changes with no human reviewer are non-compliant, so a control
 requiring `code.authorship` holds the change gate until someone reviews.
 
@@ -48,6 +49,25 @@ compliant vs total checks, tracked artifacts, and coverage by framework.
 
 > *"As a release manager adopting Fides, I want to see verdicts without blocking
 > anyone yet."* → run any gate with `warn-only` (see [ci-gate.md](ci-gate.md)).
+
+Once the gate is trusted enough to block, the next question is who is allowed to
+sign off on it.
+
+> *"As a release manager, I want our deploy tool to record a sign-off without
+> handing it admin over the whole tenant."*
+
+```bash
+curl -X POST "$FIDES_SERVER_URL/api/v1/tenant/service-accounts/$SA_ID/delegation" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"may_delegate_approvals": true}'
+```
+
+`may_delegate_approvals` is its own permission, default off. A `Writer`-scoped
+account holding it records an approval the change gate actually counts, while
+still being unable to create service accounts, rewrite controls, or register
+users. `Admin` continues to work, but it is the broader grant, not the intended
+one. Granting the permission stays Admin-only — holding it is not
+administrative, handing it out is.
 
 ---
 
@@ -76,6 +96,16 @@ fides audit --trail $TRAIL_ID --output audit.zip
 > → see [segregation-of-duties.md](segregation-of-duties.md); `change-gate`
 > holds until committer ≠ approver ≠ deployer.
 
+Evidence can also be pushed into the GRC tool your auditors already live in.
+
+> *"As a compliance owner, I want our release verdicts to land in ServiceNow GRC
+> as control tests, not just as change requests."*
+
+Enable the GRC sink and each trail verdict files as a control test against the
+matching ServiceNow control, resolved by evidence type. Fides seeds its own
+control catalogue on first run, so there is nothing to map by hand. See
+[servicenow-integration.md](servicenow-integration.md).
+
 ---
 
 ## SRE / Platform Engineer
@@ -92,6 +122,24 @@ fides env diff --env $PROD_ENV_ID              # drift between snapshots
 
 **Portal:** **Environments** shows the inventory; **Telemetry** shows uptime and
 DORA/runtime metrics.
+
+> *"As an SRE, I want to approve a third-party image by name, without digging its
+> digest out of a pod's `imageID` by hand."*
+
+```bash
+fides allowlist add --env $PROD_ENV --image ghcr.io/vendor/base:3.1 \
+  --reason "vendor base image, reviewed 2026-08-20"
+```
+
+`--image` resolves the reference against the registry and approves the digest it
+resolves to (for a multi-arch tag, the index digest — which is what a runtime
+actually reports). The approval is still per-digest, so a vendor bump needs a new
+entry; Fides reports that as an **upgrade of an approved image** rather than an
+unknown one, so you can tell a routine bump from a genuine shadow change.
+
+`--reason` is mandatory on purpose: an allowlist entry is an accepted risk, and
+one with no stated reason cannot be re-evaluated later by anyone, including the
+person who added it.
 
 > *"As a platform engineer, I want DORA metrics without a separate tool."*
 
@@ -154,7 +202,7 @@ donut segmented by framework. No CLI required.
 
 ## How the personas connect
 
-```
+```text
 Developer records ──▶ evidence chain ──▶ Release Mgr gates ──▶ SRE verifies runtime
      │                     │                    │                      │
      └── Security policies ─┴── Compliance maps to frameworks ─┴── Exec sees it live
@@ -163,5 +211,5 @@ Developer records ──▶ evidence chain ──▶ Release Mgr gates ──▶
 Everyone works off the **same evidence**. Recording it once (the developer's
 three commands) is what makes every other story possible.
 
-See also: [Teams guide](teams.md) · [CI/CD Gate](ci-gate.md) ·
+See also: [First run](first-run.md) · [Teams guide](teams.md) · [CI/CD Gate](ci-gate.md) ·
 [Getting Started](getting_started.md) · [CLI Reference](cli-reference.md).
