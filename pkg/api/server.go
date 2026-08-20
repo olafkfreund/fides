@@ -192,6 +192,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
 	mux.HandleFunc("POST /api/v1/environments", s.handleCreateEnvironment)
+	mux.HandleFunc("POST /api/v1/environments/{id}/archive", s.handleArchiveEnvironment)
+	mux.HandleFunc("POST /api/v1/environments/{id}/unarchive", s.handleUnarchiveEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
 	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
@@ -718,7 +720,11 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	err := s.q(r.Context()).QueryRowContext(r.Context(),
 		`INSERT INTO environments (id, org_id, name, type, description)
 		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (org_id, name) DO UPDATE SET type = EXCLUDED.type, description = EXCLUDED.description
+		 -- Re-registering an environment by name un-archives it. Creating one is
+		 -- a statement that it is in use, and the alternative is a silent trap:
+		 -- the caller gets 201 and an id, then wonders why it is absent from
+		 -- coverage and from the environment list.
+		 ON CONFLICT (org_id, name) DO UPDATE SET type = EXCLUDED.type, description = EXCLUDED.description, archived = FALSE
 		 RETURNING id`,
 		uuid.New(), orgID, req.Name, req.Type, req.Description).Scan(&id)
 	if err != nil {
@@ -1740,7 +1746,15 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE org_id = $1`
+	// Archived environments are hidden unless asked for. Retiring one is meant
+	// to get it out of the way; leaving it listed would only move the clutter
+	// from the coverage number to the page.
+	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description, archived
+	             FROM environments WHERE org_id = $1 AND NOT archived`
+	if r.URL.Query().Get("include_archived") == "true" {
+		queryEnv = `SELECT id, name, type, COALESCE(description, '') AS description, archived
+		            FROM environments WHERE org_id = $1`
+	}
 	rows, err := s.q(r.Context()).QueryContext(r.Context(), queryEnv, orgID)
 	if err != nil {
 		internalError(w, err)
@@ -1761,6 +1775,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		Name          string            `json:"name"`
 		Type          string            `json:"type"`
 		Description   string            `json:"description"`
+		Archived      bool              `json:"archived"`
 		LastSnapshot  string            `json:"lastSnapshot"`
 		Running       []RuntimeArtifact `json:"running"`
 		Drifts        []string          `json:"drifts"`
@@ -1774,7 +1789,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	list := []*EnvironmentView{}
 	for rows.Next() {
 		var ev EnvironmentView
-		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description, &ev.Archived); err != nil {
 			rows.Close()
 			internalError(w, err)
 			return
