@@ -18,6 +18,18 @@ on:
       - "pkg/**"
       - "portal/**"
       - "charts/**"
+      # The Help page's docs and their screenshots are baked into the image
+      # (Dockerfile.server restores web/*.md and stages docs/images under
+      # web/docs/). Without these two globs a docs-only merge builds nothing,
+      # bumps no pin, and never reaches the running portal -- while GitHub Pages
+      # updates as normal, so it looks deployed. That is how #473 shipped to
+      # main and not to the cluster.
+      #
+      # docs/** is deliberately NOT here: docs/*.md are the Pages copies and are
+      # not in the image, so rebuilding for them would sign a byte-identical
+      # server. Only docs/images is.
+      - "web/**"
+      - "docs/images/**"
       - ".github/workflows/publish-ghcr.yml"
   workflow_dispatch: {}
 
