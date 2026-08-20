@@ -1,7 +1,7 @@
 # First run: your first hour with Fides
 
 A step-by-step walkthrough from "I can log into the portal" to "a pipeline that
-blocks a bad release." Ten steps, in the order they have to happen.
+blocks a bad release." Eleven steps, in the order they have to happen.
 
 This page starts where [Database seeding & brand-new setup](setup.md) ends: the
 server is deployed and you have `PORTAL_USERNAME` / `PORTAL_PASSWORD`. If you do
