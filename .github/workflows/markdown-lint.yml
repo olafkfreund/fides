@@ -37,3 +37,11 @@ jobs:
       # would otherwise have to keep chasing.
       - name: Lint every tracked markdown file
         run: git ls-files '*.md' -z | xargs -0 -r markdownlint
+
+      # A feature documented in one copy and not the other is the failure that
+      # actually happens here -- web/mcp-server.md went months without the
+      # in-browser WebMCP section, so the portal did not document its own
+      # assistant. Headings only: the two copies are entitled to differ in
+      # wording, front matter and link targets.
+      - name: docs/ and web/ document the same sections
+        run: ./scripts/check-docs-web-parity.sh

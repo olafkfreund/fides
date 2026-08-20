@@ -66,6 +66,11 @@ lint-md:
 lint-md-all:
     @git ls-files '*.md' -z | xargs -0 -r markdownlint
 
+# Do docs/*.md and their web/*.md twins document the same sections?
+# Not a byte diff: the two copies legitimately differ in front matter and links.
+check-docs-parity:
+    @scripts/check-docs-web-parity.sh
+
 # Auto-fix what markdownlint can fix, repo-wide. Review the diff before committing.
 lint-md-fix:
     @git ls-files '*.md' -z | xargs -0 -r markdownlint --fix

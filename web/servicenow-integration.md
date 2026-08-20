@@ -170,6 +170,19 @@ it's what the change actually authorized), or by name via `--ci`/`ci`. Fides:
 - `create_compliance_incident` — `POST /api/v1/servicenow/incident`
 - `search_cmdb_ci` — `GET /api/v1/servicenow/cmdb`
 
+## 9. DevGovOps spoke (packaging artifacts)
+
+ServiceNow-side packaging artifacts — a signature-verifying Scripted REST API, an
+IntegrationHub spoke / Flow Designer action spec, and a Now Assist grounding
+guide — live under [`servicenow/`](https://github.com/olafkfreund/fides/blob/main/docs/servicenow/README.md) (epic #216):
+
+- [`servicenow/hmac-webhook-verification.md`](https://github.com/olafkfreund/fides/blob/main/docs/servicenow/hmac-webhook-verification.md)
+  — verify the Fides `X-Fides-Signature` HMAC on inbound webhooks (#229).
+- [`servicenow/flow-designer-actions.md`](https://github.com/olafkfreund/fides/blob/main/docs/servicenow/flow-designer-actions.md)
+  — "Attach Fides evidence", "Require Fides gate", "Anchor deployment in CMDB" (#232).
+- [`servicenow/now-assist-grounding.md`](https://github.com/olafkfreund/fides/blob/main/docs/servicenow/now-assist-grounding.md)
+  — ground Now Assist change-risk predictions on signed Fides evidence (#233).
+
 ## Testing
 
 - Per-component behaviour (REST client, ITOM/CMDB sinks, change normalization)

@@ -327,7 +327,31 @@ ORG_NAME="Acme Corp" ./scripts/setup-db.sh
 
 Full walkthrough (RLS role, secrets, first login, upgrade path): [Setup & Seeding](setup.md).
 
-## 20. Vulnerability impact index & VEX
+## 20. Cosign / Sigstore image signature verification
+
+Gate a deploy on a container image's cosign signature — keyless (OIDC
+identity anchored via Fulcio + Rekor) or key-based — and record the verdict
+as a `cosign-verification` attestation on the trail.
+
+```bash
+# Keyless: verify a GitHub Actions-signed image and record the verdict
+fides verify-image --sha256 $DIGEST \
+  --signer "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main" \
+  --issuer "https://token.actions.githubusercontent.com" \
+  --bundle ./cosign-bundle.json --trail $TRAIL
+
+# Key-based
+fides verify-image --sha256 $DIGEST --key ./cosign.pub --bundle ./cosign-bundle.json
+```
+
+Exits non-zero (2) if the signature does not verify, so it can be used as a
+deploy gate the same way as `change-gate`/`verify-chain`/`policy check`. The
+`--bundle` flag points at a Sigstore verification bundle (JSON), e.g. from
+`cosign verify --bundle out.json` or `cosign download signature`; automatic
+registry lookup from a bare `--sha256` digest alone is tracked as follow-up
+work (see the TODO in `pkg/cosignverify`).
+
+## 21. Vulnerability impact index & VEX
 
 Turn point-in-time scan evidence into a live "which running environments ship
 CVE-X?" query. CVE IDs from ingested trivy/snyk/sarif attestations are joined
@@ -341,7 +365,7 @@ fides vex --cve CVE-2021-44228 --status not_affected --justification "class neve
 fides impact --backfill   # index scans recorded before CVE extraction shipped (admin, idempotent)
 ```
 
-## 21. AI-authored-code provenance (`code.authorship`)
+## 22. AI-authored-code provenance (`code.authorship`)
 
 Record whether a change was authored by a human or an AI agent, parsed from git
 commit trailers. AI-authored changes without a human reviewer are non-compliant,
@@ -351,7 +375,7 @@ so a control requiring `code.authorship` holds the change gate until review.
 fides attest authorship --trail $TRAIL --commit HEAD --reviewer "olaf@acme.com"
 ```
 
-## 22. EU Cyber Resilience Act (CRA) framework
+## 23. EU Cyber Resilience Act (CRA) framework
 
 Built-in framework catalog mapping CRA Annex I essential requirements to Fides
 evidence types; adopt and report on it like any other framework (OSCAL export
@@ -364,7 +388,7 @@ fides report --framework CRA
 fides report --cra-incidents --hours 24
 ```
 
-## 23. External RFC3161 timestamp anchoring
+## 24. External RFC3161 timestamp anchoring
 
 Anchor a trail's chain head to an external RFC3161 Time-Stamp Authority so an
 auditor can prove the head existed at a point in time, independently of the Fides
@@ -378,14 +402,14 @@ fides verify-chain --trail $TRAIL   # response includes external_anchor{anchored
 Set `FIDES_TSA_ROOTS` (a PEM bundle of trusted TSA CA certs) to require the token
 to chain to a trusted root (root pinning); otherwise only its signature is checked.
 
-## 24. SIEM streaming (Splunk HEC / OTLP)
+## 25. SIEM streaming (Splunk HEC / OTLP)
 
 Stream governance events to a SIEM via the Splunk HTTP Event Collector
 (`FIDES_EVENTS_ENABLED=true`, `FIDES_SIEM_HEC_URL`, `FIDES_SIEM_HEC_TOKEN`), or as
 OpenTelemetry logs to any OTLP/HTTP collector (`FIDES_SIEM_OTLP_ENDPOINT`,
 optional `FIDES_SIEM_OTLP_TOKEN`).
 
-## 25. Persistent sessions (horizontal scale)
+## 26. Persistent sessions (horizontal scale)
 
 Enable the Postgres-backed session store for multi-replica / HA deployments so
 sessions survive restarts and are shared across replicas (only a token hash is
@@ -398,7 +422,7 @@ FIDES_DB_SESSIONS=true fides-server   # requires migration 0020
 Expired session rows are purged automatically by an hourly background sweep, in
 addition to lazy eviction on lookup.
 
-## 26. Feature-flag change governance
+## 27. Feature-flag change governance
 
 Fides is the system-of-record for feature-flag *changes* (not a flag-evaluation
 engine). A flag change is recorded as a `flag.changed` attestation on a

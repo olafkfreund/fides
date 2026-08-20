@@ -433,7 +433,7 @@ and a timestamp token is trusted only if it carries a verifiable signature. Set
 require that the token's certificate chains to one of them (root pinning);
 without it, only the token's own signature is checked.
 
-## 25. SIEM streaming (Splunk HEC)
+## 25. SIEM streaming (Splunk HEC / OTLP)
 
 Stream every governance event (change / approval / gate / compliance) to a SIEM
 via the Splunk HTTP Event Collector, building the chain of evidence auditors
@@ -445,6 +445,9 @@ FIDES_SIEM_HEC_URL=https://splunk.example.com:8088/services/collector/event \
 FIDES_SIEM_HEC_TOKEN=<hec-token> \
   fides-server
 ```
+
+Or ship the same events as OpenTelemetry logs to any OTLP/HTTP collector, with
+`FIDES_SIEM_OTLP_ENDPOINT` and an optional `FIDES_SIEM_OTLP_TOKEN`.
 
 Or forward the same events as OpenTelemetry logs (OTLP/HTTP) to a collector — a
 vendor-neutral alternative that works with any OTLP-compatible SIEM:
