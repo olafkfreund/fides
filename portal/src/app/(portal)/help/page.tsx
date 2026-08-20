@@ -30,6 +30,7 @@ const SECTIONS: { label: string; docs: Doc[] }[] = [
   {
     label: "Govern & comply",
     docs: [
+      { title: "Adding a Control", path: "/adding-controls.md" },
       { title: "Segregation of Duties", path: "/segregation-of-duties.md" },
       { title: "ServiceNow Integration", path: "/servicenow-integration.md" },
       { title: "ServiceNow Testing", path: "/servicenow-testing.md" },
