@@ -276,6 +276,7 @@ backend. See [AWS Secrets Manager](aws-secrets-manager.md).
 
 | You want to… | Read |
 |:--|:--|
+| Add a control of your own | [Adding a control](adding-controls.md) |
 | See the whole feature surface | [Features](features.md) |
 | Find the command for a task | [CLI Reference](cli-reference.md) |
 | Onboard an existing repo properly | [Onboarding a repository](onboarding-a-repo.md) |
