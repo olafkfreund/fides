@@ -273,7 +273,25 @@ echo "Records created (run id $RUN_ID):"
 echo "  change:  $SN_URL/nav_to.do?uri=change_request.do?sys_id=$CHG_SYS"
 echo "  CIs:     name LIKE $SVC"
 echo "  events:  em_event node = $ENV_ID"
-echo "  env:     Fides environment $ENV_ID (safe to delete)"
-[ "${KEEP:-0}" = 1 ] || echo "  (set KEEP=1 to silence this; nothing is auto-deleted)"
+echo "  env:     Fides environment $ENV_ID"
+
+# Archive the environment this run created, unless KEEP=1 asked to inspect it.
+#
+# Control coverage divides by the number of live environments, so leaving one
+# behind every week quietly lowered every control: five abandoned runs had DORA
+# reading 40% when the honest figure was 60%. Archiving is not deleting -- the
+# snapshot and events this run recorded stay queryable as evidence, the row
+# keeps its id, and `fides env unarchive --env $ENV_ID` puts it back. It simply
+# stops a test fixture counting as a production environment.
+if [ "${KEEP:-0}" = 1 ]; then
+  echo "  (KEEP=1: environment left active for inspection)"
+else
+  if fides env archive --env "$ENV_ID" >/dev/null 2>&1; then
+    echo "  (environment archived; evidence kept. KEEP=1 to leave it active)"
+  else
+    # An older server has no archive endpoint. Not worth failing a green run.
+    echo "  (could not archive $ENV_ID -- archive it by hand so coverage stays honest)"
+  fi
+fi
 
 exit "$FAILED"

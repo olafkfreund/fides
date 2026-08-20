@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2, Archive, ArchiveRestore } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
 import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
 type Env = {
-  id: string; name: string; type: string; description?: string;
+  id: string; name: string; type: string; description?: string; archived?: boolean;
   lastSnapshot?: string; running?: RuntimeArtifact[]; drifts?: string[]; shadowChanges?: string[];
 };
 type MCPConn = { id: string; name: string; transport: string; command?: string };
@@ -37,10 +37,27 @@ export default function Environments() {
   const [mCommand, setMCommand] = useState(""); const [mUrl, setMUrl] = useState("");
   const [sha, setSha] = useState(""); const [reason, setReason] = useState("");
   const [err, setErr] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
+  const [busy, setBusy] = useState("");
 
-  useEffect(() => {
-    apiGet<Env[]>("/api/v1/environments").then((e) => { setEnvs(e); if (e.length) setSel(e[0].id); }).catch((x) => setErr(String(x.message || x)));
-  }, []);
+  const loadEnvs = () =>
+    apiGet<Env[]>(`/api/v1/environments${showArchived ? "?include_archived=true" : ""}`)
+      .then((e) => { setEnvs(e); if (e.length) setSel((cur) => cur || e[0].id); })
+      .catch((x) => setErr(String(x.message || x)));
+
+  useEffect(() => { loadEnvs(); }, [showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Archiving retires an environment from control coverage without deleting it:
+  // snapshots, policies and allow-lists stay, and unarchiving puts it back.
+  const setArchived = async (id: string, archived: boolean) => {
+    setBusy(id);
+    try {
+      await apiPost(`/api/v1/environments/${id}/${archived ? "archive" : "unarchive"}`, {});
+      if (archived && sel === id) setSel("");
+      await loadEnvs();
+    } catch (x) { setErr(String((x as Error).message || x)); }
+    finally { setBusy(""); }
+  };
 
   // On environment change: load connections + allow-list, then AUTO-RUN compliance checks.
   const runChecks = async (id: string, list: MCPConn[]) => {
@@ -127,20 +144,40 @@ export default function Environments() {
         )}
 
         {/* Runtime environments */}
-        <Panel label="Runtime Environments" right={<input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />}>
+        <Panel label="Runtime Environments" right={<div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            Show archived
+          </label>
+          <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />
+        </div>}>
           <div className="flex flex-col gap-2">
             {envs.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())).map((e) => {
               const drifts = e.drifts?.length ?? 0, shadows = e.shadowChanges?.length ?? 0, running = e.running?.length ?? 0;
               const secure = drifts === 0 && shadows === 0;
               return (
-                <button key={e.id} onClick={() => setSel(e.id)} className={`rounded-md border p-3 text-left ${sel === e.id ? "border-primary/50 bg-primary/5" : "border-border hover:bg-accent/40"}`}>
+                <div key={e.id} role="button" tabIndex={0} onClick={() => setSel(e.id)}
+                  onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); setSel(e.id); } }}
+                  className={`cursor-pointer rounded-md border p-3 text-left ${e.archived ? "opacity-60 " : ""}${sel === e.id ? "border-primary/50 bg-primary/5" : "border-border hover:bg-accent/40"}`}>
                   <div className="flex items-start justify-between">
                     <div>
                       <span className="font-semibold">{e.name}</span>
                       <span className="ml-2"><Chip tone="muted">{e.type}</Chip></span>
+                      {e.archived && <span className="ml-2"><Chip tone="muted">ARCHIVED</Chip></span>}
                       {e.description && <div className="mt-0.5 text-xs text-muted-foreground">{e.description}</div>}
                     </div>
-                    <Chip tone={secure ? "ok" : "warn"}>{secure ? "SECURE" : "DRIFT"}</Chip>
+                    <div className="flex items-center gap-2">
+                      {!e.archived && <Chip tone={secure ? "ok" : "warn"}>{secure ? "SECURE" : "DRIFT"}</Chip>}
+                      <button
+                        onClick={(ev) => { ev.stopPropagation(); setArchived(e.id, !e.archived); }}
+                        disabled={busy === e.id}
+                        title={e.archived ? "Restore into control coverage" : "Retire from control coverage (keeps all evidence)"}
+                        className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground">
+                        {busy === e.id ? <Loader2 className="size-3.5 animate-spin" />
+                          : e.archived ? <ArchiveRestore className="size-3.5" /> : <Archive className="size-3.5" />}
+                        {e.archived ? "Restore" : "Archive"}
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted-foreground">
                     <span><span className="text-foreground">{running}</span> running</span>
@@ -148,7 +185,7 @@ export default function Environments() {
                     <span><span className={shadows ? "text-amber-400" : "text-foreground"}>{shadows}</span> shadows</span>
                     <span>last snapshot: {e.lastSnapshot || "—"}</span>
                   </div>
-                </button>
+                </div>
               );
             })}
             {envs.length === 0 && <p className="text-sm text-muted-foreground">No environments.</p>}

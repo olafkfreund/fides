@@ -38,3 +38,34 @@ evaluates the rules and reports `compliant` + any `failed_rules`.
 Any real stdio MCP server works — point **Command** at its binary (add it to
 `FIDES_MCP_ALLOWED_COMMANDS`) and set **Tool name** to one of its tools. The
 allowlist is an RCE guard: only listed binaries are ever executed.
+
+## Retiring an environment
+
+Control coverage is `enforcing environments / live environments`, so every
+environment counts in the denominator until it is archived. Test fixtures and
+decommissioned clusters therefore lower every control's coverage indefinitely —
+a CI suite that creates one environment per run will drag a compliance number
+down for reasons that have nothing to do with compliance.
+
+```bash
+fides env archive   --env $ENV_ID     # retire it
+fides env unarchive --env $ENV_ID     # put it back
+```
+
+**Portal:** **Environments** → the **Archive** button on the environment's card.
+Tick **Show archived** to see and restore them.
+
+Archiving is not deleting, and deliberately so — an environment owns snapshots,
+allow-lists and policies, and those are evidence. All of it stays:
+
+| | Archived environment |
+|:--|:--|
+| Snapshots, policies, allow-lists | kept |
+| Resolves by id | yes — existing references keep working |
+| Control-coverage denominator | excluded |
+| OSCAL / framework report | excluded |
+| `control enforce --all-environments` | excluded |
+| Default `fides env list` / portal list | hidden (`?include_archived=true` to see) |
+
+Re-registering an environment with the same name un-archives it, so a pipeline
+that creates its environment on every run does not have to know the difference.

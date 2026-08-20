@@ -149,8 +149,12 @@ func main() {
 			handleEnvDiff(config, os.Args[3:])
 		case "verify":
 			handleEnvVerify(config, os.Args[3:])
+		case "archive":
+			handleEnvArchive(config, os.Args[3:], true)
+		case "unarchive":
+			handleEnvArchive(config, os.Args[3:], false)
 		default:
-			fmt.Println("Usage: fides env <create|list|diff|verify> ...")
+			fmt.Println("Usage: fides env <create|list|diff|verify|archive|unarchive> ...")
 			os.Exit(1)
 		}
 	case "help", "--help", "-h":
@@ -201,6 +205,7 @@ func printUsage() {
 	fmt.Println("  vex              Record a VEX statement to suppress/annotate a CVE (--cve --status [--product --justification])")
 	fmt.Println("  env diff         Diff two environment snapshots (--env <id> [--from --to] [--reevaluate-change CHGxxxx])")
 	fmt.Println("  env verify       Runtime MCP compliance check (--env --server --tool --rule ...)")
+	fmt.Println("  env archive      Retire an environment from control coverage (--env <id>); unarchive restores it")
 	fmt.Println("  dashboard        Interactive terminal dashboard of live server stats (TUI)")
 	fmt.Println("  sbom diff        Diff two local SBOM files (added/removed/changed components) [--json]")
 	fmt.Println("  vuln diff        Diff two scan reports; gate on NEW CVEs (--format trivy|snyk|sarif) [--fail-on-new]")

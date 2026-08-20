@@ -164,6 +164,11 @@ CREATE TABLE IF NOT EXISTS environments (
     name VARCHAR(100) NOT NULL,
     type VARCHAR(50) NOT NULL, -- 'docker', 'k8s', 'ecs', 's3', 'server'
     description TEXT,
+    -- Retired from the compliance picture without being deleted: an archived
+    -- environment keeps its snapshots, policies and allowlists and still
+    -- resolves by id, but leaves the control-coverage denominator and the
+    -- default listing. See migrations/0027_environment_archived.sql.
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(org_id, name)
 );

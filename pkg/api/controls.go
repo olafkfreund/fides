@@ -126,16 +126,20 @@ func (s *Server) handleControlsCoverage(w http.ResponseWriter, r *http.Request) 
 // enforce it and a coverage fraction. Shared by the HTTP endpoint and the MCP
 // `get_controls_coverage` tool.
 func (s *Server) controlsCoverageData(ctx context.Context, orgID uuid.UUID) (int, []map[string]any, error) {
+	// Archived environments leave the denominator. Counting every environment
+	// that ever existed meant a weekly e2e run -- which creates one and deletes
+	// nothing -- silently lowered every control's coverage; DORA read 6/15 = 40%
+	// when the real figure across live environments was 6/10.
 	var totalEnvs int
 	if err := s.q(ctx).QueryRowContext(ctx,
-		`SELECT count(*) FROM environments WHERE org_id = $1`, orgID).Scan(&totalEnvs); err != nil {
+		`SELECT count(*) FROM environments WHERE org_id = $1 AND NOT archived`, orgID).Scan(&totalEnvs); err != nil {
 		return 0, nil, err
 	}
 
 	rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT c.key, c.name, COALESCE(c.framework,''), e.name
 		 FROM controls c
-		 LEFT JOIN environments e ON e.org_id = c.org_id AND EXISTS (
+		 LEFT JOIN environments e ON e.org_id = c.org_id AND NOT e.archived AND EXISTS (
 		   SELECT 1 FROM environment_policies p
 		   WHERE p.environment_id = e.id AND p.enabled AND c.required_types <@ p.required_types
 		 )
@@ -231,8 +235,11 @@ func (s *Server) handleEnforceControl(w http.ResponseWriter, r *http.Request) {
 	// Resolve the target environments.
 	var envIDs []uuid.UUID
 	if req.All {
+		// "everywhere" means every environment that still counts. Writing a
+		// policy into an archived environment would resurrect it in nothing and
+		// confuse the next person who unarchives it.
 		rows, err := s.q(r.Context()).QueryContext(r.Context(),
-			`SELECT id FROM environments WHERE org_id = $1`, p.OrgID)
+			`SELECT id FROM environments WHERE org_id = $1 AND NOT archived`, p.OrgID)
 		if err != nil {
 			internalError(w, err)
 			return

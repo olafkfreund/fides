@@ -1337,3 +1337,28 @@ func fail(err error, what string) {
 		os.Exit(1)
 	}
 }
+
+// fides env archive --env <id>   |   fides env unarchive --env <id>
+//
+// Retires an environment from the compliance picture without deleting it. It
+// leaves the control-coverage denominator and the default listing; its
+// snapshots, policies and allow-lists stay exactly where they are, and the id
+// keeps resolving, so anything still pointing at it goes on working.
+//
+// The e2e suite creates one environment per run and deletes none, so without
+// this every abandoned run permanently lowers every control's coverage.
+func handleEnvArchive(config CLIConfig, args []string, archive bool) {
+	verb := "archive"
+	if !archive {
+		verb = "unarchive"
+	}
+	cmd := flag.NewFlagSet("env "+verb, flag.ExitOnError)
+	env := cmd.String("env", "", "environment UUID")
+	cmd.Parse(args)
+	if *env == "" {
+		fmt.Printf("Usage: fides env %s --env <id>\n", verb)
+		os.Exit(1)
+	}
+	post(config, "/api/v1/environments/"+*env+"/"+verb, map[string]any{},
+		"Environment "+verb+"d")
+}

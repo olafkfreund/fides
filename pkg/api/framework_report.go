@@ -65,7 +65,7 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 
 	var totalEnvs int
 	_ = s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT count(*) FROM environments WHERE org_id = $1`, orgID).Scan(&totalEnvs)
+		`SELECT count(*) FROM environments WHERE org_id = $1 AND NOT archived`, orgID).Scan(&totalEnvs)
 
 	// Controls in this framework + the environments that enforce each (via a
 	// policy whose required_types superset the control's).
