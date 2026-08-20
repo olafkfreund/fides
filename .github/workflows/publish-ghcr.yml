@@ -479,6 +479,8 @@ jobs:
           # Scoped to the git calls below. IdentitiesOnly stops ssh offering any
           # other key the runner might have and getting rejected first.
           GIT_SSH_COMMAND: "ssh -i ~/.ssh/gitops_deploy -o IdentitiesOnly=yes"
+          # for the `gh api compare` ancestry check below
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           SHA="${{ github.sha }}"
@@ -492,6 +494,31 @@ jobs:
             rm -rf gitops
             git clone --quiet --depth 1 "git@github.com:${GITOPS_REPO}.git" gitops
             cd gitops
+
+            # Never move the pin BACKWARDS. Two runs racing on push both write
+            # this file and the last writer wins regardless of age: on
+            # 2026-08-20 an older run (1066a12) finished 43s after a newer one
+            # (ddd21c2) and reverted the cluster to the earlier build. The retry
+            # below does not help -- it handles a *rejected* push, and here both
+            # pushes succeed.
+            #
+            # compare/{base}...{head} reports "behind" when head is an ancestor
+            # of base, i.e. exactly when our SHA is older than what is pinned.
+            # Anything else (ahead, identical, diverged, or an API hiccup) falls
+            # through and bumps as before: the only case worth blocking is the
+            # one that demonstrably regressed a cluster.
+            current="$(sed -nE "s|.*image: ${IMAGE}:([0-9a-f]{40}).*|\1|p" "${GITOPS_FILE}" | head -1)"
+            if [ -n "$current" ] && [ "$current" != "${SHA}" ]; then
+              rel="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${current}...${SHA}" \
+                       --jq .status 2>/dev/null || echo unknown)"
+              if [ "$rel" = "behind" ]; then
+                echo "::notice::pinned ${current} is newer than ${SHA}; leaving it alone."
+                pushed="declined"
+                break
+              fi
+              echo "pin ${current} -> ${SHA} (${rel})"
+            fi
+
             sed -i -E "s|(image: ${IMAGE}):.*|\1:${SHA}|" "${GITOPS_FILE}"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -523,6 +550,11 @@ jobs:
           if [ -z "$pushed" ]; then
             echo "::error::could not push the image bump after 5 attempts (Factory#527)."
             exit 1
+          fi
+
+          if [ "$pushed" = "declined" ]; then
+            echo "pin left at a newer commit; nothing to verify."
+            exit 0
           fi
 
           # A deploy that cannot prove the pin moved must not report success.
