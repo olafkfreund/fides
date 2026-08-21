@@ -184,6 +184,41 @@ jobs:
       # signature covers both :latest and :<sha>, and signing a tag would bind
       # the signature to a pointer that moves.
       # ----------------------------------------------------------------------
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+
+      - name: Sign ${{ matrix.image }} (cosign keyless, Sigstore + GitHub OIDC)
+        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # Not decoration: a signing step that fails open leaves an unverifiable
+      # image that looks shipped. Same assertion Kyverno makes at admission,
+      # run here at build time so it fails in CI instead of at a deploy.
+      - name: Verify signature (self-test)
+        run: |
+          cosign verify \
+            --certificate-identity "${SIGNER_IDENTITY}" \
+            --certificate-oidc-issuer "${SIGNER_ISSUER}" \
+            "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      # ----------------------------------------------------------------------
+      # Only NOW move :latest, once these bytes are signed and the signature
+      # has been verified.
+      #
+      # The build step used to push :latest and :<sha> together, which put an
+      # unsigned :latest in the registry for the whole scan+sign window. On
+      # 2026-08-13 that window was entered for real: the fides-server job hit a
+      # transient GHCR "denied" on push, matrix fail-fast cancelled the
+      # fides-k8s-reporter job -- which had already pushed :latest but not yet
+      # signed it -- and Kyverno then correctly denied every reporter pod for
+      # ~25 minutes, because :latest genuinely had no signature.
+      #
+      # fides-reporter is deployed at image.tag=latest, so :latest is not
+      # cosmetic; it is what that workload actually pulls.
+      #
+      # imagetools create only writes a new tag pointing at the existing
+      # manifest -- no rebuild, no layer re-push, and the digest (and therefore
+      # the signature) is unchanged.
+      # ----------------------------------------------------------------------
       # ----------------------------------------------------------------------
       # An SBOM for the image we just built.
       #
@@ -226,41 +261,6 @@ jobs:
           name: sbom-${{ matrix.image }}
           path: sbom-${{ matrix.image }}.json
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
-
-      - name: Sign ${{ matrix.image }} (cosign keyless, Sigstore + GitHub OIDC)
-        run: cosign sign --yes "${IMAGE}@${{ steps.build.outputs.digest }}"
-
-      # Not decoration: a signing step that fails open leaves an unverifiable
-      # image that looks shipped. Same assertion Kyverno makes at admission,
-      # run here at build time so it fails in CI instead of at a deploy.
-      - name: Verify signature (self-test)
-        run: |
-          cosign verify \
-            --certificate-identity "${SIGNER_IDENTITY}" \
-            --certificate-oidc-issuer "${SIGNER_ISSUER}" \
-            "${IMAGE}@${{ steps.build.outputs.digest }}"
-
-      # ----------------------------------------------------------------------
-      # Only NOW move :latest, once these bytes are signed and the signature
-      # has been verified.
-      #
-      # The build step used to push :latest and :<sha> together, which put an
-      # unsigned :latest in the registry for the whole scan+sign window. On
-      # 2026-08-13 that window was entered for real: the fides-server job hit a
-      # transient GHCR "denied" on push, matrix fail-fast cancelled the
-      # fides-k8s-reporter job -- which had already pushed :latest but not yet
-      # signed it -- and Kyverno then correctly denied every reporter pod for
-      # ~25 minutes, because :latest genuinely had no signature.
-      #
-      # fides-reporter is deployed at image.tag=latest, so :latest is not
-      # cosmetic; it is what that workload actually pulls.
-      #
-      # imagetools create only writes a new tag pointing at the existing
-      # manifest -- no rebuild, no layer re-push, and the digest (and therefore
-      # the signature) is unchanged.
-      # ----------------------------------------------------------------------
       - name: Move :latest to the signed digest
         run: |
           set -euo pipefail
