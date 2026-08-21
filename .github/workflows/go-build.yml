@@ -27,6 +27,16 @@ jobs:
           go-version: '1.26.6'
           check-latest: true
 
+      # 430 findings when this was first switched on; the sweep that cleared them
+      # fixed real bugs, most importantly 68 unchecked rows.Err() calls -- each one
+      # a place where a failed read returned a short list that looked like a
+      # legitimate result. In compliance data that is the worst possible failure
+      # mode, so this gate exists to stop it coming back.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.12.2
+
       - name: Verify dependencies
         run: go mod verify
 

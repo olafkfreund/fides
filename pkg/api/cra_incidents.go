@@ -107,6 +107,11 @@ func (s *Server) handleCRAIncidents(w http.ResponseWriter, r *http.Request) {
 			inc.envSet[*env] = true
 		}
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	reportable := make([]*craIncident, 0, len(order))
 	for _, cve := range order {

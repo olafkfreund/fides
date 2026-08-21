@@ -65,6 +65,11 @@ func (s *Server) handleVerifyTrailChain(w http.ResponseWriter, r *http.Request) 
 		e.Payload = ledger.CanonicalJSON(payload)
 		entries = append(entries, e)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	verdict := ledger.Verify(entries)
 

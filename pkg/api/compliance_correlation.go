@@ -129,6 +129,7 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 		internalError(w, err)
 		return
 	}
+	defer drows.Close()
 	for drows.Next() {
 		var period string
 		var count int
@@ -138,6 +139,12 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		deployByPeriod[period] = count
+	}
+	// A failed iteration must not read as a short result.
+	if err := drows.Err(); err != nil {
+		drows.Close()
+		internalError(w, err)
+		return
 	}
 	drows.Close()
 
@@ -153,6 +160,7 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 		internalError(w, err)
 		return
 	}
+	defer arows.Close()
 	for arows.Next() {
 		var period string
 		var nonCompliant, total int
@@ -162,6 +170,12 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		attByPeriod[period] = attCounts{nonCompliant: nonCompliant, total: total}
+	}
+	// A failed iteration must not read as a short result.
+	if err := arows.Err(); err != nil {
+		arows.Close()
+		internalError(w, err)
+		return
 	}
 	arows.Close()
 
@@ -175,6 +189,7 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 		internalError(w, err)
 		return
 	}
+	defer trows.Close()
 	var trailIDs []uuid.UUID
 	var trailPeriods []string
 	for trows.Next() {
@@ -187,6 +202,12 @@ func (s *Server) handleComplianceCorrelation(w http.ResponseWriter, r *http.Requ
 		}
 		trailIDs = append(trailIDs, id)
 		trailPeriods = append(trailPeriods, period)
+	}
+	// A failed iteration must not read as a short result.
+	if err := trows.Err(); err != nil {
+		trows.Close()
+		internalError(w, err)
+		return
 	}
 	trows.Close()
 	for i, id := range trailIDs {

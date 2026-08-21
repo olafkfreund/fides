@@ -176,6 +176,11 @@ func (s *Server) handleListServiceAccounts(w http.ResponseWriter, r *http.Reques
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "role": role, "enabled": enabled, "active_keys": activeKeys, "created_at": created.UTC().Format(time.RFC3339)})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
 }
@@ -212,6 +217,11 @@ func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Req
 		}
 		out = append(out, map[string]any{"id": id, "prefix": prefix, "label": label,
 			"expires_at": expires, "revoked_at": revoked, "last_used_at": lastUsed, "created_at": created})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)

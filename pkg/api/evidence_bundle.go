@@ -21,6 +21,7 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	var entries []ledger.Entry
 	typeCounts := map[string]map[string]int{}
 	for rows.Next() {
@@ -46,6 +47,11 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 			tc["non_compliant"]++
 		}
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
 
 	artifacts := []map[string]any{}
@@ -54,6 +60,7 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 	if err != nil {
 		return nil, err
 	}
+	defer arows.Close()
 	for arows.Next() {
 		var sha, name, typ string
 		if err := arows.Scan(&sha, &name, &typ); err != nil {
@@ -61,6 +68,11 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 			return nil, err
 		}
 		artifacts = append(artifacts, map[string]any{"sha256": sha, "name": name, "type": typ})
+	}
+	// A failed iteration must not read as a short result.
+	if err := arows.Err(); err != nil {
+		arows.Close()
+		return nil, err
 	}
 	arows.Close()
 

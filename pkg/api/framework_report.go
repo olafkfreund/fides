@@ -55,11 +55,17 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	defer erows.Close()
 	for erows.Next() {
 		var t string
 		if err := erows.Scan(&t); err == nil {
 			compliantTypes[t] = true
 		}
+	}
+	// A failed iteration must not read as a short result.
+	if err := erows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	erows.Close()
 
@@ -107,6 +113,11 @@ func (s *Server) handleFrameworkReport(w http.ResponseWriter, r *http.Request) {
 		if env != nil {
 			c.EnforcedIn = append(c.EnforcedIn, *env)
 		}
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	reportControls := make([]reportControl, 0, len(order))

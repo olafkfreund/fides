@@ -139,5 +139,10 @@ func (s *Server) handleDeploymentFrequency(w http.ResponseWriter, r *http.Reques
 		}
 		out = append(out, map[string]any{"environment": env, "week": week, "deployments": count})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }

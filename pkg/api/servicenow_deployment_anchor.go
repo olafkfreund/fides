@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"time"
@@ -76,7 +77,7 @@ func (s *Server) handleServiceNowAnchorDeployment(w http.ResponseWriter, r *http
 		`SELECT f.name, COALESCE(t.git_commit, '') FROM trails t
 		 JOIN flows f ON f.id = t.flow_id
 		 WHERE t.id = $1 AND f.org_id = $2`, trailID, orgID).Scan(&flowName, &commit)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "trail not found", http.StatusNotFound)
 		return
 	}
@@ -94,7 +95,7 @@ func (s *Server) handleServiceNowAnchorDeployment(w http.ResponseWriter, r *http
 		`SELECT COALESCE(a.artifact_sha256, ''), a.id::text, COALESCE(a.content_hash, ''), a.is_compliant
 		 FROM attestations a WHERE a.trail_id = $1 AND a.artifact_sha256 IS NOT NULL
 		 ORDER BY a.created_at DESC LIMIT 1`, trailID).Scan(&digest, &attestationID, &contentHash, &compliant)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		internalError(w, err)
 		return
 	}
@@ -227,6 +228,11 @@ func (s *Server) handleListDeploymentAnchors(w http.ResponseWriter, r *http.Requ
 			"image_digest": digest, "commit": commit, "build_log_ref": buildLog,
 			"runtime_snapshot_ref": snapshotRef, "compliant": compliant, "created_at": created,
 		})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	writeJSON(w, out)
 }

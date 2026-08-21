@@ -176,6 +176,11 @@ func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	affected := make([]*artifact, 0, len(order))
 	deployed := 0
@@ -253,6 +258,7 @@ func (s *Server) handleBackfillVulnerabilities(w http.ResponseWriter, r *http.Re
 		internalError(w, err)
 		return
 	}
+	defer rows.Close()
 	type att struct {
 		id             uuid.UUID
 		sha, typ, body string
@@ -266,6 +272,12 @@ func (s *Server) handleBackfillVulnerabilities(w http.ResponseWriter, r *http.Re
 			return
 		}
 		atts = append(atts, a)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		internalError(w, err)
+		return
 	}
 	rows.Close()
 

@@ -21,6 +21,7 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var t string
 		var c bool
@@ -29,6 +30,11 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 			return nil, err
 		}
 		typeCompliant[t] = c
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
 	}
 	rows.Close()
 
@@ -53,6 +59,7 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
+	defer crows.Close()
 	for crows.Next() {
 		var c control
 		if err := crows.Scan(&c.key, &c.name, &c.req); err != nil {
@@ -60,6 +67,11 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 			return nil, err
 		}
 		controls = append(controls, c)
+	}
+	// A failed iteration must not read as a short result.
+	if err := crows.Err(); err != nil {
+		crows.Close()
+		return nil, err
 	}
 	crows.Close()
 
@@ -69,12 +81,19 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	if xrows, xerr := s.q(ctx).QueryContext(ctx,
 		`SELECT control_key, reason, COALESCE(approved_by, ''), expires_at FROM control_exceptions
 		 WHERE org_id = $1 AND NOT revoked AND expires_at > now()`, orgID); xerr == nil {
+		defer xrows.Close()
 		for xrows.Next() {
 			var key, reason, approvedBy string
 			var expires time.Time
 			if xrows.Scan(&key, &reason, &approvedBy, &expires) == nil {
 				waivers[key] = map[string]any{"control": key, "reason": reason, "approved_by": approvedBy, "expires_at": expires}
 			}
+		}
+		// A dropped row here changes the verdict, so it cannot be
+		// treated as "no rows".
+		if rerr := xrows.Err(); rerr != nil {
+			xrows.Close()
+			return nil, rerr
 		}
 		xrows.Close()
 	}
@@ -87,6 +106,7 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 	humanApprovers := 0
 	if arows, aerr := s.q(ctx).QueryContext(ctx,
 		`SELECT approved_by, approver_kind, COALESCE(NULLIF(role, ''), 'approver') FROM trail_approvals WHERE trail_id = $1 ORDER BY created_at`, trailID); aerr == nil {
+		defer arows.Close()
 		for arows.Next() {
 			var by, kind, role string
 			if arows.Scan(&by, &kind, &role) == nil {
@@ -99,6 +119,12 @@ func (s *Server) computeChangeGate(ctx context.Context, orgID, trailID uuid.UUID
 					humanApprovers++
 				}
 			}
+		}
+		// A dropped row here changes the verdict, so it cannot be
+		// treated as "no rows".
+		if rerr := arows.Err(); rerr != nil {
+			arows.Close()
+			return nil, rerr
 		}
 		arows.Close()
 	}

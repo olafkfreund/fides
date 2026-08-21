@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -133,6 +134,7 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 	if err != nil {
 		return sodAttestation{}, err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var by, role string
 		if err := rows.Scan(&by, &role); err != nil {
@@ -144,6 +146,11 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 		} else {
 			approvers = append(approvers, by)
 		}
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return sodAttestation{}, err
 	}
 	rows.Close()
 
@@ -177,7 +184,7 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 		`SELECT payload::text FROM attestations
 		 WHERE trail_id = $1 AND type_name = $2
 		 ORDER BY created_at DESC, id DESC LIMIT 1`, trailID, SegregationOfDutiesAttestationType).Scan(&lastPayload)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return sodAttestation{}, err
 	}
 	if err == nil && ledger.CanonicalJSON(lastPayload) == ledger.CanonicalJSON(string(payload)) {

@@ -60,6 +60,11 @@ func (s *Server) handleSearchArtifacts(w http.ResponseWriter, r *http.Request) {
 			"git_commit": gitCommit, "created_at": created, "trail_id": trailID,
 		})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -108,6 +113,11 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "type_name": typ, "is_compliant": isCompliant, "trail_id": trailID, "created_at": created})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -151,6 +161,11 @@ func (s *Server) handleSearchComponents(w http.ResponseWriter, r *http.Request) 
 			"id": id, "artifact_sha256": artifactSHA, "artifact_name": artifactName, "artifact_type": artifactType,
 			"name": compName, "version": version, "purl": compPurl, "licenses": licenses, "created_at": created,
 		})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	writeJSON(w, out)
 }
@@ -302,6 +317,10 @@ func (s *Server) recentSnapshotIDs(ctx context.Context, envID uuid.UUID) ([]stri
 		}
 		ids = append(ids, id)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return ids, nil
 }
 
@@ -323,6 +342,10 @@ func (s *Server) snapshotServices(ctx context.Context, snapshotID string) (map[s
 			return nil, err
 		}
 		m[svc] = dig
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return m, nil
 }

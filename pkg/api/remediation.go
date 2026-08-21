@@ -238,6 +238,11 @@ func (s *Server) handleListRemediation(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row.toJSON())
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 

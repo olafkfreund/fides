@@ -552,6 +552,9 @@ func marshalJSONB(m map[string]string) []byte {
 func unmarshalJSONB(data []byte) map[string]string {
 	m := make(map[string]string)
 	if len(data) > 0 {
+		// Best-effort by contract: the caller gets an empty map for anything
+		// unparseable, which is what every call site already handles.
+		//nolint:errcheck // documented above
 		json.Unmarshal(data, &m)
 	}
 	return m
@@ -642,6 +645,11 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		list = append(list, &o)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -811,6 +819,11 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Tags = unmarshalJSONB(tagsBytes)
 		list = append(list, &f)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1065,6 +1078,11 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		}
 		list = append(list, &av)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
@@ -1222,7 +1240,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	var rules []string
 	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 AND org_id = $2 LIMIT 1`
 	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName, orgID).Scan(pq.Array(&rules))
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		internalError(w, err)
 		return
 	}
@@ -1540,7 +1558,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		queryArt := `SELECT sha256, trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1`
 		err := tx.QueryRowContext(r.Context(), queryArt, a.SHA256, orgID).Scan(&dbSHA, &dbTrailID)
 
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			// Not registered — but it may be an APPROVED third-party image.
 			// environment_allowlist records an explicit, attributed exception
 			// (approved_by + reason), which is exactly the compliance concept
@@ -1563,10 +1581,16 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 				// list that reports it as such is the noise this replaced.
 				services = append(services, map[string]any{"service": a.ServiceName, "digest": a.SHA256, "registered": false, "approved": true})
 				saID := uuid.New()
-				tx.ExecContext(r.Context(),
+				// A dropped insert here loses a running artifact from the
+				// snapshot with nothing to show for it, so the inventory reads
+				// complete while being short.
+				if _, err := tx.ExecContext(r.Context(),
 					`INSERT INTO snapshot_artifacts (id, snapshot_id, artifact_sha256, service_name, runtime_digest, started_at)
 					 VALUES ($1, $2, NULL, $3, $4, $5)`,
-					saID, snapshotID, a.ServiceName, a.SHA256, time.Now())
+					saID, snapshotID, a.ServiceName, a.SHA256, time.Now()); err != nil {
+					internalError(w, err)
+					return
+				}
 				continue
 			}
 
@@ -1589,7 +1613,13 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			saID := uuid.New()
 			querySA := `INSERT INTO snapshot_artifacts (id, snapshot_id, artifact_sha256, service_name, runtime_digest, started_at)
 			            VALUES ($1, $2, NULL, $3, $4, $5)`
-			tx.ExecContext(r.Context(), querySA, saID, snapshotID, a.ServiceName, a.SHA256, time.Now())
+			// Losing this insert would erase the shadow change that was just
+			// detected -- the verdict says non-compliant, the record shows
+			// nothing.
+			if _, err := tx.ExecContext(r.Context(), querySA, saID, snapshotID, a.ServiceName, a.SHA256, time.Now()); err != nil {
+				internalError(w, err)
+				return
+			}
 			continue
 		} else if err != nil {
 			internalError(w, err)
@@ -1628,6 +1658,11 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 				drifts = append(drifts, fmt.Sprintf("service %s running drifted artifact %s (failing control: %s)", a.ServiceName, a.SHA256, attName))
 				isCompliant = false
 			}
+		}
+		// A failed iteration must not read as a short result.
+		if err := rows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 	}
 
@@ -1729,6 +1764,11 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 				reasons = append(reasons, fmt.Sprintf("Failing control: %s (Type: %s)", attName, typeName))
 			}
 		}
+		// A failed iteration must not read as a short result.
+		if err := rows.Err(); err != nil {
+			internalError(w, err)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1800,6 +1840,12 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ev.ShadowChanges = []string{}
 		list = append(list, &ev)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		internalError(w, err)
+		return
+	}
 	rows.Close()
 
 	// Enrich each environment now that the outer cursor is closed.
@@ -1819,6 +1865,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		            WHERE sa.snapshot_id = $1`
 		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
 		if err != nil {
+			defer saRows.Close()
 			continue
 		}
 		var running []RuntimeArtifact
@@ -1827,6 +1874,11 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
 				running = append(running, ra)
 			}
+		}
+		// A failed iteration must not read as a short result.
+		if err := saRows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 		saRows.Close()
 
@@ -1837,11 +1889,21 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 				continue
 			}
 			var trailID sql.NullString
-			s.q(r.Context()).QueryRowContext(r.Context(),
-				"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID)
+			// No row is the ordinary case -- the artifact is simply not
+			// registered. A real error is not, and swallowing it here silently
+			// under-reports drift, which is the one direction a compliance view
+			// must not fail in.
+			if err := s.q(r.Context()).QueryRowContext(r.Context(),
+				"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				internalError(w, err)
+				return
+			}
 			if trailID.Valid {
 				var compliantCount, totalCount int
-				s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+				if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					internalError(w, err)
+					return
+				}
 				if totalCount > 0 && compliantCount < totalCount {
 					ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 				}
@@ -1928,11 +1990,17 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 		// the outer cursor.
 		if saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID); err == nil {
 			var running []RuntimeArtifact
+			defer saRows.Close()
 			for saRows.Next() {
 				var ra RuntimeArtifact
 				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
 					running = append(running, ra)
 				}
+			}
+			// A failed iteration must not read as a short result.
+			if err := saRows.Err(); err != nil {
+				internalError(w, err)
+				return
 			}
 			saRows.Close()
 
@@ -1943,11 +2011,17 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 					continue
 				}
 				var trailID sql.NullString
-				s.q(r.Context()).QueryRowContext(r.Context(),
-					"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID)
+				if err := s.q(r.Context()).QueryRowContext(r.Context(),
+					"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					internalError(w, err)
+					return
+				}
 				if trailID.Valid {
 					var compliantCount, totalCount int
-					s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount)
+					if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
+						internalError(w, err)
+						return
+					}
 					if totalCount > 0 && compliantCount < totalCount {
 						ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
 					}
@@ -1979,6 +2053,11 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 				m.Args = []string(args)
 				mcpServers = append(mcpServers, m)
 			}
+		}
+		// A failed iteration must not read as a short result.
+		if err := mcpRows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 	}
 
@@ -2030,6 +2109,11 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		}
 		p.YAML = string(rulesBytes)
 		list = append(list, &p)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2110,6 +2194,11 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		list = append(list, &av)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -2878,8 +2967,15 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		answer = "Here are the currently configured compliance flows in Fides:\n\n"
 		for rows.Next() {
 			var name, desc string
-			rows.Scan(&name, &desc)
+			if err := rows.Scan(&name, &desc); err != nil {
+				continue
+			}
 			answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
+		}
+		// A failed iteration must not read as a short result.
+		if err := rows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 	case lower == "find failing trails" || lower == "failing builds":
 		query := `SELECT t.name, f.name, att.name, att.type_name
@@ -2893,9 +2989,16 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		found := false
 		for rows.Next() {
 			var tName, fName, attName, typeName string
-			rows.Scan(&tName, &fName, &attName, &typeName)
+			if err := rows.Scan(&tName, &fName, &attName, &typeName); err != nil {
+				continue
+			}
 			answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
 			found = true
+		}
+		// A failed iteration must not read as a short result.
+		if err := rows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 		if !found {
 			answer = "Great news! All recorded build trails are fully compliant against current policies."
@@ -2944,6 +3047,11 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		u.OrgID = orgID
 		u.Groups = []string(grps)
 		list = append(list, u)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -3056,6 +3164,11 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 		gm.OrgID = orgID
 		list = append(list, gm)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
@@ -3114,6 +3227,11 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		}
 		wh.EventTypes = []string(types)
 		list = append(list, wh)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
@@ -3252,7 +3370,7 @@ func (s *Server) handleInboundWebhook(w http.ResponseWriter, r *http.Request) {
 	err = db.WithOrgScope(r.Context(), s.DB, orgID.String(), func(tx *sql.Tx) error {
 		var flowID uuid.UUID
 		e := tx.QueryRowContext(r.Context(), `SELECT id FROM flows WHERE org_id = $1 AND name = $2`, orgID, ti.FullName).Scan(&flowID)
-		if e == sql.ErrNoRows {
+		if errors.Is(e, sql.ErrNoRows) {
 			flowID = uuid.New()
 			if _, e = tx.ExecContext(r.Context(),
 				`INSERT INTO flows (id, org_id, name, description) VALUES ($1, $2, $3, $4)`,
@@ -3602,6 +3720,11 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 		}
 		list = append(list, gp)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(list)
 }
@@ -3678,8 +3801,16 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 			return
 		}
 		srv.Args = []string(args)
-		json.Unmarshal(envVarsBytes, &srv.EnvVars)
+		if err := json.Unmarshal(envVarsBytes, &srv.EnvVars); err != nil {
+			internalError(w, err)
+			return
+		}
 		list = append(list, srv)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -3767,7 +3898,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
 		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
@@ -3775,7 +3906,10 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 		return
 	}
 	srv.Args = []string(args)
-	json.Unmarshal(envVarsBytes, &srv.EnvVars)
+	if err := json.Unmarshal(envVarsBytes, &srv.EnvVars); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	if srv.Transport != "stdio" {
 		http.Error(w, "Only stdio transport is supported currently in this environment", http.StatusBadRequest)
@@ -3790,7 +3924,7 @@ func (s *Server) handleQueryEnvironmentMCPServer(w http.ResponseWriter, r *http.
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(fmt.Sprintf(`{"result": %q}`, output)))
+	fmt.Fprintf(w, `{"result": %q}`, output)
 }
 
 type verifyEnvReq struct {
@@ -3827,7 +3961,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 		&srv.ID, &srv.EnvironmentID, &srv.Name, &srv.Transport,
 		&srv.Command, &args, &envVarsBytes, &srv.URL, &srv.AuthHeader,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "MCP server configuration not found for this environment", http.StatusNotFound)
 		return
 	} else if err != nil {
@@ -3835,7 +3969,10 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 		return
 	}
 	srv.Args = []string(args)
-	json.Unmarshal(envVarsBytes, &srv.EnvVars)
+	if err := json.Unmarshal(envVarsBytes, &srv.EnvVars); err != nil {
+		internalError(w, err)
+		return
+	}
 
 	if srv.Transport != "stdio" {
 		http.Error(w, "Only stdio transport is supported currently in this environment", http.StatusBadRequest)

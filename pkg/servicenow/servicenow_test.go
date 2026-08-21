@@ -168,13 +168,13 @@ func TestSendEventsPostsRecords(t *testing.T) {
 
 func TestQueryAndCreateTable(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == "GET":
+		switch r.Method {
+		case "GET":
 			if r.URL.Query().Get("sysparm_query") != "state=3" {
 				t.Errorf("query not passed: %s", r.URL.RawQuery)
 			}
 			w.Write([]byte(`{"result":[{"number":"CHG0030192","state":"3"}]}`))
-		case r.Method == "POST":
+		case "POST":
 			w.Write([]byte(`{"result":{"sys_id":"abc","number":"INC0012345"}}`))
 		}
 	}))

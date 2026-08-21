@@ -48,6 +48,11 @@ func (s *Server) handleListFlowTrails(w http.ResponseWriter, r *http.Request) {
 			"created_at": created, "attestations": attestations, "compliant": compliant,
 		})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -84,6 +89,11 @@ func (s *Server) handleListFlowArtifacts(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		out = append(out, map[string]any{"sha256": sha, "name": name, "type": typ, "git_commit": commit, "created_at": created, "compliant": compliant})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	writeJSON(w, out)
 }

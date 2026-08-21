@@ -223,5 +223,10 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, entry)
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }

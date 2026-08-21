@@ -13,9 +13,9 @@ import (
 
 // Reporter is what a command depends on to report progress.
 type Reporter interface {
-	StartStage(label string)       // begin a phase, e.g. "Snapshotting docker runtime"
-	AdvanceStage(done, total int)  // optional counter; total<=0 means indeterminate
-	CompleteStage(summary string)  // finish the phase; "" prints nothing
+	StartStage(label string)      // begin a phase, e.g. "Snapshotting docker runtime"
+	AdvanceStage(done, total int) // optional counter; total<=0 means indeterminate
+	CompleteStage(summary string) // finish the phase; "" prints nothing
 }
 
 // Nop is the default Reporter: it prints nothing. Used under --json, when

@@ -97,7 +97,7 @@ func discoverSignature(repo, digest string) (*discoveredSignature, error) {
 	}
 	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrNoSignatureInRegistry, ref.String(), err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrNoSignatureInRegistry, ref.String(), err)
 	}
 	layers, err := img.Layers()
 	if err != nil {

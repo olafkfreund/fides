@@ -109,6 +109,7 @@ func TestScopedConnEnforcesTenantIsolationIntegration(t *testing.T) {
 	// Read isolation: OrgA must see only its own flow.
 	rows, err := conn.QueryContext(ctx, "SELECT name FROM flows ORDER BY name")
 	if err != nil {
+		defer rows.Close()
 		t.Fatalf("query flows: %v", err)
 	}
 	var names []string

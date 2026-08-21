@@ -22,8 +22,8 @@ func TestAvgCoverage(t *testing.T) {
 func TestCoverageBarFill(t *testing.T) {
 	// 50% of a 10-wide bar => 5 filled, 5 empty; clamps out-of-range input.
 	cases := []struct {
-		pct                   float64
-		wantFull, wantEmpty   int
+		pct                 float64
+		wantFull, wantEmpty int
 	}{
 		{0.5, 5, 5},
 		{0.0, 0, 10},

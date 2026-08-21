@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -100,6 +101,11 @@ func (s *Server) handleListEnvPolicies(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "required_types": []string(types), "if_tag": ifTag, "if_value": ifValue, "enabled": enabled})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	writeJSON(w, out)
 }
@@ -208,7 +214,7 @@ func (s *Server) handlePolicyCheck(w http.ResponseWriter, r *http.Request) {
 	err = s.q(r.Context()).QueryRowContext(r.Context(),
 		`SELECT COALESCE(f.tags, '{}'::jsonb) FROM trails tr JOIN flows f ON f.id = tr.flow_id WHERE tr.id = $1 AND f.org_id = $2`,
 		trailID, orgID).Scan(&tagsBytes)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "trail not found", http.StatusNotFound)
 		return
 	}
@@ -227,10 +233,21 @@ func (s *Server) handlePolicyCheck(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	defer crows.Close()
 	for crows.Next() {
 		var tn string
-		crows.Scan(&tn)
+		// Unchecked, a failed scan puts "" into the compliant set. That is a
+		// gate deciding on a type name that was never read.
+		if err := crows.Scan(&tn); err != nil {
+			internalError(w, err)
+			return
+		}
 		compliant[tn] = true
+	}
+	// A failed iteration must not read as a short result.
+	if err := crows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	crows.Close()
 
@@ -265,6 +282,11 @@ func (s *Server) handlePolicyCheck(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		results = append(results, map[string]any{"policy": name, "applies": applies, "missing": missing})
+	}
+	// A failed iteration must not read as a short result.
+	if err := prows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	writeJSON(w, map[string]any{"compliant": overall, "trail_id": trailID, "results": results})
 }
