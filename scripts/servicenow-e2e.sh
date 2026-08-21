@@ -286,11 +286,17 @@ echo "  env:     Fides environment $ENV_ID"
 if [ "${KEEP:-0}" = 1 ]; then
   echo "  (KEEP=1: environment left active for inspection)"
 else
-  if fides env archive --env "$ENV_ID" >/dev/null 2>&1; then
+  # `fides` here is the curl wrapper defined at the top of this script, NOT the
+  # CLI -- an earlier version of this block called it as though it were the CLI,
+  # so the archive never once ran and the message below was printed every time,
+  # blaming the server for a bug in the call.
+  if fides -X POST "$FIDES_SERVER_URL/api/v1/environments/$ENV_ID/archive" >/dev/null 2>&1; then
     echo "  (environment archived; evidence kept. KEEP=1 to leave it active)"
   else
-    # An older server has no archive endpoint. Not worth failing a green run.
-    echo "  (could not archive $ENV_ID -- archive it by hand so coverage stays honest)"
+    # Archiving needs Admin, and an older server has no such endpoint. Neither is
+    # worth failing an otherwise green run over -- but say which it was.
+    echo "  (could not archive $ENV_ID -- needs an Admin token and a server with"
+    echo "   POST /api/v1/environments/{id}/archive; archive it by hand meanwhile)"
   fi
 fi
 
