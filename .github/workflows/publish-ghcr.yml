@@ -184,6 +184,48 @@ jobs:
       # signature covers both :latest and :<sha>, and signing a tag would bind
       # the signature to a pointer that moves.
       # ----------------------------------------------------------------------
+      # ----------------------------------------------------------------------
+      # An SBOM for the image we just built.
+      #
+      # Fides requires sbom-cyclonedx evidence from its users' builds -- SOC2
+      # CC7.2, NIST SR-4, DORA third-party and ISO A.14.2.5 all resolve to it --
+      # and until now produced none for itself. An auditor notices that, and so
+      # does anyone evaluating the product.
+      #
+      # Generated FROM THE PUSHED DIGEST, not from the working tree: the source
+      # directory contains node_modules and CI fixtures that never ship, and an
+      # SBOM listing 13,000 components that are not in the artifact describes
+      # something other than what runs.
+      #
+      # Attached to the image as a cosign attestation so a consumer can fetch it
+      # from the registry with the artifact rather than trusting a link.
+      # ----------------------------------------------------------------------
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0.17.9
+
+      - name: Generate the SBOM for ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          syft "${IMAGE}@${{ steps.build.outputs.digest }}" \
+            -o cyclonedx-json="sbom-${{ matrix.image }}.json" -q
+          n=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1])).get('components',[])))" \
+                "sbom-${{ matrix.image }}.json")
+          echo "SBOM: ${n} components"
+          # An SBOM with nothing in it would satisfy the control while proving
+          # nothing, which is worse than not producing one.
+          [ "${n}" -gt 0 ] || { echo "::error::the SBOM is empty"; exit 1; }
+
+      - name: Attach the SBOM to the image
+        run: |
+          cosign attest --yes --predicate "sbom-${{ matrix.image }}.json" \
+            --type cyclonedx "${IMAGE}@${{ steps.build.outputs.digest }}"
+
+      - name: Publish the SBOM as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.image }}
+          path: sbom-${{ matrix.image }}.json
+
       - name: Install cosign
         uses: sigstore/cosign-installer@v3.7.0
 
@@ -360,6 +402,23 @@ jobs:
             --name "${IMAGE_NAME}" \
             --type docker
           echo "recorded ${IMAGE_NAME} index ${DIGEST}"
+
+          # Record our own SBOM into our own product.
+          #
+          # This is the whole argument in one command: the evidence Fides asks
+          # every user to produce, produced by Fides' own build, recorded through
+          # Fides' own CLI, and gating Fides' own releases. A compliance tool
+          # that cannot show its own compliance is asking for trust it has not
+          # demonstrated.
+          #
+          # It also means SOC2-CC7.2 / NIST-SR-4 / DORA-THIRD-PARTY are
+          # genuinely satisfied for this artifact rather than asserted.
+          fides attest sbom \
+            --trail "${trail_id}" \
+            --artifact-sha "${DIGEST#sha256:}" \
+            --name "sbom" \
+            --file "sbom-${IMAGE_NAME}.json"
+          echo "recorded SBOM evidence for ${IMAGE_NAME}"
 
           # Also record the per-platform manifest digests.
           #

@@ -449,3 +449,26 @@ normalizes it into a `flag.changed` attestation automatically.
 
 Browse recent changes with `fides flag list` / the **Feature Flags** tab in the
 `/admin` console, and export any change (its own trail) with `fides audit`.
+
+## Fides' own supply chain
+
+Fides asks you to produce evidence. It produces the same evidence for itself, on
+every release, and you can check it without taking our word for anything.
+
+| What | How to verify |
+|:--|:--|
+| **Signature** — every image is cosign-signed keyless via GitHub OIDC | `cosign verify --certificate-identity https://github.com/olafkfreund/fides/.github/workflows/publish-ghcr.yml@refs/heads/main --certificate-oidc-issuer https://token.actions.githubusercontent.com ghcr.io/olafkfreund/fides-server:<tag>` |
+| **SBOM** — CycloneDX, generated from the pushed digest | `cosign download attestation --predicate-type cyclonedx ghcr.io/olafkfreund/fides-server:<tag>` |
+| **Vulnerabilities** — Trivy gate on fixable HIGH/CRITICAL, blocking, no exceptions | the build fails rather than publishing |
+| **Provenance** — the build records itself into a Fides instance | trail named `<commit-sha>-fides-server` |
+| **Reproducible** — `-trimpath` on every binary, so no builder paths are embedded | `strings <binary> \| grep /home` returns nothing |
+
+The SBOM is generated **from the pushed image digest**, not from the source
+tree. Scanning the working directory would list thousands of components that
+never ship — `node_modules`, CI fixtures, test data — and describe something
+other than what runs.
+
+That SBOM is then recorded back into Fides through `fides attest sbom`, which is
+the same command this documentation asks you to run. It satisfies SOC2-CC7.2,
+NIST-SR-4 and DORA-THIRD-PARTY for our own artifacts, on the same rails as
+yours.
