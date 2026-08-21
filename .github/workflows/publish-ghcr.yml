@@ -321,7 +321,23 @@ jobs:
           # email, so inlining it is a script-injection hole (actionlint flags
           # this one by name).
           COMMITTER: ${{ github.event.head_commit.author.email }}
-          TRAIL_NAME: ${{ github.sha }}-${{ matrix.image }}
+          # A re-dispatch of an already-published SHA gets its own trail.
+          #
+          # trails is UNIQUE(flow_id, name), so on a push run this name is the
+          # commit and re-running the workflow by hand hit that constraint: the
+          # step died in ~0.6s with no output, which reads as an infrastructure
+          # fault rather than a duplicate. Before docs paths were added to the
+          # trigger it never bit, because a hand-dispatch was usually the only
+          # run for that SHA.
+          #
+          # A second trail is also the more accurate record. As the comment
+          # below notes, a rebuild produces a NEW index digest even when the
+          # content is identical, so the re-dispatch really did publish a
+          # different artifact and it should not be filed under the first one.
+          #
+          # Push runs keep the bare <sha>-<image> name, so nothing changes for
+          # the path that runs on every merge.
+          TRAIL_NAME: ${{ github.sha }}-${{ matrix.image }}${{ github.event_name == 'workflow_dispatch' && format('-run{0}.{1}', github.run_id, github.run_attempt) || '' }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
           IMAGE_NAME: ${{ matrix.image }}
