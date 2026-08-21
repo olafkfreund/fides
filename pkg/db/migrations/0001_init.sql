@@ -80,6 +80,11 @@ CREATE TABLE IF NOT EXISTS trails (
     git_commit VARCHAR(40),
     git_branch VARCHAR(100),
     git_message TEXT,
+    -- The commit's own timestamp, so DORA lead time measures from when the
+    -- change was committed rather than when the pipeline ran. Nullable: the
+    -- lead-time query falls back to created_at. Added by
+    -- migrations/0021_trail_committed_at.sql, which this file must mirror.
+    git_committed_at TIMESTAMP WITH TIME ZONE,
     tags JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(flow_id, name)
