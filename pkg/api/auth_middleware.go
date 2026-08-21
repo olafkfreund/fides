@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"strings"
 	"time"
 
@@ -56,7 +57,14 @@ func isPublicPath(path string) bool {
 		return true
 	}
 	// The static web portal and its assets are public; the API surface is not.
-	return !strings.HasPrefix(path, "/api/v1/")
+	//
+	// Decided on the CLEANED path. Otherwise "/healthz/../api/v1/flows" does not
+	// start with /api/v1/ and is classified public, and authentication ends up
+	// relying on http.ServeMux redirecting the traversal away (it does -- 307 to
+	// the cleaned path -- so this was not exploitable). Depending on the router
+	// to keep the auth boundary honest is the wrong shape: this decides for
+	// itself.
+	return !strings.HasPrefix(pathpkg.Clean("/"+strings.TrimPrefix(path, "/")), "/api/v1/")
 }
 
 // authMiddleware authenticates the API surface and attaches a Principal to the
