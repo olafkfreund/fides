@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestShadowMessageDistinguishesUpgradeFromUnknown(t *testing.T) {
 // claimed as a known upgrade. Guards the nil-DB path too: the helper must not
 // query when there is nothing to query for.
 func TestServiceHasPriorApprovalRejectsEmptyServiceName(t *testing.T) {
-	if serviceHasPriorApproval(nil, nil, [16]byte{}, "") {
+	if serviceHasPriorApproval(context.TODO(), nil, [16]byte{}, "") {
 		t.Error("an unnamed service must never be treated as a known upgrade")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -161,7 +162,7 @@ func (s *Server) evaluateAttestationTypeCompliance(ctx context.Context, orgID uu
 	var rules []string
 	err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT jq_rules FROM attestation_types WHERE org_id = $1 AND name = $2 LIMIT 1`, orgID, typeName).Scan(pq.Array(&rules))
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return true, nil
 	}
 	if err != nil {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -79,7 +80,7 @@ func TestIntegrationSoDSurvivesClientDisconnect(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatalf("close pinned conn: %v", err)
 	}
-	if err := conn.QueryRowContext(context.Background(), "SELECT 1").Scan(new(int)); err != sql.ErrConnDone {
+	if err := conn.QueryRowContext(context.Background(), "SELECT 1").Scan(new(int)); !errors.Is(err, sql.ErrConnDone) {
 		t.Fatalf("precondition: pinned conn error = %v, want sql.ErrConnDone", err)
 	}
 

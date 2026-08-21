@@ -59,6 +59,8 @@ func (s *Sink) Deliver(ctx context.Context, ev events.Event) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// Drained so the connection can be reused; a failure here says nothing.
+	//nolint:errcheck // deliberate drain
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("slack: webhook returned %d", resp.StatusCode)
@@ -74,7 +76,11 @@ func formatMessage(ev events.Event) string {
 			Shadows       []string `json:"shadows"`
 			Drifts        []string `json:"drifts"`
 		}
-		json.Unmarshal(ev.Payload, &p)
+		// A zero-filled alert would read as "0 shadows, 0 drifts", which is the
+		// opposite of what this event means.
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			return ":rotating_light: *Fides:* non-compliant snapshot (details unreadable)"
+		}
 		return fmt.Sprintf(":rotating_light: *Fides: non-compliant snapshot* in environment `%s` — %d shadow(s), %d drift(s).",
 			p.EnvironmentID, len(p.Shadows), len(p.Drifts))
 	case "compliance.evaluated":
@@ -82,7 +88,11 @@ func formatMessage(ev events.Event) string {
 			TrailID   string `json:"trail_id"`
 			Compliant bool   `json:"compliant"`
 		}
-		json.Unmarshal(ev.Payload, &p)
+		// A zero-filled alert would read as "0 shadows, 0 drifts", which is the
+		// opposite of what this event means.
+		if err := json.Unmarshal(ev.Payload, &p); err != nil {
+			return ":rotating_light: *Fides:* non-compliant snapshot (details unreadable)"
+		}
 		icon := ":white_check_mark:"
 		state := "compliant"
 		if !p.Compliant {

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -87,7 +88,7 @@ func TestWithSchemaLockReleasesAfterError(t *testing.T) {
 	boom := context.DeadlineExceeded
 	if err := WithSchemaLock(context.Background(), pool, func(context.Context) error {
 		return boom
-	}); err != boom {
+	}); !errors.Is(err, boom) {
 		t.Fatalf("the callback's error must propagate unchanged, got %v", err)
 	}
 

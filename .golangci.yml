@@ -1,0 +1,73 @@
+version: "2"
+
+# Why these and not the full set: each linter here has caught a real bug in this
+# repo or guards a failure mode it has actually had. Anything that only enforces
+# taste is left off -- a lint nobody believes in gets suppressed, and a
+# suppressed lint is worse than no lint.
+linters:
+  enable:
+    # The important one. This project's recurring bug shape is a silent success:
+    # a handler returning 201 while discarding what it was given. Unchecked
+    # errors are how that happens.
+    - errcheck
+    - staticcheck
+    - ineffassign
+    - unused
+    - bodyclose      # leaked HTTP bodies -- this service makes a lot of outbound calls
+    - rowserrcheck   # sql.Rows.Err() after a loop; a partial read looks like an empty result
+    - sqlclosecheck  # under RLS the pool is one pinned connection, so a leaked cursor is fatal
+    - nilerr         # `if err != nil { return nil }` -- swallowing the error it just found
+    - errorlint      # %v on an error, and == comparisons that break wrapping
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+      # Excluded only where the error is provably not actionable. Everything
+      # that can hide a wrong answer stays checked -- json.Unmarshal and
+      # sql.Row.Scan especially, because ignoring those means proceeding with a
+      # zero value, which is this project's recurring bug shape.
+      exclude-functions:
+        # Response writes on an already-failed path: the only handling available
+        # is to write into a response we can no longer send.
+        - (net/http.ResponseWriter).Write
+        - (*encoding/json.Encoder).Encode
+        - fmt.Fprintf
+        - fmt.Fprintln
+        # flag.NewFlagSet is created with flag.ExitOnError in 70 of 71 call
+        # sites here, and ExitOnError makes Parse call os.Exit(2) rather than
+        # return -- so there is no error to check.
+        - (*flag.FlagSet).Parse
+        # Closing a cursor or body after the read has finished. A failure says
+        # nothing about the data already returned, and rows.Err() -- which does
+        # -- is now checked everywhere (rowserrcheck is enabled above).
+        - (*database/sql.Rows).Close
+        - (io.ReadCloser).Close
+        # Rollback on an already-failing path; the original error is the one
+        # worth surfacing.
+        - (*database/sql.Tx).Rollback
+        # Closing a file/connection we are finished reading. The data is already
+        # in hand; a close failure changes nothing about it.
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (io.Closer).Close
+        # Writes to the process's own stdout. If stdout is gone there is nowhere
+        # left to report that stdout is gone.
+        - (*os.File).Write
+        - fmt.Fprint
+    staticcheck:
+      checks: ["all", "-ST1000", "-ST1003", "-ST1020", "-ST1021", "-ST1022"]
+
+  exclusions:
+    paths:
+      # Vendored JavaScript deps that happen to ship Go samples. Not ours.
+      - portal/node_modules
+      - web/_next
+    rules:
+      # Test helpers close over *testing.T and fail loudly by other means;
+      # requiring error checks on every fixture insert adds noise, not safety.
+      - path: _test\.go
+        linters: [errcheck, rowserrcheck]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

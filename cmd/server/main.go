@@ -137,7 +137,8 @@ func main() {
 	// Dynamic LLM provider selection
 	var llm ai.LLMClient
 	aiProvider := os.Getenv("AI_PROVIDER")
-	if aiProvider == "ollama" {
+	switch aiProvider {
+	case "ollama":
 		endpoint := os.Getenv("AI_OLLAMA_ENDPOINT")
 		if endpoint == "" {
 			endpoint = "http://localhost:11434"
@@ -148,14 +149,14 @@ func main() {
 		}
 		log.Printf("Connecting to Ollama provider (endpoint: %s, model: %s)...", endpoint, model)
 		llm = ai.NewOllamaClient(endpoint, model)
-	} else if aiProvider == "llamacpp" {
+	case "llamacpp":
 		endpoint := os.Getenv("AI_LLAMACPP_ENDPOINT")
 		if endpoint == "" {
 			endpoint = "http://localhost:8080"
 		}
 		log.Printf("Connecting to llama.cpp provider (endpoint: %s)...", endpoint)
 		llm = ai.NewLlamaCppClient(endpoint)
-	} else if aiProvider == "gemini" {
+	case "gemini":
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		model := os.Getenv("AI_MODEL")
 		log.Printf("Connecting to Gemini provider (model: %s)...", model)

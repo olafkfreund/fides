@@ -103,6 +103,11 @@ func (s *Server) handleListExceptions(w http.ResponseWriter, r *http.Request) {
 			"created_at": created, "expires_at": expires, "revoked": revoked, "active": active,
 		})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, list)
 }
 

@@ -673,6 +673,9 @@ func handleSnapshot(config CLIConfig, args []string) {
 		var tl struct {
 			TaskArns []string `json:"taskArns"`
 		}
+		// Best-effort: unparseable output means no task ARNs, and the branch
+		// below already treats that as "nothing running".
+		//nolint:errcheck // documented above
 		json.Unmarshal(listOut, &tl)
 		if len(tl.TaskArns) > 0 {
 			descArgs := append([]string{"ecs", "describe-tasks", "--cluster", *cluster, "--tasks"}, tl.TaskArns...)
@@ -904,15 +907,31 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	writer.WriteField("trail_id", trailID)
-	writer.WriteField("artifact_sha256", artifactSHA)
-	writer.WriteField("name", name)
-	writer.WriteField("type_name", typeName)
-	writer.WriteField("payload", payload)
+	// A field that silently fails to write uploads an attestation that
+	// says something other than what was recorded.
+	if err := writer.WriteField("trail_id", trailID); err != nil {
+		fail(err, "build attestation upload")
+	}
+	if err := writer.WriteField("artifact_sha256", artifactSHA); err != nil {
+		fail(err, "build attestation upload")
+	}
+	if err := writer.WriteField("name", name); err != nil {
+		fail(err, "build attestation upload")
+	}
+	if err := writer.WriteField("type_name", typeName); err != nil {
+		fail(err, "build attestation upload")
+	}
+	if err := writer.WriteField("payload", payload); err != nil {
+		fail(err, "build attestation upload")
+	}
 	if isEncrypted {
-		writer.WriteField("encrypted", "true")
+		if err := writer.WriteField("encrypted", "true"); err != nil {
+			fail(err, "build attestation upload")
+		}
 	} else {
-		writer.WriteField("encrypted", "false")
+		if err := writer.WriteField("encrypted", "false"); err != nil {
+			fail(err, "build attestation upload")
+		}
 	}
 
 	for _, path := range filePaths {

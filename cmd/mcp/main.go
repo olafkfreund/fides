@@ -400,7 +400,12 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) {
 	var args map[string]interface{}
 	if params.Arguments != nil {
-		json.Unmarshal(*params.Arguments, &args)
+		// These arrive from an MCP client. Running the tool with silently-empty
+		// arguments is worse than telling the caller their payload was bad.
+		if err := json.Unmarshal(*params.Arguments, &args); err != nil {
+			sendError(reqId, -32602, "invalid tool arguments: "+err.Error(), nil)
+			return
+		}
 	}
 
 	var result ToolCallResult

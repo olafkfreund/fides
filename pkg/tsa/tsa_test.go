@@ -62,6 +62,7 @@ func mintTokenOpts(t *testing.T, headHex string, embedCert bool) ([]byte, *x509.
 		Certificates:      []*x509.Certificate{cert},
 		AddTSACertificate: embedCert,
 	}
+	//nolint:staticcheck // SA1019: CreateResponseWithOpts migration tracked with the sigstore one
 	resp, err := ts.CreateResponse(cert, key)
 	if err != nil {
 		t.Fatalf("create response: %v", err)

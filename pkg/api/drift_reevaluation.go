@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -128,7 +129,7 @@ func (s *Server) handleDriftReevaluateChange(w http.ResponseWriter, r *http.Requ
 
 	diff, err := s.diffSnapshots(r.Context(), envID, req.From, req.To)
 	if err != nil {
-		if err == errNeedTwoSnapshots {
+		if errors.Is(err, errNeedTwoSnapshots) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -191,9 +192,9 @@ func (s *Server) handleDriftReevaluateChange(w http.ResponseWriter, r *http.Requ
 		"drift_detected": true,
 		"prior_risk":     priorRisk,
 		"escalated_risk": newRisk,
-		"added_count":    len(diff["added"].([]map[string]string)),
-		"removed_count":  len(diff["removed"].([]map[string]string)),
-		"changed_count":  len(diff["changed"].([]map[string]string)),
+		"added_count":    countDiff(diff, "added"),
+		"removed_count":  countDiff(diff, "removed"),
+		"changed_count":  countDiff(diff, "changed"),
 	})
 
 	writeJSON(w, map[string]any{
@@ -206,4 +207,17 @@ func (s *Server) handleDriftReevaluateChange(w http.ResponseWriter, r *http.Requ
 		"escalated_risk": newRisk,
 		"diff":           diff,
 	})
+}
+
+// countDiff reads one bucket of a snapshot diff.
+//
+// The bare type assertions this replaces would panic if the shape ever changed,
+// taking the server down during a drift re-evaluation. An absent or unexpected
+// bucket is simply zero.
+func countDiff(diff map[string]any, key string) int {
+	v, ok := diff[key].([]map[string]string)
+	if !ok {
+		return 0
+	}
+	return len(v)
 }

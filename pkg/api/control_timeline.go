@@ -67,6 +67,7 @@ func (s *Server) handleControlTimeline(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
+	defer crows.Close()
 	type ctl struct {
 		key, name, framework string
 		req                  []string
@@ -82,6 +83,12 @@ func (s *Server) handleControlTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		c.req = []string(req)
 		controls = append(controls, c)
+	}
+	// A failed iteration must not read as a short result.
+	if err := crows.Err(); err != nil {
+		crows.Close()
+		internalError(w, err)
+		return
 	}
 	crows.Close()
 
@@ -109,6 +116,7 @@ func (s *Server) handleControlTimeline(w http.ResponseWriter, r *http.Request) {
 				internalError(w, err)
 				return
 			}
+			defer erows.Close()
 			for erows.Next() {
 				var ev timelineEvent
 				var trailID *string
@@ -122,6 +130,12 @@ func (s *Server) handleControlTimeline(w http.ResponseWriter, r *http.Request) {
 				}
 				t.Events = append(t.Events, ev)
 				latestByType[ev.Type] = ev.Compliant // ordered by created_at ASC, so last wins
+			}
+			// A failed iteration must not read as a short result.
+			if err := erows.Err(); err != nil {
+				erows.Close()
+				internalError(w, err)
+				return
 			}
 			erows.Close()
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"time"
@@ -65,7 +66,7 @@ func (s *Server) resolveChangeControlLink(ctx context.Context, orgID uuid.UUID, 
 	err = s.q(ctx).QueryRowContext(ctx,
 		`SELECT id, name FROM controls WHERE org_id = $1 AND key = $2 AND NOT archived`,
 		orgID, req.ControlKey).Scan(&controlID, &controlName)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, http.StatusNotFound, errBadRequest("control not found: " + req.ControlKey)
 	}
 	if err != nil {
@@ -83,7 +84,7 @@ func (s *Server) resolveChangeControlLink(ctx context.Context, orgID uuid.UUID, 
 		err = s.q(ctx).QueryRowContext(ctx,
 			`SELECT id, created_at FROM attestations WHERE id = $1 AND trail_id = $2`,
 			aid, trailID).Scan(&attestationID, &attestedAt)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, http.StatusNotFound, errBadRequest("attestation not found on this trail")
 		}
 		if err != nil {
@@ -93,7 +94,7 @@ func (s *Server) resolveChangeControlLink(ctx context.Context, orgID uuid.UUID, 
 		err = s.q(ctx).QueryRowContext(ctx,
 			`SELECT id, created_at FROM attestations WHERE trail_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1`,
 			trailID).Scan(&attestationID, &attestedAt)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, http.StatusNotFound, errBadRequest("trail has no attestations to link as evidence")
 		}
 		if err != nil {

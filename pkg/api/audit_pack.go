@@ -24,12 +24,20 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 	orgControls := []map[string]any{}
 	if rows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT key, name, required_types FROM controls WHERE org_id = $1 AND NOT archived ORDER BY key`, orgID); err == nil {
+		defer rows.Close()
 		for rows.Next() {
 			var key, name string
 			var req pq.StringArray
 			if rows.Scan(&key, &name, &req) == nil {
 				orgControls = append(orgControls, map[string]any{"key": key, "name": name, "required_types": []string(req)})
 			}
+		}
+		// An auditor's pack that quietly lost rows is worse than one that
+		// failed to build: the gap is invisible in the output.
+		if rerr := rows.Err(); rerr != nil {
+			rows.Close()
+			internalError(w, rerr)
+			return
 		}
 		rows.Close()
 	}
@@ -39,6 +47,7 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 		`SELECT control_key, reason, COALESCE(approved_by, ''), expires_at
 		 FROM control_exceptions WHERE org_id = $1 AND NOT revoked AND expires_at > now()
 		 ORDER BY expires_at`, orgID); err == nil {
+		defer rows.Close()
 		for rows.Next() {
 			var ck, reason, by string
 			var exp time.Time
@@ -48,12 +57,25 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		// An auditor's pack that quietly lost rows is worse than one that
+		// failed to build: the gap is invisible in the output.
+		if rerr := rows.Err(); rerr != nil {
+			rows.Close()
+			internalError(w, rerr)
+			return
+		}
 		rows.Close()
 	}
 
 	risks := []riskView{}
 	for _, risk := range parsedRiskRegister.Risks {
 		risks = append(risks, riskView{riskEntry: risk, MitigatedBy: controlsMitigating(risk.Key)})
+	}
+
+	trainingRecs, err := s.trainingRecords(r, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
 	}
 
 	writeJSON(w, map[string]any{
@@ -63,6 +85,6 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 		"risk_register":     risks,
 		"org_controls":      orgControls,
 		"active_exceptions": activeExceptions,
-		"training":          s.trainingRecords(r, orgID),
+		"training":          trainingRecs,
 	})
 }

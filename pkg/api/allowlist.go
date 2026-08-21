@@ -157,6 +157,11 @@ func (s *Server) handleListAllowlist(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{"artifact_sha256": sha, "approved_by": by, "reason": reason, "created_at": created})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	json.NewEncoder(w).Encode(out)
 }
 

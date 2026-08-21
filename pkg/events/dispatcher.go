@@ -100,6 +100,7 @@ RETURNING e.id, e.org_id, e.event_type, e.payload, e.attempts, e.created_at`
 func (d *Dispatcher) DispatchBatch(ctx context.Context) (int, error) {
 	rows, err := d.db.QueryContext(ctx, claimSQL, d.BatchSize, int(d.LeaseFor.Seconds()))
 	if err != nil {
+		defer rows.Close()
 		return 0, fmt.Errorf("claim: %w", err)
 	}
 	var batch []Event

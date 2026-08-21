@@ -83,6 +83,10 @@ func (s *Server) groundChange(ctx context.Context, orgID uuid.UUID, change strin
 			}
 		}
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
 
 	if len(controls) == 0 {
 		return map[string]any{

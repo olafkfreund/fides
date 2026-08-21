@@ -97,7 +97,7 @@ func extractDigest(image string) string {
 	}
 	hex = hex[:64]
 	for _, r := range hex {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return ""
 		}
 	}

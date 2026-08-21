@@ -73,6 +73,11 @@ func (s *Server) handleListControls(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"id": id, "key": key, "name": name, "description": desc,
 			"framework": framework, "required_types": []string(types), "archived": archived})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -172,6 +177,10 @@ func (s *Server) controlsCoverageData(ctx context.Context, orgID uuid.UUID) (int
 			c.Enforced = append(c.Enforced, *env)
 		}
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		return 0, nil, err
+	}
 	out := []map[string]any{}
 	for _, k := range order {
 		c := byKey[k]
@@ -252,6 +261,11 @@ func (s *Server) handleEnforceControl(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			envIDs = append(envIDs, id)
+		}
+		// A failed iteration must not read as a short result.
+		if err := rows.Err(); err != nil {
+			internalError(w, err)
+			return
 		}
 	} else {
 		envID, err := uuid.Parse(req.EnvironmentID)

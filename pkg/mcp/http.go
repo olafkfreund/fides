@@ -157,6 +157,8 @@ func (c *HTTPClient) notify(ctx context.Context, method string) error {
 	if err != nil {
 		return err
 	}
+	// Drained so the connection can be reused; a failure here says nothing.
+	//nolint:errcheck // deliberate drain
 	io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 	resp.Body.Close()
 	return nil

@@ -65,27 +65,41 @@ func (s *Server) handleListTraining(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	writeJSON(w, s.trainingRecords(r, orgID))
+	recs, err := s.trainingRecords(r, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	writeJSON(w, recs)
 }
 
 // trainingRecords is shared by the list endpoint and the audit pack.
-func (s *Server) trainingRecords(r *http.Request, orgID uuid.UUID) []map[string]any {
+//
+// It returns an error rather than a best-effort slice because the audit pack is
+// one of its callers: a short read there produces an evidence bundle that is
+// missing training records with nothing to say so, which is indistinguishable
+// from an organisation that never did the training.
+func (s *Server) trainingRecords(r *http.Request, orgID uuid.UUID) ([]map[string]any, error) {
 	list := []map[string]any{}
 	rows, err := s.q(r.Context()).QueryContext(r.Context(),
 		`SELECT person, course, completed_at, COALESCE(notes, '')
 		 FROM training_records WHERE org_id = $1 ORDER BY completed_at DESC`, orgID)
 	if err != nil {
-		return list
+		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var person, course, notes string
 		var completed time.Time
-		if rows.Scan(&person, &course, &completed, &notes) == nil {
-			list = append(list, map[string]any{
-				"person": person, "course": course, "completed_at": completed, "notes": notes,
-			})
+		if err := rows.Scan(&person, &course, &completed, &notes); err != nil {
+			return nil, err
 		}
+		list = append(list, map[string]any{
+			"person": person, "course": course, "completed_at": completed, "notes": notes,
+		})
 	}
-	return list
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
 }

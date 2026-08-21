@@ -41,6 +41,7 @@ func WithSchemaLock(ctx context.Context, db *sql.DB, fn func(context.Context) er
 	if err != nil {
 		return fmt.Errorf("schema lock: acquire connection: %w", err)
 	}
+	//nolint:errcheck // returning a pooled connection; the read already happened
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", schemaLockID); err != nil {

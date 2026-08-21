@@ -81,6 +81,10 @@ func RequireRLSEffective(ctx context.Context, db *sql.DB) error {
 	if ok {
 		return nil
 	}
+	// A deliberately multi-line operator message: this is the last thing anyone
+	// sees before the server refuses to start, and the newlines are the reason it
+	// is readable. ST1005 is about one-line error strings.
+	//nolint:staticcheck // ST1005: multi-line by design
 	return fmt.Errorf(
 		"refusing to start: tenant isolation is switched on but the database is not enforcing it — %s.\n"+
 			"  Handlers still scope every query to the caller's organization, so this is a missing\n"+

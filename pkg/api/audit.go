@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -36,7 +37,7 @@ func (s *Server) handleTrailAuditPackage(w http.ResponseWriter, r *http.Request)
 		`SELECT tr.name, COALESCE(tr.git_repository,''), COALESCE(tr.git_commit,''), COALESCE(tr.git_branch,''), tr.created_at
 		 FROM trails tr JOIN flows f ON f.id = tr.flow_id WHERE tr.id = $1 AND f.org_id = $2`,
 		trailID, orgID).Scan(&name, &repo, &commit, &branch, &created)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		http.Error(w, "trail not found", http.StatusNotFound)
 		return
 	}
@@ -57,6 +58,7 @@ func (s *Server) handleTrailAuditPackage(w http.ResponseWriter, r *http.Request)
 		internalError(w, err)
 		return
 	}
+	defer rows.Close()
 	var attestations []map[string]any
 	var entries []ledger.Entry
 	for rows.Next() {
@@ -70,6 +72,12 @@ func (s *Server) handleTrailAuditPackage(w http.ResponseWriter, r *http.Request)
 		}
 		attestations = append(attestations, map[string]any{"name": an, "type_name": at, "payload": json.RawMessage(payload), "is_compliant": compliant, "content_hash": ch, "prev_hash": ph, "created_at": ts.UTC().Format(time.RFC3339)})
 		entries = append(entries, ledger.Entry{TrailID: trailID.String(), Name: an, TypeName: at, Payload: ledger.CanonicalJSON(payload), IsCompliant: compliant, ContentHash: ch, PrevHash: ph})
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		internalError(w, err)
+		return
 	}
 	rows.Close()
 	verdict := ledger.Verify(entries)
@@ -135,6 +143,10 @@ func (s *Server) collectRows(r *http.Request, query string, arg any, cols []stri
 			m[c] = vals[i]
 		}
 		out = append(out, m)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		return out
 	}
 	return out
 }

@@ -70,6 +70,11 @@ func (s *Server) handleListLogicalEnv(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{"id": id, "name": name, "description": desc, "members": members})
 	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
 	writeJSON(w, out)
 }
 
@@ -196,6 +201,11 @@ func (s *Server) handleLogicalEnvState(w http.ResponseWriter, r *http.Request) {
 		if svc != "" {
 			envs[key].Services = append(envs[key].Services, map[string]string{"service": svc, "digest": digest})
 		}
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
 	}
 	out := []map[string]any{}
 	for _, k := range order {

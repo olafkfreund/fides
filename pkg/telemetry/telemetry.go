@@ -51,18 +51,18 @@ func Middleware(next http.Handler) http.Handler {
 
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
-		
+
 		next.ServeHTTP(rec, r)
-		
+
 		duration := time.Since(start)
-		
+
 		atomic.AddInt64(&Instance.totalRequests, 1)
 		if rec.statusCode >= 400 {
 			atomic.AddInt64(&Instance.totalErrors, 1)
 		}
 
 		key := fmt.Sprintf("%s %s %d", r.Method, r.URL.Path, rec.statusCode)
-		
+
 		Instance.mu.Lock()
 		Instance.requestCounts[key]++
 		Instance.latencies[key] += duration
@@ -171,6 +171,7 @@ func (c *MetricsCollector) JSONExporter(w http.ResponseWriter, r *http.Request) 
 func keyToLabels(key string) string {
 	// key format: "METHOD PATH STATUS"
 	var method, path, status string
+	//nolint:errcheck // a miss leaves the zero value, which the caller treats as unknown
 	fmt.Sscanf(key, "%s %s %s", &method, &path, &status)
 	return fmt.Sprintf("method=\"%s\",path=\"%s\",status=\"%s\"", method, path, status)
 }

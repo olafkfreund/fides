@@ -102,6 +102,10 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		policyOpt = verify.WithCertificateIdentity(identity)
 	}
 
+	// Migrating to NewVerifier changes how the trust root is assembled, which
+	// is a behaviour change in signature verification and wants its own change
+	// with its own tests -- not a line in a lint sweep.
+	//nolint:staticcheck // SA1019: tracked migration
 	sev, err := verify.NewSignedEntityVerifier(trustedMaterial,
 		verify.WithSignedCertificateTimestamps(1),
 		verify.WithTransparencyLog(1),
@@ -112,6 +116,10 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 	}
 
 	result, err := sev.Verify(b, verify.NewPolicy(verify.WithArtifactDigest("sha256", artifactDigest), policyOpt))
+	//nolint:nilerr // A failed verification is a verdict, not an operational
+	// error: verdict.Verified stays false and the reason is attached, so the
+	// caller records it as evidence and still gates on it
+	// (cmd/cli/verify_image.go:93 exits non-zero on !verdict.Verified).
 	if err != nil {
 		// A completed-but-failed verification is not an operational error:
 		// report it on the verdict so the caller can still record it as

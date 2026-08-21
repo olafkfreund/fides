@@ -92,24 +92,26 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return "", fmt.Errorf("failed to open stdin pipe: %v", err)
+		return "", fmt.Errorf("failed to open stdin pipe: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("failed to open stdout pipe: %v", err)
+		return "", fmt.Errorf("failed to open stdout pipe: %w", err)
 	}
 
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("failed to start command: %v", err)
+		return "", fmt.Errorf("failed to start command: %w", err)
 	}
 
 	// Clean up process in case of failure or completion
 	defer func() {
 		stdin.Close()
+		//nolint:errcheck // best-effort teardown of a process we are abandoning
 		cmd.Process.Kill()
+		//nolint:errcheck // reaping the process killed above
 		cmd.Wait()
 	}()
 
@@ -139,7 +141,7 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 	// Read Initialize Response
 	initRespLine, err := readNextLine(stdoutReader)
 	if err != nil {
-		return "", fmt.Errorf("failed to read initialize response: %v, stderr: %s", err, stderrBuf.String())
+		return "", fmt.Errorf("failed to read initialize response: %w, stderr: %s", err, stderrBuf.String())
 	}
 	var initResp JsonRpcResponse
 	if err := json.Unmarshal(initRespLine, &initResp); err != nil || initResp.Error != nil {
@@ -208,7 +210,7 @@ func CallToolStdio(command string, args []string, env map[string]string, toolNam
 			if command == "echo" || strings.HasSuffix(command, "/echo") {
 				return string(initRespLine), nil
 			}
-			return "", fmt.Errorf("failed to read tool call response: %v, stderr: %s", e, stderrBuf.String())
+			return "", fmt.Errorf("failed to read tool call response: %w, stderr: %s", e, stderrBuf.String())
 		case <-timeout:
 			return "", fmt.Errorf("timeout waiting for tool call response")
 		}

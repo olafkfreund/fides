@@ -48,6 +48,7 @@ func ScopedConn(ctx context.Context, pool *sql.DB, org string) (*sql.Conn, func(
 		return nil, nil, err
 	}
 	if err := setOrgGUC(ctx, conn, org); err != nil {
+		//nolint:errcheck // returning a pooled connection; the read already happened
 		conn.Close()
 		return nil, nil, err
 	}
@@ -55,6 +56,7 @@ func ScopedConn(ctx context.Context, pool *sql.DB, org string) (*sql.Conn, func(
 		// Best-effort reset on a fresh context so cancellation of the request
 		// context cannot skip the cleanup, then return the conn to the pool.
 		_, _ = conn.ExecContext(context.Background(), "SELECT set_config('app.current_org', '', false)")
+		//nolint:errcheck // returning a pooled connection; the read already happened
 		conn.Close()
 	}
 	return conn, release, nil
