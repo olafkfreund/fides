@@ -48,9 +48,16 @@ RUN mkdir -p web/docs && cp -r docs/images web/docs/images
 
 # Build static binaries: the server and the stdio MCP sensor (real MCP server
 # used by environment compliance checks).
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-server cmd/server/main.go
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp-sensor ./cmd/mcp-sensor
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o fides-mcp ./cmd/mcp
+# -trimpath so the binary does not embed the builder's absolute paths, which is
+# what makes the build reproducible -- and what lets anyone check that this
+# image is the source it claims to be. release.yml already builds this way; the
+# container did not, so the two shipped different guarantees.
+#
+# ./cmd/server, not cmd/server/main.go: naming the file compiles only that file,
+# so a second file added to the package would be silently left out of the image.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-mcp-sensor ./cmd/mcp-sensor
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-mcp ./cmd/mcp
 
 # Stage 2: Minimal runtime image
 #
