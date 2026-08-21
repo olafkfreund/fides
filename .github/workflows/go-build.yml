@@ -32,6 +32,32 @@ jobs:
       # a place where a failed read returned a short list that looked like a
       # legitimate result. In compliance data that is the worst possible failure
       # mode, so this gate exists to stop it coming back.
+      # A short fuzz run on every PR. Not to find new bugs in 20 seconds a
+      # target -- that is what a long local run is for -- but so that a change
+      # making a parser panic on malformed input fails here, not in production.
+      #
+      # These parsers eat third-party scanner output and webhook bodies. A panic
+      # in one is a denial of service on every pipeline that asks Fides for a
+      # release verdict. Any crasher go test finds is written to testdata/ and
+      # becomes an ordinary regression test from then on.
+      - name: Fuzz the untrusted-input parsers
+        run: |
+          set -euo pipefail
+          fuzz() {
+            echo "--- $2"
+            go test "$1" -run "^$2\$" -fuzz "^$2\$" -fuzztime=20s
+          }
+          fuzz ./pkg/evidence FuzzParseSBOM
+          fuzz ./pkg/evidence FuzzParseJUnit
+          fuzz ./pkg/evidence FuzzParseTrivy
+          fuzz ./pkg/evidence FuzzParseSARIF
+          fuzz ./pkg/evidence FuzzParseSLSA
+          fuzz ./pkg/evidence FuzzParseSnyk
+          fuzz ./pkg/evidence FuzzParseDispatch
+          fuzz ./pkg/evidence FuzzNormalizeProvenance
+          fuzz ./pkg/inbound FuzzVerify
+          fuzz ./pkg/inbound FuzzParsePush
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
