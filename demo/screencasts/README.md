@@ -50,3 +50,17 @@ list and narration, and how to capture it with the Chrome automation
 ## Output
 
 Rendered `out/` artifacts are git-ignored — regenerate rather than commit them.
+
+## 08-local-gates
+
+`sbom diff` and `vuln diff` — the offline half of Fides. Needs **no server and
+no token**, which is also why it is the most reliable tape to re-record.
+
+Its inputs are committed at `fixtures/seed-local-gates.sh` rather than typed
+inline: VHS's `Type` takes a quoted string and nested quotes break its parser,
+and a screencast whose inputs live in the repo can be re-recorded by anyone.
+
+```bash
+cd demo/screencasts
+PATH="/path/to/fides-bin:$PATH" nix run nixpkgs#vhs -- 08-local-gates.tape
+```
