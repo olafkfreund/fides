@@ -24,6 +24,18 @@ Against a live server — control coverage, timelines, flows/trails, evidence se
 
 ![Fides CLI on live data](docs/images/cli/07-live-data.gif)
 
+### Gate on what a change introduced
+
+`sbom diff` and `vuln diff` read two files and print a diff — no server, no
+token, no trail. They are the part of Fides a pipeline can adopt on day one.
+
+![Local gates: vuln diff and sbom diff](docs/images/cli/08-local-gates.gif)
+
+Gating on a *total* vulnerability count means the gate is red from the day you
+turn it on and everyone learns to ignore it. `--fail-on-new` exits 2 only when
+a CVE appears that was not in the baseline, so red always means "this change
+did that".
+
 ### Portal, page by page
 
 | Assurance Console | Artifacts & SBOM | Attestations |

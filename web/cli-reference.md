@@ -82,11 +82,25 @@ Two AWS cases where that happens, both outside Fides' control:
 | `fides flag list [--limit N]` | List recent feature-flag changes (flag_key, env, state, actor, compliant) for auditors |
 | `fides policy create --name --rules-file \| delete --id \| generate --framework --description` | Global policies: create, delete, and AI-draft rules (via the LLM) |
 | `fides policy add\|list\|check --env <id> [--name --require t1,t2 --if-tag --if-value --trail]` | Environment policies (`check` exits 2 on non-compliance) |
+| `fides env create --name <n> [--type k8s\|docker\|ecs\|lambda\|server] [--description <d>]` | Register an environment. Upserts on name, and re-registering un-archives it |
+| `fides env list` | List live environments (archived ones are hidden) |
+| `fides env archive --env <id>` | Retire an environment from the compliance picture. It leaves the control-coverage denominator, the OSCAL report, the `--all-environments` target list and the default listing — but keeps its snapshots, policies and allow-lists, and still resolves by id. Coverage divides by the number of live environments, so a CI suite that creates one per run and deletes none drags every control's coverage down for reasons that have nothing to do with compliance |
+| `fides env unarchive --env <id>` | Put it back |
 | `fides env diff --env <id> [--from <snap> --to <snap>]` | Diff two snapshots |
 | `fides env diff --env <id> --reevaluate-change CHGxxxx [--from --to]` | Post-approval drift re-evaluation: diffs snapshots and, if drift is detected, escalates the ServiceNow change's risk + posts a work note (exits 2 on drift) |
 | `fides env verify --env <id> --server <mcp-name> [--tool get_pods] --rule <jq> [--rule …] [--rules-file <f>]` | Ask the runtime MCP sensor about the live environment and gate on jq rules (exits 2 if non-compliant). `--rule` is repeatable |
 | `fides logical-env create\|list\|add-member\|state [--name --id --env]` | Logical (aggregate) environments |
 | `fides remediation propose\|list\|get\|approve\|reject\|apply [...]` | Policy-driven auto-remediation: propose a fix, then approve/reject/apply it |
+
+## Local diffing (no server required)
+
+Both read files on disk and print a diff; neither talks to a Fides server, so
+they work in a pipeline before anything has been recorded.
+
+| Command | Purpose |
+|---|---|
+| `fides sbom diff <old.json> <new.json> [--json]` | Diff two SBOMs: components added, removed and version-changed. CycloneDX, SPDX and Syft JSON |
+| `fides vuln diff <baseline.json> <current.json> [--format trivy\|snyk\|sarif] [--fail-on-new]` | Diff two scan reports and report NEW CVEs. `--fail-on-new` exits 2, so a build can be gated on regressions rather than on a total count that never reaches zero |
 
 ## Controls, frameworks & change gate
 

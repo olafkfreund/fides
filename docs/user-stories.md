@@ -141,6 +141,24 @@ unknown one, so you can tell a routine bump from a genuine shadow change.
 one with no stated reason cannot be re-evaluated later by anyone, including the
 person who added it.
 
+> *"As an SRE, I want a retired cluster to stop dragging our compliance numbers
+> down."*
+
+```bash
+fides env archive   --env $ENV_ID     # retire it from the picture
+fides env unarchive --env $ENV_ID     # put it back
+```
+
+Control coverage divides by the number of live environments, so every
+environment that ever existed counts until it is archived. A CI suite that
+creates one per run and deletes none will lower every control's coverage
+week after week for reasons that have nothing to do with compliance.
+
+Archiving is not deleting, deliberately: the environment keeps its snapshots,
+policies and allow-lists and still resolves by id, so anything pointing at it
+goes on working. An environment owns evidence, and evidence is not deleted to
+improve a percentage.
+
 > *"As a platform engineer, I want DORA metrics without a separate tool."*
 
 ```bash
@@ -160,6 +178,26 @@ fides assert --sha256 $DIGEST --policy no-critical-vulns   # exit 2 if non-compl
 fides impact --cve CVE-2026-12345                          # which artifacts + running envs are hit
 fides vex --cve CVE-2026-12345 --status not_affected --product $DIGEST  # suppress false positives
 ```
+
+> *"As a security engineer, I want to gate on vulnerabilities this change
+> introduced, not on the backlog we already knew about."*
+
+```bash
+fides vuln diff base-scan.json current-scan.json --format trivy --fail-on-new
+```
+
+Exits 2 only when a CVE appears that was not in the baseline. Gating on a total
+count means the gate is red from the day you turn it on and everyone learns to
+ignore it; gating on the delta means red always means "this change did that".
+
+Same shape for dependencies:
+
+```bash
+fides sbom diff old-bom.json new-bom.json     # added, removed, version-changed
+```
+
+Both read local files and never contact a server, so they run before anything
+has been recorded.
 
 > *"As a security engineer, I want to prove an image was signed by our own CI."*
 
