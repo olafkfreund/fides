@@ -45,7 +45,14 @@ jobs:
           set -euo pipefail
           fuzz() {
             echo "--- $2"
-            go test "$1" -run "^$2\$" -fuzz "^$2\$" -fuzztime=20s
+            # Bounded by EXECUTIONS, not seconds. -fuzztime=20s made this step
+            # flaky: on a loaded runner the coordinator hits its own deadline
+            # shutting workers down and reports "context deadline exceeded",
+            # which is not a crash and writes no crasher, but fails the build.
+            # A flaky gate is worse than no gate -- people start re-running it
+            # without reading it. An execution count is the same amount of work
+            # regardless of how fast the machine is.
+            go test "$1" -run "^$2\$" -fuzz "^$2\$" -fuzztime=500000x
           }
           fuzz ./pkg/evidence FuzzParseSBOM
           fuzz ./pkg/evidence FuzzParseJUnit
