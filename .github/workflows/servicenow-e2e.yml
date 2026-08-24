@@ -47,15 +47,44 @@ jobs:
           SN_URL: ${{ secrets.SN_URL }}
           SN_USER: ${{ secrets.SN_USER }}
           SN_PASS: ${{ secrets.SN_PASS }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: |
           # Secrets cannot be read in a step-level `if:`, so gate on an output.
-          if [ -n "$FIDES_SERVER_URL" ] && [ -n "$FIDES_API_TOKEN" ] \
-             && [ -n "$SN_URL" ] && [ -n "$SN_USER" ] && [ -n "$SN_PASS" ]; then
+          missing=""
+          [ -n "$FIDES_SERVER_URL" ] || missing="$missing FIDES_SERVER_URL(var)"
+          [ -n "$FIDES_API_TOKEN" ]  || missing="$missing FIDES_API_TOKEN"
+          [ -n "$SN_URL" ]           || missing="$missing SN_URL"
+          [ -n "$SN_USER" ]          || missing="$missing SN_USER"
+          [ -n "$SN_PASS" ]          || missing="$missing SN_PASS"
+
+          if [ -z "$missing" ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::ServiceNow e2e skipped — set FIDES_SERVER_URL, FIDES_API_TOKEN, SN_URL, SN_USER, SN_PASS."
+            exit 0
           fi
+
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+
+          # On a SCHEDULE, not being able to run is the failure.
+          #
+          # This job exists so that a ServiceNow-side change -- a renamed choice,
+          # a revoked role, a deactivated plugin -- surfaces as an alert instead
+          # of as a customer noticing the CMDB stopped updating. A scheduled run
+          # that skips still reports success, so the alert can never fire and the
+          # weekly green tick means nothing. That is the same shape as the bug
+          # this workflow was written to catch: every layer reporting success
+          # while nothing was verified.
+          #
+          # It had been skipping in exactly this way; SN_URL, SN_USER and SN_PASS
+          # were never configured, and the run went green every Monday regardless.
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            echo "::error::The weekly ServiceNow assurance run cannot run:${missing} is not configured."
+            echo "::error::A scheduled run that skips is a green tick for work nobody did — failing instead."
+            exit 1
+          fi
+
+          # On demand, or from a fork, skipping is legitimate: whoever ran it may
+          # simply not hold credentials to a shared instance.
+          echo "::warning::ServiceNow e2e skipped —${missing} not set. Expected outside the scheduled run."
 
       - name: Run the live suite
         if: steps.creds.outputs.ready == 'true'
