@@ -95,5 +95,13 @@ jobs:
           SN_URL: ${{ secrets.SN_URL }}
           SN_USER: ${{ secrets.SN_USER }}
           SN_PASS: ${{ secrets.SN_PASS }}
-          KEEP: '1'
+          # Keep the records only when a human asked for this run and may want
+          # to look at them. On the weekly unattended run, clean up: KEEP=1
+          # there disables the archiving step, so every Monday would leave
+          # another environment behind -- and control coverage divides by the
+          # number of live environments. That is the accumulation #478 was
+          # written to stop (five abandoned runs had DORA reading 40% when the
+          # honest figure was 60%), and hardcoding KEEP meant the fix could
+          # never actually run.
+          KEEP: ${{ github.event_name == 'workflow_dispatch' && '1' || '0' }}
         run: ./scripts/servicenow-e2e.sh
