@@ -112,6 +112,15 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # Without this the binaries inside the image report "dev": .dockerignore
+          # excludes .git, so the build-info fallback has no revision to find and
+          # the ldflags value is the ONLY way a version reaches the image. It is
+          # not optional decoration. This workflow publishes from main rather
+          # than from a tag, so the commit IS the version -- and it matches the
+          # :<sha> tag the image is pushed under, so a running server's version
+          # names the exact image you can pull.
+          build-args: |
+            FIDES_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

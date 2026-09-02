@@ -53,11 +53,17 @@ RUN mkdir -p web/docs && cp -r docs/images web/docs/images
 # image is the source it claims to be. release.yml already builds this way; the
 # container did not, so the two shipped different guarantees.
 #
+# FIDES_VERSION defaults to "dev" for a plain `docker build`; CI passes the
+# release tag with --build-arg so the shipped binaries' version log/output
+# matches the image tag instead of falling back to the git revision baked in
+# at image-build time.
+ARG FIDES_VERSION=dev
+
 # ./cmd/server, not cmd/server/main.go: naming the file compiles only that file,
 # so a second file added to the package would be silently left out of the image.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-server ./cmd/server
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-mcp-sensor ./cmd/mcp-sensor
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s" -o fides-mcp ./cmd/mcp
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s -X fides/pkg/version.Version=${FIDES_VERSION}" -o fides-server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s -X fides/pkg/version.Version=${FIDES_VERSION}" -o fides-mcp-sensor ./cmd/mcp-sensor
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-w -s -X fides/pkg/version.Version=${FIDES_VERSION}" -o fides-mcp ./cmd/mcp
 
 # Stage 2: Minimal runtime image
 #

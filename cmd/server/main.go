@@ -22,6 +22,7 @@ import (
 	"fides/pkg/slack"
 	"fides/pkg/storage"
 	"fides/pkg/vault"
+	"fides/pkg/version"
 	"fides/pkg/webhooks"
 
 	_ "github.com/lib/pq"
@@ -178,7 +179,7 @@ func main() {
 
 	// Graceful shutdown on SIGINT/SIGTERM.
 	go func() {
-		log.Printf("Fides API Server running on port %s...", port)
+		log.Printf("Fides API Server %s running on port %s...", version.String(), port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}

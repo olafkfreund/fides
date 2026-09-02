@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+
+	"fides/pkg/version"
 )
 
 const defaultResponse = `{"pods":[{"name":"fides-app","status":"Ready","replicas":1,"readyReplicas":1}]}`
@@ -68,7 +70,7 @@ func handle(req rpcRequest, toolResponse string) (any, bool) {
 		return map[string]any{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "fides-mcp-sensor", "version": "1.0.0"},
+			"serverInfo":      map[string]any{"name": "fides-mcp-sensor", "version": version.String()},
 		}, true
 	case "tools/list":
 		return map[string]any{"tools": []map[string]any{
