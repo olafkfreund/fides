@@ -9,8 +9,11 @@
 
   outputs = { self, nixpkgs, devenv, ... } @ inputs:
     let
-      # Bump in lockstep with the git tag when cutting a release.
-      version = "0.1.0";
+      # Bump in lockstep with the git tag when cutting a release. This is not
+      # cosmetic any more: it is the -X value for pkg/version, so a stale number
+      # here means a nix-built binary reports a version that was never released.
+      # It sat at 0.1.0 through v0.7.0 precisely because nothing depended on it.
+      version = "0.8.0";
 
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
