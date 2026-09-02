@@ -201,6 +201,9 @@ func TestAnchorDeploymentAttestationUploadsAttachmentAndUpdatesCI(t *testing.T) 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		switch {
+		// No attachment exists yet, so the anchor proceeds.
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/sys_attachment":
+			w.Write([]byte(`{"result":[]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
 			attachPath = r.URL.Path
 			attachQuery = r.URL.RawQuery
@@ -282,6 +285,9 @@ func TestCMDBSinkDeliverAnchorResolvesCIByNameAndAnchors(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/cmdb_ci":
 			sawSearch = true
 			w.Write([]byte(`{"result":[{"sys_id":"ci-42","name":"payments"}]}`))
+		// No attachment exists yet, so the anchor proceeds.
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/sys_attachment":
+			w.Write([]byte(`{"result":[]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
 			sawAttach = true
 			if !strings.Contains(r.URL.RawQuery, "table_sys_id=ci-42") {
@@ -360,4 +366,168 @@ func TestCMDBSinkSkipsDisabledAndUnrelated(t *testing.T) {
 	if called {
 		t.Fatalf("must not call ServiceNow for disabled/unrelated")
 	}
+}
+
+// The snapshot path (IRE) writes image_id and no short_description; the artifact
+// path wrote short_description and no image_id, and both the resolver and this
+// dedupe queried short_description alone. So Fides could not see the CI its own
+// snapshot had just created: it inserted a second CI for the same digest, and
+// the change gate then resolved only one of them. Both queries are now an OR
+// over the two conventions, which is what this asserts.
+func TestDeliverArtifactSkipsWhenOnlyIRECIExists(t *testing.T) {
+	const sha = "3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f"
+
+	var gotQuery string
+	var created bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/cmdb_ci_docker_image":
+			gotQuery = r.URL.Query().Get("sysparm_query")
+			// Shaped like a CI the IRE path created: image_id set, no short_description.
+			w.Write([]byte(`{"result":[{"sys_id":"ire-ci-1","image_id":"sha256:` + sha + `"}]}`))
+		case r.Method == http.MethodPost:
+			created = true
+			w.Write([]byte(`{"result":{"sys_id":"dupe"}}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	if err := artifactSink(srv).deliverArtifact(context.Background(), events.Event{
+		OrgID: uuid.New(), Type: ArtifactEventType,
+		Payload: []byte(`{"sha256":"` + sha + `","name":"payments","type":"docker"}`),
+	}); err != nil {
+		t.Fatalf("deliverArtifact: %v", err)
+	}
+
+	if created {
+		t.Error("created a second CI for a digest the IRE path had already recorded")
+	}
+	if !strings.Contains(gotQuery, "image_id=sha256:"+sha) {
+		t.Errorf("dedupe must match image_id (the IRE identify attribute); query was %q", gotQuery)
+	}
+	if !strings.Contains(gotQuery, "short_descriptionLIKEsha256:"+sha) {
+		t.Errorf("dedupe must still match short_description, or CIs written by another\n"+
+			"system stop being seen; query was %q", gotQuery)
+	}
+}
+
+// image_id as well as short_description: it is the class's IRE identify
+// attribute, so writing it is what lets ServiceNow reconcile a later snapshot
+// onto this row instead of creating a second one.
+func TestDeliverArtifactWritesImageID(t *testing.T) {
+	const sha = "aa0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f"
+
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Write([]byte(`{"result":[]}`))
+		case http.MethodPost:
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			w.Write([]byte(`{"result":{"sys_id":"new-ci"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	if err := artifactSink(srv).deliverArtifact(context.Background(), events.Event{
+		OrgID: uuid.New(), Type: ArtifactEventType,
+		Payload: []byte(`{"sha256":"` + sha + `","name":"payments","type":"docker"}`),
+	}); err != nil {
+		t.Fatalf("deliverArtifact: %v", err)
+	}
+
+	if got, _ := body["image_id"].(string); got != "sha256:"+sha {
+		t.Errorf("image_id = %q, want %q", got, "sha256:"+sha)
+	}
+	if got, _ := body["short_description"].(string); !strings.Contains(got, "sha256:"+sha) {
+		t.Errorf("short_description must keep carrying the digest for readers that\n"+
+			"match on it; got %q", got)
+	}
+}
+
+// Event delivery is at-least-once, so a redelivery is the normal path on a
+// retry, not an edge case. It used to add a second identical attachment and a
+// second comments update every time.
+func TestAnchorSkipsWhenAttachmentAlreadyExists(t *testing.T) {
+	var attached, patched bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/sys_attachment":
+			q := r.URL.Query().Get("sysparm_query")
+			if !strings.Contains(q, "table_sys_id=ci-1") ||
+				!strings.Contains(q, "fides-deployment-attestation-attest-1.json") {
+				t.Errorf("existence check must be scoped to this CI and file name; got %q", q)
+			}
+			w.Write([]byte(`{"result":[{"sys_id":"att-existing"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
+			attached = true
+			w.Write([]byte(`{"result":{"sys_id":"att-dupe"}}`))
+		case r.Method == http.MethodPatch:
+			patched = true
+			w.Write([]byte(`{"result":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	res, err := AnchorDeploymentAttestation(context.Background(),
+		testClient(srv.URL, AuthBasic, srv.Client()),
+		DeploymentAttestation{CISysID: "ci-1", AttestationID: "attest-1", TrailID: "t-1"})
+	if err != nil {
+		t.Fatalf("anchor: %v", err)
+	}
+	if attached {
+		t.Error("attached a second copy of an attestation already on the CI")
+	}
+	if patched {
+		t.Error("re-posted the summary comment on a redelivery")
+	}
+	if got, _ := res["sys_id"].(string); got != "att-existing" {
+		t.Errorf("should return the existing attachment, got %v", res)
+	}
+}
+
+// If the existence check cannot run (no sys_attachment read ACL, say), attach
+// anyway. A duplicate attachment is untidy; a deployment with no evidence
+// attached is a hole in the audit trail.
+func TestAnchorFailsOpenWhenExistenceCheckErrors(t *testing.T) {
+	var attached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/now/table/sys_attachment":
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":{"message":"no read access"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/now/attachment/file":
+			attached = true
+			w.Write([]byte(`{"result":{"sys_id":"att-1"}}`))
+		case r.Method == http.MethodPatch:
+			w.Write([]byte(`{"result":{}}`))
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := AnchorDeploymentAttestation(context.Background(),
+		testClient(srv.URL, AuthBasic, srv.Client()),
+		DeploymentAttestation{CISysID: "ci-1", AttestationID: "attest-1"}); err != nil {
+		t.Fatalf("a failed existence check must not fail the anchor: %v", err)
+	}
+	if !attached {
+		t.Error("failed closed: no evidence was attached because the check errored")
+	}
+}
+
+// artifactSink wires a CMDBSink at the stub server with the artifact-CI writer
+// enabled, which is all these two tests need.
+func artifactSink(srv *httptest.Server) *CMDBSink {
+	sink := NewCMDBSink(fakeLoader{
+		cfg:     Config{InstanceURL: srv.URL, AuthType: AuthBasic, ClientID: "u", Secret: "p"},
+		enabled: true,
+	})
+	sink.artifactCI = func() bool { return true }
+	sink.newClient = func(cfg Config) (*Client, error) {
+		return testClient(cfg.InstanceURL, AuthBasic, srv.Client()), nil
+	}
+	return sink
 }

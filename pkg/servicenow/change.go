@@ -107,12 +107,36 @@ func BuildChangeGateNote(gate map[string]any) string {
 	return b.String()
 }
 
+// imageDigestQuery is the one encoded query that finds a cmdb_ci_docker_image
+// for a digest, wherever the digest happens to be recorded. Two conventions are
+// both live and both have to match, so this is an OR rather than a choice:
+//
+//   - image_id ("sha256:<hex>") is the class's IRE identify attribute, so it is
+//     what the snapshot path writes and what ServiceNow itself reconciles on.
+//   - short_description carries the digest inside prose ("... binary digest
+//     sha256:<hex>"). Every CI written by another system — ARC's karc-portal —
+//     has only this, with image_id empty, and so does every CI Fides itself
+//     wrote before image_id was added below.
+//
+// Matching only short_description (as this did) makes the snapshot path's own
+// CIs invisible: the change gate anchors to nothing, and deliverArtifact's
+// dedupe misses them and inserts a second CI for one digest. Matching only
+// image_id would be tidier and would silently stop resolving anything Fides
+// does not own -- see TestResolveImageCIsByDigestMatchesForeignShortDescription.
+// There is genuinely no `digest` column; that much of the old note was right.
+//
+// Exact match first: image_id is indexed, so the cheap comparison decides the
+// common case and the LIKE only runs for rows it did not already answer.
+func imageDigestQuery(hex string) string {
+	return "image_id=sha256:" + hex + "^ORshort_descriptionLIKEsha256:" + hex
+}
+
 // ResolveImageCIsByDigest returns the sys_ids of cmdb_ci_docker_image records
 // carrying any of the given sha256 digests (bare hex or "sha256:"-prefixed).
 // This is the binary anchor: the CMDB image CI recorded for a digest is the
 // same digest the trail attests, so a change's artifacts resolve straight to
-// the CIs that run them. Matched via short_description (see the query note
-// below). Deduped and best-effort — a query error for one digest is skipped.
+// the CIs that run them. Deduped and best-effort — a query error for one digest
+// is skipped.
 func ResolveImageCIsByDigest(ctx context.Context, client *Client, digests []string) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -121,18 +145,11 @@ func ResolveImageCIsByDigest(ctx context.Context, client *Client, digests []stri
 		if d == "" {
 			continue
 		}
-		// Match on short_description, NOT a `digest` field. cmdb_ci_docker_image
-		// as populated here (discovery_source=karc-portal) carries the full
-		// digest in short_description ("... binary digest sha256:<hex> ...") and
-		// has no queryable `digest` column -- a `digest=` query is silently
-		// ignored by ServiceNow and returns unrelated rows, which would anchor
-		// the change to a random image. LIKE on the sha256 string filters
-		// correctly (verified: exact digest -> the one image CI; bogus -> none).
 		hex := strings.TrimPrefix(d, "sha256:")
 		if hex == "" {
 			continue
 		}
-		res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "short_descriptionLIKEsha256:"+hex, "sys_id")
+		res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", imageDigestQuery(hex), "sys_id")
 		if err != nil || len(res.Result) == 0 {
 			continue
 		}
