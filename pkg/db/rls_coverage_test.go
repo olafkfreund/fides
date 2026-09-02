@@ -35,14 +35,44 @@ import (
 var uncoveredOrgTables = []string{
 	"artifact_vulnerabilities",
 	"control_exceptions",
-	"integration_events",
 	"sbom_components",
-	"service_accounts",
 	"service_owners",
-	"sessions",
 	"trail_anchors",
 	"training_records",
 	"vex_statements",
+}
+
+// rlsExcludedByDesign must NEVER get a tenant_isolation policy. These are not
+// backlog -- giving them one is an outage, and this list asserts their absence
+// rather than tolerating it.
+//
+// All three are read on a connection that has no app.current_org yet, because
+// the query is what establishes the tenant:
+//
+//   - sessions: SessionStore.Get selects org_id FROM sessions WHERE token_hash
+//     = $1 (pkg/auth/auth.go:189). The org comes OUT of that row, so it cannot
+//     be set going in. Under RLS the row is invisible and nobody can log in.
+//     CleanupExpired sweeps every tenant on a background connection too.
+//   - service_accounts: the API-key lookup matches a public prefix before the
+//     tenant is known. schema-rls.sql does not merely omit this table, it ends
+//     with an explicit DISABLE + DROP POLICY for it -- self-healing deployments
+//     where an earlier version of that file DID apply a policy and broke
+//     API-key authentication.
+//   - integration_events: a system outbox the events dispatcher drains across
+//     ALL tenants on a non-request connection. A policy hides every row and
+//     delivery silently stops.
+//
+// Isolation for all three is enforced in-query instead: every management
+// handler filters by org_id, which TestEveryHandlerEstablishesTenantScope gates.
+//
+// The reason this list asserts rather than excuses: the service_accounts
+// mistake has already been made once in this repo. A checker that treated these
+// as "not done yet" would invite someone to make it again -- and the failure is
+// silent for reads and total for auth.
+var rlsExcludedByDesign = []string{
+	"integration_events",
+	"service_accounts",
+	"sessions",
 }
 
 // orgScopedTablesWithoutPolicy asks the database which tables have an org_id
@@ -123,6 +153,9 @@ func TestEveryOrgScopedTableHasAnRLSPolicyIntegration(t *testing.T) {
 	for _, tbl := range uncoveredOrgTables {
 		known[tbl] = true
 	}
+	for _, tbl := range rlsExcludedByDesign {
+		known[tbl] = true
+	}
 
 	var fresh []string
 	for _, tbl := range uncovered {
@@ -156,6 +189,24 @@ func TestEveryOrgScopedTableHasAnRLSPolicyIntegration(t *testing.T) {
 	if len(stale) > 0 {
 		t.Errorf("uncoveredOrgTables has %d stale entry/entries — remove them, the gap is closed:\n  %s",
 			len(stale), strings.Join(stale, "\n  "))
+	}
+
+	// The other direction, and the one that actually prevents an outage: a table
+	// excluded by design must still have NO policy. If one appears, authentication
+	// or event delivery is already broken in whatever environment applied it.
+	for _, tbl := range rlsExcludedByDesign {
+		var exists bool
+		if err := conn.QueryRow(`SELECT EXISTS (
+			SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = $1)`, tbl).Scan(&exists); err != nil {
+			t.Fatalf("check policy on %s: %v", tbl, err)
+		}
+		if exists {
+			t.Errorf("%s has an RLS policy and must not — it is read before the tenant is\n"+
+				"known, so a policy hides every row. sessions breaks login, service_accounts\n"+
+				"breaks API keys, integration_events silently stops event delivery. Remove it\n"+
+				"from the table list in schema-rls.sql; the DISABLE/DROP block at the end of\n"+
+				"that file exists because this has happened before.", tbl)
+		}
 	}
 
 	var covered int
