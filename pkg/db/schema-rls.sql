@@ -62,7 +62,21 @@ DECLARE
     'logical_environments',
     'remediation_actions',
     'change_control_links',
-    'deployment_anchors'
+    'deployment_anchors',
+    -- Added once a gate existed to notice they were missing
+    -- (TestEveryOrgScopedTableHasAnRLSPolicyIntegration, #497). Every one is
+    -- read only from pkg/api request handlers -- none is touched by the events
+    -- dispatcher, the auth path or a startup job -- so a policy cannot hide a
+    -- row from a connection that has no tenant set. That is the property that
+    -- decides whether a table belongs here; see the DISABLE block at the end of
+    -- this file for the three where it does not hold.
+    'artifact_vulnerabilities',
+    'control_exceptions',
+    'sbom_components',
+    'service_owners',
+    'trail_anchors',
+    'training_records',
+    'vex_statements'
   ];
   -- NOTE: integration_events is deliberately NOT in this list. It is a system
   -- outbox that the background events dispatcher drains across ALL tenants on a
