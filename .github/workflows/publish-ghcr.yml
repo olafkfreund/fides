@@ -30,6 +30,16 @@ on:
       # server. Only docs/images is.
       - "web/**"
       - "docs/images/**"
+      # go.mod/go.sum: a dependency bump changes no file under cmd/ or pkg/,
+      # but it absolutely changes the binaries in the image -- and it is how a
+      # CVE in a shipped dependency gets fixed. Without these two globs, #500
+      # (grpc CVE-2026-84304) patched the ECR image via go-build.yml, which has
+      # no path filter, and left GHCR serving the vulnerable build with the
+      # workflow's last run still showing the failure it was supposed to fix.
+      # The CVE gate here could never go green from a dependency bump alone.
+      # Same shape as #474: green everywhere except the thing that ships.
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/publish-ghcr.yml"
   workflow_dispatch: {}
 
