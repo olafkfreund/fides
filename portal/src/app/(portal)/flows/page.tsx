@@ -32,9 +32,31 @@ export default function Flows() {
   const [chain, setChain] = useState<Record<string, ChainVerdict>>({});
   const [gate, setGate] = useState<Record<string, Gate>>({});
   const [err, setErr] = useState("");
+  // Evidence deep-link (?flow=&trail=&attestation_type=): set by the Go
+  // redirect routes. flow/trail may each be a UUID or a name (legacy links
+  // carry the flow name and the commit SHA), so we match against both.
+  const [link, setLink] = useState<{ flow: string; trail: string; att: string } | null>(null);
 
   const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
   useEffect(() => { loadFlows(); }, []);
+
+  // Read the evidence-link params once on mount. window.location is used
+  // deliberately: this page is statically exported (output: "export"), and
+  // useSearchParams would require a <Suspense> boundary for no gain here.
+  //
+  // SECURITY: attestation_type is attacker-controlled — the legacy evidence
+  // route that forwards it here is public and unvalidated. It is rendered
+  // ONLY as a React text node (never dangerouslySetInnerHTML, href, or
+  // style), and clamped so an unbounded value cannot wreck the chip layout.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const flow = p.get("flow");
+    const trail = p.get("trail");
+    // window is only readable after mount in a statically exported page — same
+    // shape as the next-themes hydration guard in Shell.tsx.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (flow || trail) setLink({ flow: flow || "", trail: trail || "", att: (p.get("attestation_type") || "").slice(0, 64) });
+  }, []);
 
   const createFlow = async () => {
     setErr("");
@@ -52,6 +74,50 @@ export default function Flows() {
       } catch (e) { setErr(String((e as Error).message || e)); }
     }
   };
+
+  // The evidence link resolves by DERIVING what it points at during render,
+  // rather than mirroring it into state from an effect. Effects below do only
+  // the two things that are genuinely side effects: expanding the flow and
+  // scrolling. flow/trail each match by id OR name, because the canonical
+  // resolver sends UUIDs and the legacy rescue route sends a flow name and a
+  // commit SHA.
+  const linkedFlow = link ? flows.find((x) => x.id === link.flow || x.name === link.flow) : undefined;
+  const linkedTrails = linkedFlow ? trailsByFlow[linkedFlow.id] : undefined;
+  const linkedTrail =
+    link && link.trail && linkedTrails
+      ? linkedTrails.find((x) => x.id === link.trail || x.name === link.trail || x.git_commit === link.trail) ||
+        (link.trail.length >= 7 ? linkedTrails.find((x) => x.git_commit?.startsWith(link.trail)) : undefined)
+      : undefined;
+  const highlight = linkedTrail?.id ?? null;
+
+  // Only a miss is worth saying out loud, and only once we know it is a miss:
+  // before the trails arrive, "not found" would be wrong rather than merely
+  // premature. An auditor following a stale link gets a notice, not a blank page.
+  let linkNotice = "";
+  if (link && flows.length > 0 && !linkedFlow) {
+    linkNotice = "Evidence link: flow not found, or not visible to your account.";
+  } else if (link && link.trail && linkedTrails && !linkedTrail) {
+    linkNotice = "Evidence link: trail not found, or not visible to your account.";
+  }
+
+  // Expand the linked flow through the same toggle() the click path uses, so
+  // trail loading stays in one place.
+  useEffect(() => {
+    // toggle() is the click path's own expand+load; reusing it is the point, and
+    // inlining its body here to satisfy the rule would be the worse trade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (linkedFlow && expanded !== linkedFlow.id) toggle(linkedFlow.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedFlow]);
+
+  useEffect(() => {
+    if (!highlight) return;
+    const id = setTimeout(
+      () => document.getElementById(`trail-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      100,
+    );
+    return () => clearTimeout(id);
+  }, [highlight]);
 
   const loadArtifacts = async (id: string) => {
     if (artifactsByFlow[id]) return;
@@ -95,6 +161,9 @@ export default function Flows() {
       <PageHeader title="Flows &amp; Trails" subtitle="Delivery pipelines and their build trails. Click a flow to see its trails." />
 
       <div className="flex flex-col gap-5">
+        {linkNotice && (
+          <div className="rounded-md border border-border bg-card px-3 py-2 text-sm text-muted-foreground">{linkNotice}</div>
+        )}
         {activity.items.length > 0 && (
           <Panel label="Activity">
             <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">{activity.header}</div>
@@ -161,13 +230,15 @@ export default function Flows() {
                         <div className="flex flex-col gap-2">
                           {trails.map((t) => {
                             const v = chain[t.id];
+                            const hl = highlight === t.id;
                             return (
-                              <div key={t.id} className="rounded-md border border-border p-3">
+                              <div key={t.id} id={`trail-${t.id}`} className={`rounded-md border p-3 ${hl ? "border-primary bg-primary/5" : "border-border"}`}>
                                 <div className="flex flex-wrap items-center justify-between gap-3">
                                   <div className="min-w-0">
                                     <span className="flex items-center gap-1.5 text-sm font-medium">
                                       {t.compliant ? <ShieldCheck className="size-4 text-green-400" /> : <ShieldAlert className="size-4 text-red-400" />}
                                       {t.name}
+                                      {hl && <Chip tone="muted">evidence link{link?.att ? `: ${link.att}` : ""}</Chip>}
                                     </span>
                                     <div className="mt-0.5 font-mono text-xs text-muted-foreground">
                                       {t.git_commit ? `${t.git_commit.slice(0, 10)} ` : ""}{t.git_branch ? `· ${t.git_branch} ` : ""}· {t.attestations} attestations · {(t.created_at || "").replace("T", " ").slice(0, 19)}

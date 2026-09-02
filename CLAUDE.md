@@ -20,8 +20,23 @@ overwritten on the next build.
   use `text-primary` / `border-border` / `bg-card` / `text-muted-foreground`.
   Light+dark via next-themes.
 - **Next 16 has breaking changes — read `portal/AGENTS.md` first.**
-- Local install needs `NODE_ENV=development npm ci --include=dev`; a prod
-  `NODE_ENV` silently omits devDependencies and the build then fails confusingly.
+- Local build is two commands with **different** `NODE_ENV`, and getting this
+  wrong wastes an afternoon in both directions:
+
+  ```bash
+  cd portal
+  NODE_ENV=development npm ci --include=dev   # install: prod NODE_ENV silently omits devDeps
+  unset NODE_ENV && npm run build             # build: NODE_ENV=development breaks it
+  ```
+
+  A prod `NODE_ENV` at install time omits devDependencies (`@tailwindcss/postcss`,
+  `typescript`, …) and `npm` still says "up to date". But leaving
+  `NODE_ENV=development` set for the build fails every page's prerender with
+  `Cannot read properties of null (reading 'useContext')` from next-themes
+  against Next 16's vendored SSR React — and the error names whichever page it
+  reached first, so it reads like that one page is broken. It is not; the
+  variable is. `Dockerfile.server` runs a plain `npm run build`, which is why CI
+  never sees this.
 
 ### Do NOT add Go-served `go:embed` HTML pages
 
