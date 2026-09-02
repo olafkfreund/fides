@@ -15,9 +15,20 @@
 -- The DB role the app connects as must NOT be a superuser or have BYPASSRLS,
 -- or these policies are ignored. Create a least-privilege application role:
 --
---   CREATE ROLE fides_app LOGIN PASSWORD '...';
+--   CREATE ROLE fides_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
 --   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO fides_app;
 --   GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO fides_app;
+--   GRANT CREATE, USAGE ON SCHEMA public TO fides_app;
+--   GRANT <table owner> TO fides_app;
+--
+-- The last two grants are not optional, because the serving role is also the
+-- role that applies this file on boot: CREATE FUNCTION below needs CREATE on
+-- the schema, and ALTER TABLE ... ENABLE ROW LEVEL SECURITY needs ownership of
+-- every table. Without them the server dies with "permission denied for schema
+-- public", then with "must be owner of table tenant_auth_configs" -- so an
+-- operator following an earlier version of this recipe hit one fatal error,
+-- fixed it as instructed, and hit the next. charts/fides/templates/
+-- sql-configmap.yaml has always had all four; only this comment was short.
 
 -- Helper: read the current tenant from the session GUC as a uuid.
 CREATE OR REPLACE FUNCTION fides_current_org() RETURNS uuid
