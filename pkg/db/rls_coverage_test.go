@@ -30,17 +30,12 @@ import (
 // say tenant isolation is on by default, and that claim should not be broader
 // than the enforcement.
 //
-// uncoveredOrgTables only shrinks. A new org_id table belongs in schema-rls.sql,
-// not here.
-var uncoveredOrgTables = []string{
-	"artifact_vulnerabilities",
-	"control_exceptions",
-	"sbom_components",
-	"service_owners",
-	"trail_anchors",
-	"training_records",
-	"vex_statements",
-}
+// uncoveredOrgTables only shrinks, and it is now empty: every org-scoped table
+// either carries a policy or is listed in rlsExcludedByDesign below. It stays
+// here so the check can be introduced again without a flag day if a future
+// migration lands a batch of tables at once -- but a new org_id table belongs in
+// schema-rls.sql, not in this list.
+var uncoveredOrgTables []string
 
 // rlsExcludedByDesign must NEVER get a tenant_isolation policy. These are not
 // backlog -- giving them one is an outage, and this list asserts their absence
