@@ -421,10 +421,10 @@ func TestDeliverArtifactWritesImageID(t *testing.T) {
 
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet:
+		switch r.Method {
+		case http.MethodGet:
 			w.Write([]byte(`{"result":[]}`))
-		case r.Method == http.MethodPost:
+		case http.MethodPost:
 			b, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(b, &body)
 			w.Write([]byte(`{"result":{"sys_id":"new-ci"}}`))
