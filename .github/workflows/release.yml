@@ -41,11 +41,12 @@ jobs:
           version="${GITHUB_REF_NAME}"
           dist="fides_${version}_${GOOS}_${GOARCH}"
           mkdir -p "$dist"
+          ldflags="-s -w -X fides/pkg/version.Version=${version}"
           # Same binary names as the flake and .gitignore convention.
-          go build -trimpath -ldflags '-s -w' -o "$dist/fides-server"     ./cmd/server
-          go build -trimpath -ldflags '-s -w' -o "$dist/fides"            ./cmd/cli
-          go build -trimpath -ldflags '-s -w' -o "$dist/fides-mcp"        ./cmd/mcp
-          go build -trimpath -ldflags '-s -w' -o "$dist/fides-mcp-sensor" ./cmd/mcp-sensor
+          go build -trimpath -ldflags "$ldflags" -o "$dist/fides-server"     ./cmd/server
+          go build -trimpath -ldflags "$ldflags" -o "$dist/fides"            ./cmd/cli
+          go build -trimpath -ldflags "$ldflags" -o "$dist/fides-mcp"        ./cmd/mcp
+          go build -trimpath -ldflags "$ldflags" -o "$dist/fides-mcp-sensor" ./cmd/mcp-sensor
           tar -czf "${dist}.tar.gz" "$dist"
           sha256sum "${dist}.tar.gz" > "${dist}.tar.gz.sha256"
 

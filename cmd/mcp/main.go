@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"fides/pkg/version"
 )
 
 // httpClient enforces a request timeout so a hung Fides server cannot block the
@@ -130,7 +132,7 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 		var res InitializeResult
 		res.ProtocolVersion = "2024-11-05"
 		res.ServerInfo.Name = "fides-mcp"
-		res.ServerInfo.Version = "1.0.0"
+		res.ServerInfo.Version = version.String()
 		sendResponse(req.Id, res)
 
 	case "notifications/initialized":

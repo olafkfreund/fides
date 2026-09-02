@@ -39,7 +39,7 @@
           ];
 
           env.CGO_ENABLED = 0;
-          ldflags = [ "-s" "-w" ];
+          ldflags = [ "-s" "-w" "-X" "fides/pkg/version.Version=${version}" ];
 
           postInstall = ''
             mv "$out/bin/server"     "$out/bin/fides-server"

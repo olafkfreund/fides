@@ -259,7 +259,12 @@ jobs:
           ECR_REPOSITORY: fides-server
         run: |
           # Tag by commit SHA (immutable, reproducible) and also move :latest.
+          # FIDES_VERSION must be passed explicitly: .dockerignore excludes .git,
+          # so the binaries' build-info fallback finds no revision and they would
+          # report "dev" on the cluster. The commit is the version here -- it
+          # matches the :<sha> tag, so a running server names its own image.
           docker build -f Dockerfile.server \
+            --build-arg FIDES_VERSION=${{ github.sha }} \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
 

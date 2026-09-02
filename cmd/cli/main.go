@@ -20,6 +20,7 @@ import (
 	"fides/pkg/cliprogress"
 	"fides/pkg/crypto"
 	"fides/pkg/exitcode"
+	"fides/pkg/version"
 )
 
 // httpClient is shared across CLI requests and enforces an overall timeout so a
@@ -157,6 +158,8 @@ func main() {
 			fmt.Println("Usage: fides env <create|list|diff|verify|archive|unarchive> ...")
 			os.Exit(1)
 		}
+	case "version", "--version", "-v":
+		fmt.Println("fides", version.String())
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -209,6 +212,7 @@ func printUsage() {
 	fmt.Println("  dashboard        Interactive terminal dashboard of live server stats (TUI)")
 	fmt.Println("  sbom diff        Diff two local SBOM files (added/removed/changed components) [--json]")
 	fmt.Println("  vuln diff        Diff two scan reports; gate on NEW CVEs (--format trivy|snyk|sarif) [--fail-on-new]")
+	fmt.Println("  version          Print the fides CLI version")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
