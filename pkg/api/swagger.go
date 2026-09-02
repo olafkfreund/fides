@@ -1584,6 +1584,52 @@ const SwaggerJSON = `{
         ]
       }
     },
+    "/evidence/flows/{flow}/trails/{trail}": {
+      "get": {
+        "tags": [
+          "Flows"
+        ],
+        "summary": "Resolve Evidence Link",
+        "description": "Resolves a flow and trail — each given by name or UUID; a trail also resolves by git commit SHA (newest match wins) — to a 302 redirect at the portal deep link /flows/?flow=<uuid>&trail=<uuid>. An attestation_type query parameter is forwarded unvalidated. This is the canonical, stable URL shape for evidence links written into external systems such as ServiceNow.",
+        "responses": {
+          "302": {
+            "description": "Redirect to the portal trail view"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "No matching flow/trail in the caller's organization"
+          }
+        },
+        "parameters": [
+          {
+            "name": "flow",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "trail",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "attestation_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/flows/{id}/artifacts": {
       "get": {
         "tags": [

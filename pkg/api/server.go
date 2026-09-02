@@ -78,6 +78,10 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
 	mux.HandleFunc("GET /api/v1/flows/{id}/trails", s.handleListFlowTrails)
 	mux.HandleFunc("GET /api/v1/flows/{id}/artifacts", s.handleListFlowArtifacts)
+	// Canonical evidence deep link (name or UUID) -> portal redirect. Must stay
+	// under /api/v1/: isPublicPath treats everything else as public, and an
+	// unauthenticated resolver would be a trail-enumeration surface.
+	mux.HandleFunc("GET /api/v1/evidence/flows/{flow}/trails/{trail}", s.handleEvidenceLink)
 
 	// Trail API
 	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
@@ -330,6 +334,11 @@ func (s *Server) Routes() http.Handler {
 
 	// Static Web Portal Interface
 	fs := http.FileServer(http.Dir("./web"))
+	// Rescue for the evidence URLs already written into ServiceNow as immutable
+	// audit records (see evidence_link.go). More specific than "GET /", so it
+	// wins under ServeMux precedence while /flows/ (the portal page) stays with
+	// the FileServer.
+	mux.HandleFunc("GET /flows/{flow}/trails/{trail}", handleLegacyEvidenceLink)
 	mux.Handle("GET /", fs)
 
 	return securityHeaders(limitBody(s.authMiddleware(telemetry.Middleware(mux))))

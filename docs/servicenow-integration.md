@@ -183,6 +183,32 @@ guide — live under [`servicenow/`](servicenow/README.md) (epic #216):
 - [`servicenow/now-assist-grounding.md`](servicenow/now-assist-grounding.md)
   — ground Now Assist change-risk predictions on signed Fides evidence (#233).
 
+## 10. Evidence URLs for audit records
+
+External systems — ServiceNow evidence payloads, change-request fields, audit
+exports — need a URL for a trail that still resolves years later. This is the
+one to record:
+
+```
+GET https://<fides>/api/v1/evidence/flows/{flow}/trails/{trail}
+```
+
+- `{flow}` and `{trail}` each accept a **name or a UUID** (a trail named by its
+  commit SHA resolves by that SHA too).
+- `?attestation_type=<type>` is optional and passed through to the portal,
+  which shows it as context on the landed trail.
+- Responds **302** to the portal's flow/trail view. Requires authentication
+  (the browser's portal session, or a bearer token). **404** when the trail
+  does not exist *or* is not visible to your tenant — the two are deliberately
+  indistinguishable.
+- The URL shape is **stable**. It is safe to write into permanent audit
+  records; do not construct portal-internal URLs by hand instead.
+
+The legacy shape some systems recorded before this endpoint existed,
+`https://<fides>/flows/{flow}/trails/{sha}`, also resolves — it redirects to
+the same portal view — so evidence links already written into ServiceNow keep
+working. New records should use the canonical `/api/v1/evidence/...` form.
+
 ## Testing
 
 - Per-component behaviour (REST client, ITOM/CMDB sinks, change normalization)
