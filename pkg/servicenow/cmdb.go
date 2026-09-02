@@ -295,8 +295,13 @@ func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
 		return err
 	}
 
-	// Idempotent: skip if an image CI for this digest already exists.
-	if res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", "short_descriptionLIKEsha256:"+sha, "sys_id"); err == nil && res != nil && len(res.Result) > 0 {
+	// Idempotent: skip if an image CI for this digest already exists. Uses the
+	// same OR query as the resolver, which matters more than it looks -- when it
+	// checked short_description alone it could not see a CI the snapshot path had
+	// already created via IRE (that writes image_id and no short_description), so
+	// with both FIDES_SNOW_CMDB_ENABLED and artifact CIs on, Fides created two CIs
+	// for one digest and then resolved only one of them.
+	if res, err := client.QueryTable(ctx, "cmdb_ci_docker_image", imageDigestQuery(sha), "sys_id"); err == nil && res != nil && len(res.Result) > 0 {
 		return nil
 	}
 
@@ -313,8 +318,16 @@ func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
 	// value as empty and returns 201, so a hardcoded "fides" produced CIs that
 	// were created successfully and then attributable to nobody. Use the same
 	// configured source the IRE path uses.
+	//
+	// image_id as well as short_description, not instead of it. image_id is the
+	// class's IRE identify attribute, so setting it means (a) the change gate can
+	// find this CI by an indexed exact match, and (b) ServiceNow's own reconcile
+	// merges a later snapshot onto this row rather than creating a second one.
+	// short_description stays because humans read it and because CIs written
+	// before this carry the digest only there.
 	_, err = client.CreateRecord(ctx, "cmdb_ci_docker_image", map[string]any{
 		"name":               fmt.Sprintf("%s@sha256:%s", name, short),
+		"image_id":           "sha256:" + sha,
 		"short_description":  fmt.Sprintf("%s binary digest sha256:%s", name, sha),
 		"discovery_source":   client.cfg.DataSource,
 		"operational_status": "1",
@@ -371,6 +384,23 @@ func AnchorDeploymentAttestation(ctx context.Context, client *Client, att Deploy
 	if err != nil {
 		return nil, fmt.Errorf("servicenow: marshal deployment attestation: %w", err)
 	}
+
+	// The deterministic file name above only made a re-delivery *recognisable*;
+	// nothing acted on it, so every redelivery added another identical
+	// attachment and another comments update. Event delivery is at-least-once by
+	// design (see pkg/api/servicenow_deployment_anchor.go), so that is not an
+	// edge case -- it is the normal path on a retry.
+	//
+	// Fail open: if the existence check itself errors (the integration user may
+	// have no read ACL on sys_attachment), attach anyway. A duplicate attachment
+	// is untidy; a deployment with no evidence attached is a hole in the audit
+	// trail, and only one of those two is worth risking.
+	if existing, qerr := client.QueryTable(ctx, "sys_attachment",
+		"table_sys_id="+att.CISysID+"^file_name="+att.fileName(), "sys_id"); qerr == nil &&
+		existing != nil && len(existing.Result) > 0 {
+		return existing.Result[0], nil
+	}
+
 	result, err := client.AttachFile(ctx, "cmdb_ci", att.CISysID, att.fileName(), "application/json", body)
 	if err != nil {
 		return nil, err
