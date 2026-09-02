@@ -36,8 +36,6 @@ export default function Flows() {
   // redirect routes. flow/trail may each be a UUID or a name (legacy links
   // carry the flow name and the commit SHA), so we match against both.
   const [link, setLink] = useState<{ flow: string; trail: string; att: string } | null>(null);
-  const [linkNotice, setLinkNotice] = useState("");
-  const [highlight, setHighlight] = useState<string | null>(null);
 
   const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
   useEffect(() => { loadFlows(); }, []);
@@ -54,6 +52,9 @@ export default function Flows() {
     const p = new URLSearchParams(window.location.search);
     const flow = p.get("flow");
     const trail = p.get("trail");
+    // window is only readable after mount in a statically exported page — same
+    // shape as the next-themes hydration guard in Shell.tsx.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (flow || trail) setLink({ flow: flow || "", trail: trail || "", att: (p.get("attestation_type") || "").slice(0, 64) });
   }, []);
 
@@ -74,39 +75,49 @@ export default function Flows() {
     }
   };
 
-  // Step 1 of the evidence link: once flows are loaded, find the linked flow
-  // by id OR name and expand it via the same toggle() the click path uses
-  // (which also loads its trails).
-  useEffect(() => {
-    if (!link || flows.length === 0) return;
-    const f = flows.find((x) => x.id === link.flow || x.name === link.flow);
-    if (!f) {
-      setLinkNotice("Evidence link: flow not found, or not visible to your account.");
-      return;
-    }
-    if (expanded !== f.id) toggle(f.id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [link, flows]);
+  // The evidence link resolves by DERIVING what it points at during render,
+  // rather than mirroring it into state from an effect. Effects below do only
+  // the two things that are genuinely side effects: expanding the flow and
+  // scrolling. flow/trail each match by id OR name, because the canonical
+  // resolver sends UUIDs and the legacy rescue route sends a flow name and a
+  // commit SHA.
+  const linkedFlow = link ? flows.find((x) => x.id === link.flow || x.name === link.flow) : undefined;
+  const linkedTrails = linkedFlow ? trailsByFlow[linkedFlow.id] : undefined;
+  const linkedTrail =
+    link && link.trail && linkedTrails
+      ? linkedTrails.find((x) => x.id === link.trail || x.name === link.trail || x.git_commit === link.trail) ||
+        (link.trail.length >= 7 ? linkedTrails.find((x) => x.git_commit?.startsWith(link.trail)) : undefined)
+      : undefined;
+  const highlight = linkedTrail?.id ?? null;
 
-  // Step 2: once that flow's trails arrive, find the linked trail by id, name
-  // or git commit (legacy links use the full commit SHA) and highlight it.
+  // Only a miss is worth saying out loud, and only once we know it is a miss:
+  // before the trails arrive, "not found" would be wrong rather than merely
+  // premature. An auditor following a stale link gets a notice, not a blank page.
+  let linkNotice = "";
+  if (link && flows.length > 0 && !linkedFlow) {
+    linkNotice = "Evidence link: flow not found, or not visible to your account.";
+  } else if (link && link.trail && linkedTrails && !linkedTrail) {
+    linkNotice = "Evidence link: trail not found, or not visible to your account.";
+  }
+
+  // Expand the linked flow through the same toggle() the click path uses, so
+  // trail loading stays in one place.
   useEffect(() => {
-    if (!link || !link.trail) return;
-    const f = flows.find((x) => x.id === link.flow || x.name === link.flow);
-    if (!f) return;
-    const trails = trailsByFlow[f.id];
-    if (!trails) return;
-    const t =
-      trails.find((x) => x.id === link.trail || x.name === link.trail || x.git_commit === link.trail) ||
-      (link.trail.length >= 7 ? trails.find((x) => x.git_commit?.startsWith(link.trail)) : undefined);
-    if (!t) {
-      setLinkNotice("Evidence link: trail not found, or not visible to your account.");
-      return;
-    }
-    setLinkNotice("");
-    setHighlight(t.id);
-    setTimeout(() => document.getElementById(`trail-${t.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
-  }, [link, flows, trailsByFlow]);
+    // toggle() is the click path's own expand+load; reusing it is the point, and
+    // inlining its body here to satisfy the rule would be the worse trade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (linkedFlow && expanded !== linkedFlow.id) toggle(linkedFlow.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedFlow]);
+
+  useEffect(() => {
+    if (!highlight) return;
+    const id = setTimeout(
+      () => document.getElementById(`trail-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      100,
+    );
+    return () => clearTimeout(id);
+  }, [highlight]);
 
   const loadArtifacts = async (id: string) => {
     if (artifactsByFlow[id]) return;
