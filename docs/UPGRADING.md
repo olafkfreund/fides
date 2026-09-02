@@ -7,7 +7,7 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
-## Unreleased
+## v0.8.0
 
 ### The TSA endpoint must be one you configured
 
@@ -38,6 +38,21 @@ It also matters more than a dial guard here. The guard stops a request landing
 on an internal address however the name resolves; it has nothing to say about a
 caller naming a host they control on the public internet, and a timestamp
 request carries a trail's chain-head hash.
+
+#### An internal TSA on a private address no longer works
+
+The dial guard mentioned above is enforced at connection time and has **no
+opt-out**: loopback, RFC1918 private ranges, link-local (which covers the cloud
+metadata endpoint) and the unspecified address are all refused, whatever the
+hostname resolves to. Carrier-grade NAT (`100.64.0.0/10`) is deliberately not
+blocked, so a TSA reached over a tailnet still works.
+
+If you run your own RFC3161 timestamp authority on an internal address —
+`https://tsa.internal` resolving to `10.0.x.x`, say — **anchoring stops
+working on this version and there is no flag to re-enable it.** Either publish
+the TSA on a routable address or reach it over a tailnet. Trails still record
+and verify without an anchor; `verify-chain` reports the anchor as absent
+rather than failing.
 
 ### Tenant isolation (RLS) is on by default
 
@@ -98,10 +113,19 @@ To make it real, connect as a least-privilege role — the recipe is commented a
 the top of `schema-rls.sql`:
 
 ```sql
-CREATE ROLE fides_app LOGIN PASSWORD '…';
+CREATE ROLE fides_app LOGIN PASSWORD '…' NOSUPERUSER NOBYPASSRLS;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO fides_app;
 GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO fides_app;
+GRANT CREATE, USAGE ON SCHEMA public TO fides_app;
+GRANT <table owner> TO fides_app;   -- e.g. GRANT postgres TO fides_app
 ```
+
+The last two grants are the ones that are easy to leave out and impossible to
+skip. This same role applies the policies on every boot, so it needs `CREATE` on
+the schema (for the helper function) and ownership of every table (for `ALTER
+TABLE … ENABLE ROW LEVEL SECURITY`). Grant only the first three and the server
+still refuses to start — with `permission denied for schema public`, and then,
+once that is fixed, `must be owner of table tenant_auth_configs`.
 
 The Helm chart already does this — its seed job creates `fides_app` and applies
 the policies, and `rls.enabled` has always defaulted to `true`. `docker-compose`
@@ -117,9 +141,23 @@ match on a tenant the application sets per request. A pod still running with RLS
 matches nothing: every tenant query returns no rows, and it will not report an
 error while doing it.
 
-It only bites where RLS is effective — a non-superuser role, which today means
-the Helm chart. Where the connection is a superuser, nothing changes because
-nothing was ever enforced.
+It only bites where RLS is effective — that is, wherever the connection is not a
+superuser and does not hold `BYPASSRLS`. Where the connection is a superuser,
+nothing changes, because nothing was ever enforced.
+
+Do not read "not a superuser" as "only the Helm chart". On managed Postgres —
+RDS, Cloud SQL, Azure Database — the master user you were most likely already
+using is typically *not* a superuser and *does* own the tables. That is exactly
+the shape that passes the startup check and applies the policies, so such a
+deployment can go from no enforcement to full enforcement on its first boot on
+this version, without anyone choosing to turn anything on. If you are on managed
+Postgres, check before upgrading:
+
+```sql
+SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user;
+```
+
+Two `f`s means this section applies to you.
 
 If your deployment has a maintenance window, take it. Otherwise expect a window,
 between the first new pod starting and the last old pod stopping, in which the
