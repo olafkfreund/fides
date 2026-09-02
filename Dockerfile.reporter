@@ -15,7 +15,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-w -s" -o fides ./cmd/
 # run with --ignore-unfixed, so they would silently drop it. A green scan on an
 # EOL base means "nothing fixable", not "nothing wrong" (#399).
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates
+# apk upgrade before apk add, not just apk add. The base image tag is rebuilt on
+# alpine's schedule, not on the day a fix lands, so `alpine:3.23` can ship a
+# package the v3.23 repo already has a patch for -- which is exactly what
+# CVE-2026-14456 was: libcrypto3 3.5.7-r0 installed, 3.5.8-r0 published. Since
+# the Trivy gate blocks on fixable HIGH/CRITICAL, taking the fixes that exist at
+# build time is the difference between a green gate and a blocked deploy waiting
+# on someone else's release cadence.
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 # NO kubectl. It used to be baked in here for exactly one call
 # (`kubectl get pods -o json`); the CLI now reads the API server directly with
 # net/http and the mounted ServiceAccount token (cmd/cli/k8s.go), so a ~50MB
