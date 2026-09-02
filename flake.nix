@@ -13,7 +13,7 @@
       # cosmetic any more: it is the -X value for pkg/version, so a stale number
       # here means a nix-built binary reports a version that was never released.
       # It sat at 0.1.0 through v0.7.0 precisely because nothing depended on it.
-      version = "0.8.0";
+      version = "0.8.1";
 
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
