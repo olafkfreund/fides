@@ -7,6 +7,35 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## v0.8.2
+
+### Seven more tables came under row-level security
+
+`artifact_vulnerabilities`, `control_exceptions`, `sbom_components`,
+`service_owners`, `trail_anchors`, `training_records` and `vex_statements` now
+carry a `tenant_isolation` policy. They always had an `org_id` and were always
+scoped in-query; what changed is that the database enforces it too. A gate now
+fails the build if a future table with `org_id` arrives without one
+(`TestEveryOrgScopedTableHasAnRLSPolicyIntegration`).
+
+**Nothing to do if `FIDES_RLS_ENABLED=false`, or if you connect as a
+superuser** — no policy is enforced in either case.
+
+**Where RLS is effective**, this is the same rolling-update shape as v0.8.0, and
+smaller: a pod that reads one of those seven on a connection with no tenant set
+now sees zero rows rather than all of them. Every read of them in Fides is a
+request-path query that sets the tenant, so this only bites something outside
+Fides reading those tables on a pooled connection — a reporting job, a BI tool,
+a hand-written script. If you have one, give it a superuser role or set
+`app.current_org` before it queries.
+
+Three tables are deliberately **not** covered and must never be:
+`sessions`, `service_accounts` and `integration_events`. Each is read before the
+tenant is known — a session is looked up *to discover* its org — so a policy
+there hides every row and breaks login, API keys, or event delivery
+respectively. The gate above asserts their absence rather than tolerating it,
+because that mistake has been made here before.
+
 ## v0.8.0
 
 ### The TSA endpoint must be one you configured
