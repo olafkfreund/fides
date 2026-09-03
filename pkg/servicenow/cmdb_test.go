@@ -531,3 +531,97 @@ func artifactSink(srv *httptest.Server) *CMDBSink {
 	}
 	return sink
 }
+
+// A published binary is not a container image and must not be filed as one.
+//
+// This is the mutation kill-set for the class switch in deliverArtifact. It
+// fails if the binary branch is deleted (nothing is created), and it fails if a
+// binary is misrouted into the docker case (a cmdb_ci_docker_image request
+// appears). Together with TestDeliverArtifactWritesImageID -- which fails if
+// the new branch swallows "docker" -- the shared switch is pinned in both
+// directions.
+//
+// Before the branch existed a binary was SILENTLY DROPPED: the switch fell
+// through to `return nil` and the event was delivered "successfully" with no CI
+// created and nothing logged, so a change anchored to nothing and looked fine.
+func TestDeliverArtifactBinaryTakesSoftwarePackageClass(t *testing.T) {
+	const sha = "f15266a2bdeb2befc7c2dbb92cc7eaa56111d19bd5df6fc42706ddb8d214b723"
+
+	var createdPaths []string
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if strings.Contains(r.URL.Path, "cmdb_ci_docker_image") {
+				t.Errorf("a binary must never be looked up as a container image; got GET %s", r.URL.Path)
+			}
+			w.Write([]byte(`{"result":[]}`))
+		case http.MethodPost:
+			createdPaths = append(createdPaths, r.URL.Path)
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			w.Write([]byte(`{"result":{"sys_id":"new-spkg"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	if err := artifactSink(srv).deliverArtifact(context.Background(), events.Event{
+		OrgID: uuid.New(), Type: ArtifactEventType,
+		Payload: []byte(`{"sha256":"` + sha + `","name":"arc-binary-demo-1.0.0.jar","type":"binary"}`),
+	}); err != nil {
+		t.Fatalf("deliverArtifact: %v", err)
+	}
+
+	if len(createdPaths) == 0 {
+		t.Fatal("a binary artifact created no CI at all — the silent-drop regression")
+	}
+	for _, p := range createdPaths {
+		if strings.Contains(p, "cmdb_ci_docker_image") {
+			t.Errorf("binary was filed as a container image: POST %s", p)
+		}
+		if !strings.Contains(p, binaryCIClass) {
+			t.Errorf("POST %s is not the binary CI class %q", p, binaryCIClass)
+		}
+	}
+
+	// The digest must be in short_description in FULL. That is the convention
+	// every other digest-bearing CI in this estate uses, and binaryDigestQuery
+	// LIKE-matches on it -- a truncated display digest would make the dedupe
+	// silently miss and mint a second CI on every redelivery.
+	if got, _ := body["short_description"].(string); !strings.Contains(got, "sha256:"+sha) {
+		t.Errorf("short_description must carry the full digest; got %q", got)
+	}
+	if got, _ := body["name"].(string); got == "" {
+		t.Error("binary CI has no name")
+	}
+}
+
+// An artifact reported with no type is still an image: the CLI defaults to
+// --type docker, so treating "" as anything else would retroactively
+// reclassify every artifact ever reported without one.
+func TestDeliverArtifactEmptyTypeStaysAnImage(t *testing.T) {
+	const sha = "bb0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f"
+
+	var createdPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			w.Write([]byte(`{"result":[]}`))
+		case http.MethodPost:
+			createdPaths = append(createdPaths, r.URL.Path)
+			w.Write([]byte(`{"result":{"sys_id":"new-ci"}}`))
+		}
+	}))
+	defer srv.Close()
+
+	if err := artifactSink(srv).deliverArtifact(context.Background(), events.Event{
+		OrgID: uuid.New(), Type: ArtifactEventType,
+		Payload: []byte(`{"sha256":"` + sha + `","name":"payments"}`),
+	}); err != nil {
+		t.Fatalf("deliverArtifact: %v", err)
+	}
+
+	if len(createdPaths) != 1 || !strings.Contains(createdPaths[0], "cmdb_ci_docker_image") {
+		t.Errorf("empty type must still create a docker image CI; got %v", createdPaths)
+	}
+}
