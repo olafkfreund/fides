@@ -282,12 +282,35 @@ func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
 	if sha == "" {
 		return nil
 	}
-	// Only container images anchor a change. An empty type is treated as an
-	// image (the CLI's default `--type docker`); everything else is skipped.
+	// Which CI class this artifact becomes.
+	//
+	// An empty type is still treated as an image, because the CLI's default is
+	// `--type docker` and changing that here would retroactively reclassify
+	// every artifact reported without an explicit type.
+	//
+	// Binaries are NOT container images and must not be filed as one. Before
+	// this branch existed they were silently dropped: the switch fell through to
+	// `return nil`, the event was delivered "successfully", and a published jar
+	// simply had no CI -- so a change anchored to nothing with nothing to say it
+	// had failed.
+	//
+	// cmdb_ci_spkg (Software Package) is the target class. The obvious
+	// alternative, cmdb_sw_component_install, is Discovery/SAM-owned in the CMDB
+	// Data Foundation and WRITE-GUARDED: the Table API returns 403 even for an
+	// active admin with admin_overrides on every ACL, and IRE refuses it with
+	// IDENTIFICATION_RULE_MISSING. Do not route here.
+	var class string
 	switch p.Type {
 	case "", "docker", "container", "image":
+		class = "cmdb_ci_docker_image"
+	case "binary", "tarball", "jar", "file":
+		class = binaryCIClass
 	default:
 		return nil
+	}
+
+	if class == binaryCIClass {
+		return s.deliverBinaryArtifact(ctx, cfg, p, sha)
 	}
 
 	client, err := s.newClient(cfg)
@@ -328,6 +351,69 @@ func (s *CMDBSink) deliverArtifact(ctx context.Context, ev events.Event) error {
 	_, err = client.CreateRecord(ctx, "cmdb_ci_docker_image", map[string]any{
 		"name":               fmt.Sprintf("%s@sha256:%s", name, short),
 		"image_id":           "sha256:" + sha,
+		"short_description":  fmt.Sprintf("%s binary digest sha256:%s", name, sha),
+		"discovery_source":   client.cfg.DataSource,
+		"operational_status": "1",
+	})
+	return err
+}
+
+// binaryCIClass is where a non-container artifact -- a jar, a tarball, a wheel
+// -- lands in the CMDB.
+//
+// cmdb_ci_spkg (Software Package) rather than cmdb_sw_component_install, which
+// is the instinctive choice and is unusable: it is Discovery/SAM-owned in the
+// CMDB Data Foundation and write-guarded, returning 403 to the Table API even
+// for an active admin with admin_overrides set on every ACL, and refusing IRE
+// with IDENTIFICATION_RULE_MISSING.
+const binaryCIClass = "cmdb_ci_spkg"
+
+// binaryDigestQuery finds a binary CI by digest.
+//
+// Unlike cmdb_ci_docker_image there is no image_id equivalent on this class to
+// match exactly, so this is a single LIKE over short_description. That is the
+// same convention every other digest-bearing CI in this estate uses, so a
+// binary CI stays legible to anything already reading short_description -- and
+// it is why the digest is written there in full rather than truncated for
+// display.
+func binaryDigestQuery(hex string) string {
+	return "short_descriptionLIKEsha256:" + hex
+}
+
+// deliverBinaryArtifact upserts a Software Package CI for a published binary.
+//
+// Kept separate from the image path rather than generalised into it: the two
+// classes have different identify attributes and different dedupe queries, and
+// folding them together would mean every future change to one had to be proved
+// harmless to the other.
+func (s *CMDBSink) deliverBinaryArtifact(ctx context.Context, cfg Config, p artifactPayload, sha string) error {
+	client, err := s.newClient(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Idempotent, same reasoning as the image path: event delivery is
+	// at-least-once by design, so a re-delivery must not mint a second CI for
+	// one digest.
+	if res, err := client.QueryTable(ctx, binaryCIClass, binaryDigestQuery(sha), "sys_id"); err == nil && res != nil && len(res.Result) > 0 {
+		return nil
+	}
+
+	name := p.Name
+	if name == "" {
+		name = "binary"
+	}
+	short := sha
+	if len(short) > 12 {
+		short = short[:12]
+	}
+
+	// discovery_source must be a valid choice of cmdb_ci.discovery_source. The
+	// Table API stores an unknown value as empty and still returns 201, so a
+	// hardcoded string produces CIs that were created successfully and are then
+	// attributable to nobody. Use the configured source, as the image path does.
+	_, err = client.CreateRecord(ctx, binaryCIClass, map[string]any{
+		"name":               fmt.Sprintf("%s@sha256:%s", name, short),
 		"short_description":  fmt.Sprintf("%s binary digest sha256:%s", name, sha),
 		"discovery_source":   client.cfg.DataSource,
 		"operational_status": "1",
