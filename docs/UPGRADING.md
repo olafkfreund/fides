@@ -7,6 +7,44 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## v0.8.3
+
+### A published binary now creates a CMDB CI, where it previously created nothing
+
+An artifact reported with `--type binary` (or `tarball`, `jar`, `file`) was
+silently dropped by the ServiceNow CMDB sink. The class switch matched only the
+container types and fell through to a bare `return nil`, so the event was
+recorded as delivered, no CI was created, and nothing was logged. A change could
+anchor to nothing while looking entirely healthy.
+
+Those artifacts now become **`cmdb_ci_spkg`** (Software Package) records, with
+the full digest in `short_description` and dedupe by a `LIKE` on it — the same
+convention every other digest-bearing CI here uses. Container images are
+unaffected, and an absent `--type` still means `docker`, so nothing already
+reported is reclassified.
+
+**Nothing to do if you do not run the CMDB sink** (`FIDES_SNOW_CMDB_ENABLED`),
+or if you only ever report container images.
+
+**If you do**, expect new `cmdb_ci_spkg` records to start appearing for
+binaries. Check that the integration user can write that table before upgrading:
+
+```text
+GET /api/now/table/cmdb_ci_spkg?sysparm_limit=1
+```
+
+If writes are denied, the failure is now *visible* rather than silent — the
+event returns an error, retries 8 times with exponential backoff, and is
+dead-lettered with the reason in `integration_events.last_error`. That is the
+intended trade: a dead-lettered event you can find beats a delivery that
+reported success and did nothing.
+
+Note that `cmdb_sw_component_install` is deliberately **not** used, though it is
+the instinctive place to model a published jar. It is Discovery/SAM-owned in the
+CMDB Data Foundation and write-guarded: the Table API returns 403 even for an
+active admin with `admin_overrides` set on every ACL, and IRE refuses it with
+`IDENTIFICATION_RULE_MISSING`.
+
 ## v0.8.2
 
 ### Seven more tables came under row-level security
