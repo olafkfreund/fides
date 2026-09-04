@@ -18,14 +18,20 @@ import (
 
 // Standard in-cluster ServiceAccount mount. Kubernetes projects the token and
 // the API server's CA here in every pod that has a ServiceAccount.
-const (
+// var, not const, solely so a test can point them at a temp directory. Nothing
+// in the program reassigns them. Everything after the token read -- the CA
+// pinning that stops the token reaching a redirected host, the RBAC message
+// that makes a broken Role diagnosable, the read cap -- was unreachable from a
+// test while these were constants, so those #nosec justifications asserted
+// security properties that nothing exercised (#512).
+var (
 	saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- well-known mount path, not a credential
 	saCAPath    = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-
-	// The pod list of a large cluster is big but not unbounded. Cap it so a
-	// hostile or broken API server cannot make the reporter allocate freely.
-	maxPodListBytes = 64 << 20 // 64 MiB
 )
+
+// The pod list of a large cluster is big but not unbounded. Cap it so a
+// hostile or broken API server cannot make the reporter allocate freely.
+const maxPodListBytes = 64 << 20 // 64 MiB
 
 // errNotInCluster means no ServiceAccount was mounted, so this is not running
 // as a pod. Callers fall back to kubectl (which reads a kubeconfig).
@@ -109,7 +115,17 @@ func fetchPodsInCluster(ns string) ([]byte, error) {
 	}
 	token, err := os.ReadFile(saTokenPath)
 	if err != nil {
-		return nil, errNotInCluster
+		// Only an ABSENT token means "not a pod". Any other failure -- a
+		// permission problem, a broken projected volume, an I/O error -- happens
+		// on a pod that IS in a cluster and is misconfigured, and fetchPodsJSON
+		// says so itself: "A mounted ServiceAccount that fails to read is a real
+		// error." Collapsing both into the sentinel made such a pod fall back to
+		// kubectl and report it was not in a cluster, which is indistinguishable
+		// from the truth and is not present in the reporter image anyway.
+		if os.IsNotExist(err) {
+			return nil, errNotInCluster
+		}
+		return nil, fmt.Errorf("read serviceaccount token: %w", err)
 	}
 	caPEM, err := os.ReadFile(saCAPath)
 	if err != nil {
