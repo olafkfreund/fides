@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -355,6 +356,16 @@ func TestHandleAttestEvidenceJUnit(t *testing.T) {
 // runs inside a real git checkout, so it exercises gitOutput for real rather
 // than stubbing it.
 func TestHandleAttestAuthorship(t *testing.T) {
+	// This is the one test here that shells out to git, and handleAttestAuthorship
+	// calls fail() -- os.Exit -- when git errors. That would take the whole
+	// cmd/cli test binary down and mask every other test rather than failing one,
+	// so check git is usable first and skip if it is not. `log -1` and `rev-parse`
+	// both work in CI's depth-1 checkout; this guards the container cases (not a
+	// repo, dubious ownership) where the failure would otherwise be silent.
+	if err := exec.Command("git", "rev-parse", "HEAD").Run(); err != nil {
+		t.Skipf("git unusable here, and this handler exits on git failure: %v", err)
+	}
+
 	srv, got := recordingServer(t, `{"id":"att-2"}`)
 	handleAttestAuthorship(cfg(srv), []string{"--trail", "t1", "--reviewer", "alice"})
 
