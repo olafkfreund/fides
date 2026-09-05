@@ -170,9 +170,17 @@ func fetchPodsInCluster(ns string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPodListBytes))
+	// Read one byte past the cap so exceeding it is detectable. Reading exactly
+	// maxPodListBytes truncates in silence: the caller gets a valid-length but
+	// syntactically broken JSON prefix and err == nil, then fails with "Failed
+	// to parse pod list json" (main.go) -- a size limit misdiagnosed as a
+	// corrupt API server, on the one cluster big enough to reach it.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPodListBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read pod list: %w", err)
+	}
+	if len(body) > maxPodListBytes {
+		return nil, fmt.Errorf("pod list exceeds the %d MiB cap; narrow the query with --namespace", maxPodListBytes>>20)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Surface the API server's own message: an RBAC denial names the verb

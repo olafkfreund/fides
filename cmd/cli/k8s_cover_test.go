@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,16 @@ func TestIsSHA256Hex(t *testing.T) {
 func TestFetchPodsInClusterHostSetButNoToken(t *testing.T) {
 	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
 	t.Setenv("KUBERNETES_SERVICE_PORT", "443")
+
+	// Point at a path that certainly does not exist rather than relying on the
+	// real mount being absent. Run this suite inside a pod -- an ARC
+	// self-hosted runner, the k3d dev container -- and the token IS there, so
+	// this would dial 10.0.0.1:443 and block on the client's 60s timeout before
+	// failing. That non-hermeticity is what #512 was about; saTokenPath is a
+	// var now, so there is no reason left to depend on the host.
+	orig := saTokenPath
+	saTokenPath = filepath.Join(t.TempDir(), "absent-token")
+	defer func() { saTokenPath = orig }()
 
 	_, err := fetchPodsInCluster("")
 	if !errors.Is(err, errNotInCluster) {

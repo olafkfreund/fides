@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,18 +44,25 @@ func k8sFakeServiceAccount(t *testing.T, h http.HandlerFunc) *httptest.Server {
 		t.Fatalf("write token: %v", err)
 	}
 
-	host, port, ok := strings.Cut(strings.TrimPrefix(srv.URL, "https://"), ":")
-	if !ok {
-		t.Fatalf("unexpected test server URL %q", srv.URL)
+	// net.SplitHostPort, not a Cut on the first colon: httptest falls back to
+	// an IPv6 loopback ("https://[::1]:34567") wherever 127.0.0.1 cannot be
+	// bound, and splitting that on the first colon yields host="[" -- so every
+	// test built on this helper would fail inside validAPIHostPort instead of
+	// exercising the path it claims to.
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "https://"))
+	if err != nil {
+		t.Fatalf("unexpected test server URL %q: %v", srv.URL, err)
 	}
 	t.Setenv("KUBERNETES_SERVICE_HOST", host)
 	t.Setenv("KUBERNETES_SERVICE_PORT", port)
 
+	// Restore what was saved rather than re-hardcoding the mount paths: if they
+	// ever change in k8s.go, literals here would quietly rewrite the globals to
+	// stale values for every later test in the package, and the failure would
+	// surface a long way from this line.
+	origToken, origCA := saTokenPath, saCAPath
 	saTokenPath, saCAPath = tokenPath, caPath
-	t.Cleanup(func() {
-		saTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-		saCAPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-	})
+	t.Cleanup(func() { saTokenPath, saCAPath = origToken, origCA })
 	return srv
 }
 
@@ -128,12 +136,16 @@ func TestFetchPodsInClusterSurfacesRBACDenial(t *testing.T) {
 	}
 }
 
-// The response is read through an io.LimitReader so a hostile or broken API
-// server cannot make the reporter allocate freely. Verify the cap is actually
-// applied rather than trusting the constant.
-func TestFetchPodsInClusterCapsTheResponseSize(t *testing.T) {
+// A pod list over the cap must be a NAMED error, not a silent truncation.
+//
+// This test first asserted the truncating behaviour as correct, which locked in
+// a real defect: reading exactly maxPodListBytes hands the caller a
+// valid-length but syntactically broken JSON prefix with err == nil, and
+// main.go then exits 1 with "Failed to parse pod list json" -- a size cap
+// misdiagnosed as a corrupt API server, on the one cluster big enough to reach
+// it. A test that pins the wrong behaviour is worse than no test.
+func TestFetchPodsInClusterRejectsAnOversizeList(t *testing.T) {
 	k8sFakeServiceAccount(t, func(w http.ResponseWriter, _ *http.Request) {
-		// One byte over the cap; only maxPodListBytes may come back.
 		chunk := strings.Repeat("a", 1<<20)
 		for i := 0; i < 64; i++ {
 			_, _ = w.Write([]byte(chunk))
@@ -142,14 +154,33 @@ func TestFetchPodsInClusterCapsTheResponseSize(t *testing.T) {
 	})
 
 	body, err := fetchPodsInCluster("")
+	if err == nil {
+		t.Fatalf("expected an error past the cap, got %d bytes and nil", len(body))
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("error = %v, want it to name the cap rather than surface as broken JSON", err)
+	}
+	if body != nil {
+		t.Errorf("want no body alongside the error, got %d bytes", len(body))
+	}
+}
+
+// A list exactly at the cap is still fine -- the limit is inclusive, and an
+// off-by-one here would reject a legitimate response.
+func TestFetchPodsInClusterAcceptsExactlyTheCap(t *testing.T) {
+	k8sFakeServiceAccount(t, func(w http.ResponseWriter, _ *http.Request) {
+		chunk := strings.Repeat("a", 1<<20)
+		for i := 0; i < 64; i++ {
+			_, _ = w.Write([]byte(chunk))
+		}
+	})
+
+	body, err := fetchPodsInCluster("")
 	if err != nil {
-		t.Fatalf("fetchPodsInCluster: %v", err)
+		t.Fatalf("a response exactly at the cap must be accepted: %v", err)
 	}
 	if len(body) != maxPodListBytes {
-		t.Errorf("read %d bytes, want it capped at %d", len(body), maxPodListBytes)
-	}
-	if strings.HasSuffix(string(body), "OVERFLOW") {
-		t.Error("read past the cap")
+		t.Errorf("read %d bytes, want %d", len(body), maxPodListBytes)
 	}
 }
 
