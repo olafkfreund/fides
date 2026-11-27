@@ -90,7 +90,9 @@ func TestReadOnlyServiceAccountKeyIntegration(t *testing.T) {
 
 	f.denied(t, "POST "+keyRoute, `{"read_only":true}`, admin, http.StatusBadRequest, "read-only keys require a Viewer service account")
 	mustExec(t, f.pool, `UPDATE service_accounts SET role=$1, may_delegate_approvals=true WHERE id=$2`, auth.RoleViewer, f.own["account"])
-	f.denied(t, "POST "+keyRoute, `{"read_only":"true"}`, admin, http.StatusBadRequest, "invalid request")
+	for _, body := range []string{`{"read_only":"true"}`, `{"readOnly":true}`, `{"read_only":true}{}`} {
+		f.denied(t, "POST "+keyRoute, body, admin, http.StatusBadRequest, "invalid request")
+	}
 
 	issue := func(body string, wantScope bool) (routeCredential, string) {
 		t.Helper()
@@ -161,6 +163,10 @@ func TestReadOnlyServiceAccountKeyIntegration(t *testing.T) {
 	if err := f.pool.QueryRow(`SELECT last_used_at IS NOT NULL FROM service_account_keys WHERE id=$1`, legacyID).Scan(&used); err != nil || !used {
 		t.Fatalf("legacy key usage stamp missing: %v", err)
 	}
+	mustExec(t, f.pool, `UPDATE service_accounts SET role=$1 WHERE id=$2`, auth.RoleWriter, f.own["account"])
+	f.denied(t, "GET /api/v1/flows", "", scoped, http.StatusUnauthorized, "invalid credentials")
+	mustExec(t, f.pool, `UPDATE service_accounts SET role=$1 WHERE id=$2`, auth.RoleViewer, f.own["account"])
+
 	serveMutation(t, f.handler, "DELETE "+keyRoute+"/"+scopedID, "", admin, http.StatusOK, "")
 	f.denied(t, "GET /api/v1/flows", "", scoped, http.StatusUnauthorized, "invalid credentials")
 	serveMutation(t, f.handler, "GET /api/v1/flows", "", legacy, http.StatusOK, "")

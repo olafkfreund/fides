@@ -256,12 +256,13 @@ func (s *Server) handleIssueServiceAccountKey(w http.ResponseWriter, r *http.Req
 		ReadOnly     bool   `json:"read_only"`
 	}
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil && err != io.EOF {
 		badRequest(w, err)
 		return
 	}
 	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
-		badRequest(w, err)
+		badRequest(w, errors.New("expected a single JSON object"))
 		return
 	}
 

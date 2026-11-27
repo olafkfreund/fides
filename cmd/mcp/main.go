@@ -127,7 +127,13 @@ func runMCP(args []string) {
 	if err := flags.Parse(args); err != nil {
 		return
 	}
-	if value := os.Getenv("FIDES_MCP_READ_ONLY"); flags.NFlag() == 0 && value != "" {
+	explicitMode := false
+	flags.Visit(func(option *flag.Flag) {
+		if option.Name == "read-only" {
+			explicitMode = true
+		}
+	})
+	if value := os.Getenv("FIDES_MCP_READ_ONLY"); !explicitMode && value != "" {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			log.Fatal("FIDES_MCP_READ_ONLY must be a boolean")

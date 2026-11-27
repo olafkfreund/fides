@@ -49,12 +49,15 @@ func TestMCPReadOnlyStdio(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, env, flag, protocol string
+		invalidMode               bool
 		readOnly                  bool
 	}{
 		{name: "default"},
 		{name: "environment", env: "true", readOnly: true},
 		{name: "flag overrides false", env: "false", flag: "--read-only", readOnly: true},
 		{name: "flag overrides true", env: "true", flag: "--read-only=false"},
+		{name: "flag overrides invalid", env: "invalid", flag: "--read-only", readOnly: true},
+		{name: "invalid environment", env: "invalid", invalidMode: true},
 		{name: "legacy protocol", protocol: "2024-11-05"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,8 +104,15 @@ func TestMCPReadOnlyStdio(t *testing.T) {
 			cmd.Env = append(os.Environ(), "FIDES_MCP_READ_ONLY_TEST_PROCESS=1", "FIDES_MCP_READ_ONLY="+tc.env,
 				"FIDES_SERVER_URL="+server.URL, "FIDES_API_TOKEN=", "FIDES_ORG_ID=")
 			cmd.Stdin = &input
-			cmd.Stderr = os.Stderr
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
 			output, err := cmd.Output()
+			if tc.invalidMode {
+				if err == nil || len(output) != 0 || !strings.Contains(stderr.String(), "FIDES_MCP_READ_ONLY must be a boolean") {
+					t.Fatalf("invalid mode returned %v, stdout %q, stderr %q", err, output, stderr.String())
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
