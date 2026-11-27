@@ -62,6 +62,11 @@ tenant/admin values):
 | `FIDES_RLS_ENABLED` | `true` |
 | `SECRETS_PROVIDER` | `aws` (per-tenant integration secrets) or `env` |
 
+Configure tenant webhook and ServiceNow endpoints as public HTTPS URLs that
+`fides-server` can reach directly. These clients bypass HTTP proxies and reject
+loopback, private, link-local, and unspecified addresses. Redirects are limited
+to nine hops on the original HTTPS hostname and effective port (443 by default).
+
 ## 5. Deploy & first login
 
 ```bash

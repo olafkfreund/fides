@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,7 @@ func TestDeliverSignsAndPosts(t *testing.T) {
 
 	sink := NewSink(fakeLoader{targets: []Target{{URL: srv.URL, Secret: "shh"}}})
 	sink.validate = func(string) error { return nil } // allow loopback in test
+	sink.client = srv.Client()
 	sink.now = func() time.Time { return time.Unix(1700000000, 0) }
 
 	ev := events.Event{ID: uuid.New(), OrgID: uuid.New(), Type: "snapshot.noncompliant", Payload: []byte(`{"x":1}`)}
@@ -82,9 +84,25 @@ func TestDeliverPropagatesNon2xx(t *testing.T) {
 
 	sink := NewSink(fakeLoader{targets: []Target{{URL: srv.URL, Secret: "s"}}})
 	sink.validate = func(string) error { return nil }
+	sink.client = srv.Client()
 
-	if err := sink.Deliver(context.Background(), events.Event{ID: uuid.New(), Payload: []byte("{}")}); err == nil {
-		t.Fatalf("expected error on non-2xx response")
+	if err := sink.Deliver(context.Background(), events.Event{ID: uuid.New(), Payload: []byte("{}")}); err == nil || !strings.Contains(err.Error(), "webhook returned status 500") {
+		t.Fatalf("expected error on non-2xx response, got %v", err)
+	}
+}
+
+func TestNewSinkGuardsDial(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("blocked destination received a request")
+	}))
+	defer srv.Close()
+	sink := NewSink(fakeLoader{targets: []Target{{URL: srv.URL}}})
+	if sink.client.Timeout != 10*time.Second || sink.client.CheckRedirect == nil {
+		t.Fatal("expected the webhook timeout and a redirect guard")
+	}
+	sink.validate = func(string) error { return nil }
+	if err := sink.Deliver(context.Background(), events.Event{Payload: []byte("{}")}); err == nil || !strings.Contains(err.Error(), "disallowed destination address") {
+		t.Fatalf("expected dial guard to reject loopback, got %v", err)
 	}
 }
 

@@ -12,12 +12,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"fides/internal/outbound"
 )
 
 // AuthType selects the authentication scheme.
@@ -73,7 +73,7 @@ func New(cfg Config) (*Client, error) {
 	}
 	return &Client{
 		cfg:        cfg,
-		http:       &http.Client{Timeout: 20 * time.Second},
+		http:       outbound.NewHTTPSClient(20 * time.Second),
 		now:        time.Now,
 		validate:   validateInstanceURL,
 		maxRetries: 3,
@@ -167,28 +167,9 @@ func backoff(attempt int) time.Duration {
 	return d
 }
 
-// validateInstanceURL enforces HTTPS and blocks SSRF to loopback/private/
-// link-local addresses.
 func validateInstanceURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("servicenow: invalid instance url: %w", err)
-	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("servicenow: instance url must use https")
-	}
-	host := u.Hostname()
-	if host == "" {
-		return fmt.Errorf("servicenow: instance url has no host")
-	}
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("servicenow: host does not resolve: %w", err)
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("servicenow: instance url resolves to a disallowed address (%s)", ip)
-		}
+	if err := outbound.ValidateHTTPS(raw); err != nil {
+		return fmt.Errorf("servicenow: instance URL: %w", err)
 	}
 	return nil
 }
