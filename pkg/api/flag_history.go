@@ -1,9 +1,6 @@
 package api
 
-import (
-	"net/http"
-	"strconv"
-)
+import "net/http"
 
 // handleFlagHistory lists an org's recent feature-flag changes (the flag.changed
 // attestations across its feature-flags flow) for auditors and the /admin
@@ -15,23 +12,19 @@ func (s *Server) handleFlagHistory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	limit := 100
-	if v := r.URL.Query().Get("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 1000 {
-			limit = n
-		}
+	page, ok := newListPage(w, r, orgID, timeKey("a.created_at"), uuidKey("a.id"), true)
+	if !ok {
+		return
 	}
-
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	rows, err := s.queryPage(r, page,
 		`SELECT a.trail_id, a.is_compliant, a.created_at,
 		        a.payload->>'flag_key', a.payload->>'environment',
 		        a.payload->>'old_state', a.payload->>'new_state',
-		        a.payload->>'actor', a.payload->>'source'
+		        a.payload->>'actor', a.payload->>'source' /* page keys */
 		 FROM attestations a
 		 JOIN trails tr ON tr.id = a.trail_id
 		 JOIN flows f ON f.id = tr.flow_id
-		 WHERE f.org_id = $1 AND a.type_name = $2
-		 ORDER BY a.created_at DESC LIMIT $3`, orgID, FlagChangedAttestationType, limit)
+		 WHERE f.org_id = $1 AND a.type_name = $2`, orgID, FlagChangedAttestationType)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -58,5 +51,5 @@ func (s *Server) handleFlagHistory(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }

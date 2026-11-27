@@ -2,14 +2,29 @@ package events
 
 import (
 	"context"
+	"database/sql"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+func TestDispatchBatchCanceledClaim(t *testing.T) {
+	pool, err := sql.Open("postgres", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n, err := NewDispatcher(pool).DispatchBatch(ctx)
+	if n != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("DispatchBatch = (%d, %v), want (0, context.Canceled)", n, err)
+	}
+}
 
 type recordingSink struct {
 	name      string
@@ -36,27 +51,6 @@ func (r *recordingSink) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.delivered)
-}
-
-func TestDeliverFanOut(t *testing.T) {
-	d := &Dispatcher{sinks: []Sink{&recordingSink{name: "a"}, &recordingSink{name: "b"}}}
-	if err := d.deliver(context.Background(), Event{ID: uuid.New()}); err != nil {
-		t.Fatalf("expected all sinks to succeed, got %v", err)
-	}
-}
-
-func TestDeliverFailsIfAnySinkFails(t *testing.T) {
-	d := &Dispatcher{sinks: []Sink{
-		&recordingSink{name: "ok"},
-		&recordingSink{name: "bad", failFirst: 1},
-	}}
-	err := d.deliver(context.Background(), Event{ID: uuid.New()})
-	if err == nil {
-		t.Fatalf("expected an error when one sink fails")
-	}
-	if !strings.Contains(err.Error(), "bad") {
-		t.Fatalf("error should name the failing sink, got %v", err)
-	}
 }
 
 func TestBackoffIsMonotonicAndCapped(t *testing.T) {

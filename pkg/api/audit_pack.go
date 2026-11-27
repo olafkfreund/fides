@@ -72,7 +72,7 @@ func (s *Server) handleAuditPack(w http.ResponseWriter, r *http.Request) {
 		risks = append(risks, riskView{riskEntry: risk, MitigatedBy: controlsMitigating(risk.Key)})
 	}
 
-	trainingRecs, err := s.trainingRecords(r, orgID)
+	trainingRecs, err := s.trainingRecords(r, orgID, nil)
 	if err != nil {
 		internalError(w, err)
 		return

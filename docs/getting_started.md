@@ -118,7 +118,7 @@ fides attest --trail $TRAIL_ID --artifact-sha $DIGEST \
 fides verify-chain --trail $TRAIL_ID
 
 # Deterministic policy gate for the artifact (exit 2 if non-compliant)
-fides assert --sha256 $DIGEST --policy "production-release-rules"
+fides assert --sha256 $DIGEST
 
 # Evidence- and risk-backed verdict for the trail (exit 2 on HOLD); with
 # ServiceNow configured, the verdict is written back onto the matching Change
@@ -254,9 +254,7 @@ jobs:
       - name: Compliance Policy Gate Check
         run: |
           # Fides will exit non-zero and fail the workflow if the artifact is non-compliant
-          fides assert \
-            --sha256 $IMAGE_DIGEST \
-            --policy "production-release-rules"
+          fides assert --sha256 "$IMAGE_DIGEST"
 
       # 8. Deploy to Production (Kubernetes)
       - name: Deploy to K8s
@@ -349,9 +347,7 @@ run-security-scans:
         --encrypt
 
     # 2. Policy Assertion Check (Fails build if not compliant)
-    - fides assert 
-        --sha256 $IMAGE_DIGEST 
-        --policy "prod-verification"
+    - fides assert --sha256 "$IMAGE_DIGEST"
 
 deploy-prod:
   stage: deploy

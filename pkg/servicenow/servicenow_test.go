@@ -209,7 +209,27 @@ func TestNewRejectsBadConfig(t *testing.T) {
 	if _, err := New(Config{InstanceURL: "http://x.service-now.com", AuthType: AuthBasic}); err == nil {
 		t.Fatalf("expected http to be rejected")
 	}
-	if _, err := New(Config{InstanceURL: "https://x.service-now.com", AuthType: "weird"}); err == nil {
-		t.Fatalf("expected unknown auth type to be rejected")
+	if _, err := New(Config{InstanceURL: "https://192.0.2.1", AuthType: "weird"}); err == nil || !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatalf("expected unknown auth type to be rejected, got %v", err)
+	}
+}
+
+func TestNewGuardsDial(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("blocked destination received a request")
+	}))
+	defer srv.Close()
+	c, err := New(Config{InstanceURL: "https://192.0.2.1", AuthType: AuthBasic})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.http.Timeout != 20*time.Second || c.http.CheckRedirect == nil {
+		t.Fatal("expected the ServiceNow timeout and a redirect guard")
+	}
+	c.cfg.InstanceURL = srv.URL
+	c.validate = func(string) error { return nil }
+	c.maxRetries = 0
+	if err := c.doJSON(context.Background(), http.MethodGet, "/api/now/table/incident", nil, nil); err == nil || !strings.Contains(err.Error(), "disallowed destination address") {
+		t.Fatalf("expected dial guard to reject loopback, got %v", err)
 	}
 }

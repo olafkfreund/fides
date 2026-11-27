@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"fides/pkg/db"
+
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -124,7 +126,7 @@ func (s *Server) handleImportFramework(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown framework", http.StatusBadRequest)
 		return
 	}
-	tx, err := s.DB.BeginTx(r.Context(), nil)
+	tx, err := db.BeginTx(r.Context(), s.DB, nil)
 	if err != nil {
 		internalError(w, err)
 		return

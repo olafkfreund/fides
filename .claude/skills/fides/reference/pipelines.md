@@ -26,7 +26,7 @@ Create/rotate the key with `fides service-account issue-key --account <sa> --lab
 
 | Gate | Fails the step (non-zero) when |
 |---|---|
-| `fides assert --sha256 $DIGEST --policy <name>` | artifact violates policy (**exit 1**) |
+| `fides assert --sha256 $DIGEST` | artifact violates policy (**exit 2**) |
 | `fides policy check --env $ENV --trail $TRAIL` | an applicable environment policy is unsatisfied (**exit 2**) |
 | `fides allowlist check --env $ENV --sha $DIGEST` | digest not approved for the environment (**exit 2**) |
 | `fides change-gate --trail $TRAIL` | verdict is HOLD (**exit 2**) |
@@ -78,7 +78,7 @@ jobs:
 
       - name: Compliance gate         # fails the job on non-compliance / HOLD
         run: |
-          fides assert      --sha256 $DIGEST --policy production-release-rules
+          fides assert      --sha256 $DIGEST
           fides change-gate --trail $TRAIL_ID
 
       - name: Deploy
@@ -116,7 +116,7 @@ build:
 gate:
   stage: gate
   script:
-    - fides assert --sha256 $DIGEST --policy production-release-rules
+    - fides assert --sha256 $DIGEST
     - fides policy check --env $ENV_ID --trail $TRAIL_ID
     - fides change-gate --trail $TRAIL_ID       # exit 2 => job fails => deploy blocked
 

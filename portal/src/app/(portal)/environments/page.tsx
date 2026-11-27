@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2, Archive, ArchiveRestore } from "lucide-react";
-import { apiGet, apiPost } from "@/lib/api";
+import { ApiError, apiList, apiPost } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
@@ -22,11 +24,14 @@ const DEFAULT_RULES = ['.pods[].status == "Ready"', ".pods[].replicas == .pods[]
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 
 export default function Environments() {
-  const [envs, setEnvs] = useState<Env[]>([]);
-  const [sel, setSel] = useState("");
+  const environments = usePagedList<Env>();
+  const envs = environments.items;
+  const [selected, setSel] = useState("");
+  const sel = selected || envs[0]?.id || "";
   const [filter, setFilter] = useState("");
   const [conns, setConns] = useState<MCPConn[]>([]);
   const [checks, setChecks] = useState<Record<string, Check>>({});
+  const [verificationDenied, setVerificationDenied] = useState(false);
   const [allow, setAllow] = useState<Approval[]>([]);
   const [advanced, setAdvanced] = useState(false);
   // advanced / manual
@@ -40,12 +45,14 @@ export default function Environments() {
   const [showArchived, setShowArchived] = useState(false);
   const [busy, setBusy] = useState("");
 
-  const loadEnvs = () =>
-    apiGet<Env[]>(`/api/v1/environments${showArchived ? "?include_archived=true" : ""}`)
-      .then((e) => { setEnvs(e); if (e.length) setSel((cur) => cur || e[0].id); })
-      .catch((x) => setErr(String(x.message || x)));
-
-  useEffect(() => { loadEnvs(); }, [showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { load } = environments;
+  const filters = new URLSearchParams({ name: filter });
+  if (showArchived) filters.set("include_archived", "true");
+  const path = `/api/v1/environments?${filters}`;
+  useEffect(() => {
+    const timer = window.setTimeout(() => load(path), filter ? 200 : 0);
+    return () => window.clearTimeout(timer);
+  }, [load, path, filter]);
 
   // Archiving retires an environment from control coverage without deleting it:
   // snapshots, policies and allow-lists stay, and unarchiving puts it back.
@@ -54,7 +61,7 @@ export default function Environments() {
     try {
       await apiPost(`/api/v1/environments/${id}/${archived ? "archive" : "unarchive"}`, {});
       if (archived && sel === id) setSel("");
-      await loadEnvs();
+      await load(path);
     } catch (x) { setErr(String((x as Error).message || x)); }
     finally { setBusy(""); }
   };
@@ -69,6 +76,11 @@ export default function Environments() {
         });
         setChecks((m) => ({ ...m, [c.name]: { loading: false, verdict: v } }));
       } catch (e) {
+        if (e instanceof ApiError && e.status === 403) {
+          setVerificationDenied(true);
+          setChecks({});
+          return;
+        }
         setChecks((m) => ({ ...m, [c.name]: { loading: false, error: String((e as Error).message || e) } }));
       }
     }
@@ -76,13 +88,13 @@ export default function Environments() {
 
   const loadEnv = (id: string) => {
     setChecks({}); setServer("");
-    apiGet<MCPConn[]>(`/api/v1/environments/mcp?environment_id=${id}`).then((c) => {
+    apiList<MCPConn>(`/api/v1/environments/mcp?environment_id=${id}`).then((c) => {
       const list = c || [];
       setConns(list);
       if (list.length) setServer(list[0].name);
-      runChecks(id, list);
+      if (!verificationDenied) runChecks(id, list);
     }).catch(() => setConns([]));
-    apiGet<Approval[]>(`/api/v1/environments/${id}/allowlist`).then((a) => setAllow(a || [])).catch(() => setAllow([]));
+    apiList<Approval>(`/api/v1/environments/${id}/allowlist`).then((a) => setAllow(a || [])).catch(() => setAllow([]));
   };
 
   useEffect(() => { if (sel) loadEnv(sel); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -94,7 +106,15 @@ export default function Environments() {
         environment_id: sel, server_name: server, tool_name: tool, arguments: {},
         rules: rules.split("\n").map((s) => s.trim()).filter(Boolean),
       }));
-    } catch (e) { setErr(String((e as Error).message || e)); }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setVerificationDenied(true);
+        setChecks({});
+        setVerdict(null);
+      } else {
+        setErr(String((e as Error).message || e));
+      }
+    }
   };
   const runQuery = async () => {
     setErr(""); setQueryOut("");
@@ -114,7 +134,7 @@ export default function Environments() {
     setErr("");
     try {
       await apiPost(`/api/v1/environments/${sel}/allowlist`, { artifact_sha256: sha, reason });
-      setSha(""); setReason(""); setAllow(await apiGet<Approval[]>(`/api/v1/environments/${sel}/allowlist`));
+      setSha(""); setReason(""); setAllow(await apiList<Approval>(`/api/v1/environments/${sel}/allowlist`));
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
@@ -149,10 +169,10 @@ export default function Environments() {
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
             Show archived
           </label>
-          <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />
+          <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => { if (!selected && sel) setSel(sel); setFilter(e.target.value); }} placeholder="Filter by name…" />
         </div>}>
           <div className="flex flex-col gap-2">
-            {envs.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())).map((e) => {
+            {envs.map((e) => {
               const drifts = e.drifts?.length ?? 0, shadows = e.shadowChanges?.length ?? 0, running = e.running?.length ?? 0;
               const secure = drifts === 0 && shadows === 0;
               return (
@@ -188,8 +208,10 @@ export default function Environments() {
                 </div>
               );
             })}
-            {envs.length === 0 && <p className="text-sm text-muted-foreground">No environments.</p>}
+            {envs.length === 0 && <p className="text-sm text-muted-foreground">{environments.loading ? "Loading…" : "No environments."}</p>}
           </div>
+          <LoadMore {...environments} />
+          {environments.error && <p role="alert" className="mt-3 text-sm text-red-400">{environments.error}</p>}
         </Panel>
 
         {/* Automatic MCP compliance */}
@@ -198,13 +220,15 @@ export default function Environments() {
           right={
             <div className="flex items-center gap-3">
               {overall.length > 0 && <Chip tone={allCompliant ? "ok" : "bad"}>{allCompliant ? "ALL COMPLIANT" : "ISSUES FOUND"}</Chip>}
-              <button onClick={() => loadEnv(sel)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs"><RefreshCw className="size-3.5" /> Re-run</button>
+              {!verificationDenied && <button onClick={() => loadEnv(sel)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs"><RefreshCw className="size-3.5" /> Re-run</button>}
             </div>
           }
         >
           <p className="mb-4 flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-4 shrink-0 text-primary" />
-            <span>Fides connects to this environment&apos;s <strong>MCP servers</strong> (e.g. the in-cluster <code className="rounded bg-muted px-1">fides-mcp-sensor</code>) and automatically runs runtime compliance checks — no queries to write. Each connection below is checked for workload readiness on load.</span>
+            {verificationDenied
+              ? <span>Live verification requires the Writer or Admin role.</span>
+              : <span>Fides checks workload readiness against this environment&apos;s MCP servers.</span>}
           </p>
 
           {conns.length === 0 ? (
@@ -266,7 +290,7 @@ export default function Environments() {
               </div>
               <label className="text-sm"><span className="text-muted-foreground">Compliance jq rules (one per line)</span><textarea className={`${input} h-24`} value={rules} onChange={(e) => setRules(e.target.value)} /></label>
               <div className="flex gap-2">
-                <button onClick={runManualVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify</button>
+                {!verificationDenied && <button onClick={runManualVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify</button>}
                 <button onClick={runQuery} className="rounded-md border border-border px-4 py-2 text-sm">Query State</button>
               </div>
               {verdict && <div className={`text-sm font-semibold ${verdict.compliant ? "text-green-400" : "text-red-400"}`}>{verdict.compliant ? "✅ COMPLIANT" : `❌ NON-COMPLIANT — ${(verdict.failed_rules || []).join(" | ")}`}</div>}

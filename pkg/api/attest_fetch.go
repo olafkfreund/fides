@@ -12,6 +12,7 @@ import (
 	"fides/pkg/events"
 	"fides/pkg/evidence"
 	"fides/pkg/gitstatus"
+	"fides/pkg/models"
 )
 
 // attestFetchReq requests ingestion of platform-native attestations
@@ -141,16 +142,15 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(result)
 		name := fmt.Sprintf("%s-provenance-%d", cfg.Provider, i+1)
 
-		contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, name, "slsa-provenance", string(payload), result.Compliant)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		_, err = s.q(r.Context()).ExecContext(r.Context(),
-			`INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())`,
-			uuid.New(), trailID, sha, name, "slsa-provenance", string(payload), result.Compliant, contentHash, prevHash)
-		if err != nil {
+		if err := s.appendAttestation(r.Context(), &models.Attestation{
+			ID:             uuid.New(),
+			TrailID:        trailID,
+			ArtifactSHA256: &sha,
+			Name:           name,
+			TypeName:       "slsa-provenance",
+			Payload:        string(payload),
+			IsCompliant:    result.Compliant,
+		}, nil); err != nil {
 			internalError(w, err)
 			return
 		}

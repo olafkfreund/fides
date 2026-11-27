@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"fides/pkg/auth"
+	"fides/pkg/db"
+	"fides/pkg/events"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -31,7 +34,7 @@ import (
 // request.
 //
 // This test spins up a real, non-superuser-scoped Postgres role (RLS is not
-// enforced for the table owner/superuser), applies schema.sql +
+// enforced for the table owner/superuser), applies migrations +
 // schema-rls.sql exactly as production does, and drives the handler over
 // real HTTP. It also proves the secondary finding from the issue: once the
 // snapshot write succeeds under the correct tenant context, the environment
@@ -70,7 +73,9 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 			t.Fatalf("exec failed: %v\nSQL: %.100s", err, q)
 		}
 	}
-	mustExec(readRepo("schema.sql"))
+	if err := db.Migrate(context.Background(), super); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	mustExec(readRepo("schema-rls.sql"))
 	mustExec(`DO $$ BEGIN
 	            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fides_snap_app') THEN
@@ -126,6 +131,85 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 		return resp
 	}
 
+	t.Run("transactional outbox", func(t *testing.T) {
+		t.Setenv("FIDES_EVENTS_ENABLED", "true")
+		flow, trail := uuid.New(), uuid.New()
+		mustExec(`INSERT INTO flows(id, org_id, name) VALUES ($1, $2, 'outbox')`, flow, orgID)
+		mustExec(`INSERT INTO trails(id, flow_id, name) VALUES ($1, $2, 'outbox')`, trail, flow)
+		post := func(path string, body any, want int) {
+			t.Helper()
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != want {
+				t.Fatalf("POST %s: got %d, want %d", path, resp.StatusCode, want)
+			}
+		}
+		snapshot := map[string]any{
+			"environment_id": envID,
+			"artifacts":      []map[string]string{{"sha256": uuid.NewString(), "service_name": "outbox"}},
+		}
+		attestation := reportAttestationReq{TrailID: trail.String(), Name: "outbox", TypeName: "outbox", Payload: "{}"}
+		check := func(wantWrites, wantEvents int) {
+			t.Helper()
+			var attestations, snapshots, artifacts, eventCount int
+			err := super.QueryRow(`SELECT
+				(SELECT count(*) FROM attestations WHERE trail_id = $1),
+				(SELECT count(*) FROM environment_snapshots WHERE environment_id = $2),
+				(SELECT count(*) FROM snapshot_artifacts a JOIN environment_snapshots s ON s.id = a.snapshot_id WHERE s.environment_id = $2),
+				(SELECT count(*) FROM integration_events WHERE org_id = $3)`,
+				trail, envID, orgID).Scan(&attestations, &snapshots, &artifacts, &eventCount)
+			if err != nil || attestations != wantWrites || snapshots != wantWrites || artifacts != wantWrites || eventCount != wantEvents {
+				t.Fatalf("attestations=%d snapshots=%d artifacts=%d events=%d: %v", attestations, snapshots, artifacts, eventCount, err)
+			}
+		}
+
+		const grantInsert = "GRANT INSERT ON integration_events TO fides_snap_app"
+		mustExec("REVOKE INSERT ON integration_events FROM fides_snap_app")
+		defer mustExec(grantInsert)
+		post("/api/v1/attestations", attestation, http.StatusInternalServerError)
+		post("/api/v1/snapshots", snapshot, http.StatusInternalServerError)
+		check(0, 0)
+
+		mustExec(grantInsert)
+		post("/api/v1/attestations", attestation, http.StatusCreated)
+		post("/api/v1/snapshots", snapshot, http.StatusCreated)
+		check(1, 3)
+
+		mustExec("REVOKE DELETE ON integration_events, integration_event_deliveries FROM fides_snap_app")
+		defer mustExec("GRANT DELETE ON integration_events, integration_event_deliveries TO fides_snap_app")
+		sink := &outboxTestSink{}
+		dispatcher := events.NewDispatcher(appPool, sink)
+		if _, err := dispatcher.DispatchBatch(context.Background()); err != nil {
+			t.Fatalf("dispatch as restricted app role: %v", err)
+		}
+		var delivered int
+		if err := super.QueryRow(`SELECT count(*) FROM integration_events e
+			JOIN integration_event_deliveries d ON d.event_id = e.id
+			WHERE e.org_id = $1 AND e.status = 'delivered' AND d.status = 'delivered'`, orgID).Scan(&delivered); err != nil || delivered != 3 {
+			t.Fatalf("delivered with the restricted app role: %d, %v", delivered, err)
+		}
+
+		mustExec("REVOKE INSERT ON integration_events FROM fides_snap_app")
+		t.Setenv("FIDES_EVENTS_ENABLED", "false")
+		post("/api/v1/attestations", attestation, http.StatusCreated)
+		post("/api/v1/snapshots", snapshot, http.StatusCreated)
+		check(2, 3)
+		mustExec(`DELETE FROM environment_snapshots WHERE environment_id = $1`, envID)
+	})
+
 	// This is the exact repro from the issue: POST with an empty artifacts
 	// array against a real, RLS-enabled environment_snapshots table. Before
 	// the fix, this returns 500 with a 42501 RLS violation logged server-side.
@@ -152,6 +236,11 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 		t.Fatalf("expected exactly 1 environment_snapshots row for id=%s, got %d", reported.SnapshotID, count)
 	}
 
+	digest := uuid.NewString()
+	mustExec(`INSERT INTO artifacts (sha256, org_id, name, type) VALUES ($1,$2,'registered-image','docker')`, digest, orgID)
+	mustExec(`INSERT INTO snapshot_artifacts (snapshot_id, artifact_sha256, service_name, runtime_digest)
+	          VALUES ($1,$2,'web',$2)`, reported.SnapshotID, digest)
+
 	// Secondary finding from the issue: does GET /api/v1/environments now
 	// surface the snapshot (LastSnapshot / "last_reported_at")? It should,
 	// since it derives from the same environment_snapshots row via the same
@@ -169,6 +258,12 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 	var envs []struct {
 		ID           string `json:"id"`
 		LastSnapshot string `json:"lastSnapshot"`
+		Running      []struct {
+			Service    string `json:"service"`
+			SHA256     string `json:"sha256"`
+			Registered bool   `json:"registered"`
+			Name       string `json:"name"`
+		} `json:"running"`
 	}
 	if err := json.NewDecoder(getResp.Body).Decode(&envs); err != nil {
 		t.Fatalf("decode environments: %v", err)
@@ -180,9 +275,42 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 			if e.LastSnapshot == "No snapshot reported yet" || e.LastSnapshot == "" {
 				t.Fatalf("expected environment %s to show a reported snapshot time, got %q", envID, e.LastSnapshot)
 			}
+			if len(e.Running) != 1 || e.Running[0].Service != "web" || e.Running[0].SHA256 != digest ||
+				!e.Running[0].Registered || e.Running[0].Name != "registered-image" {
+				t.Fatalf("unexpected running artifacts: %+v", e.Running)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("environment %s not present in GET /api/v1/environments response", envID)
 	}
+
+	mustExec(`REVOKE SELECT ON snapshot_artifacts FROM fides_snap_app`)
+	defer mustExec(`GRANT SELECT ON snapshot_artifacts TO fides_snap_app`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, release, err := db.ScopedConn(ctx, appPool, orgID.String())
+	if err != nil {
+		t.Fatalf("ScopedConn: %v", err)
+	}
+	defer release()
+	ctx = db.WithQuerier(ctx, conn)
+	ctx = auth.WithPrincipal(ctx, &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin})
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	srv.handleListEnvironments(rec, req)
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "internal server error\n" {
+		t.Fatalf("GET environments after revoking snapshot artifact access: HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var scopedOrg string
+	if err := conn.QueryRowContext(ctx, "SELECT current_setting('app.current_org')").Scan(&scopedOrg); err != nil || scopedOrg != orgID.String() {
+		t.Fatalf("scoped follow-up query = (%q, %v), want (%q, nil)", scopedOrg, err, orgID)
+	}
 }
+
+type outboxTestSink struct{}
+
+func (*outboxTestSink) Name() string                                { return "restricted-role-test" }
+func (*outboxTestSink) Deliver(context.Context, events.Event) error { return nil }

@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/mail"
@@ -97,17 +99,12 @@ func validApproverIdentity(s string) bool {
 //
 // It optionally accepts on_behalf_of to record a real human approval attributed
 // to a logged-in user when the caller is a shared service token (the SARC portal
-// case). Delegation is default-deny and gated by FIDES_DELEGATED_APPROVAL_ENABLED
-// plus an Admin service principal; see resolveApprovalDelegation.
+// case). Delegation can also admit a read-only service account when enabled
+// and explicitly granted; see resolveApprovalDelegation.
 func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	trailID, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -118,10 +115,29 @@ func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 		// OnBehalfOf, when set and honored, attributes this approval to a human
 		// approver (email) rather than the calling service token. Honored only
-		// under the config + role gate (see resolveApprovalDelegation).
+		// under the delegation gate (see resolveApprovalDelegation).
 		OnBehalfOf string `json:"on_behalf_of"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	decodeErr := json.NewDecoder(r.Body).Decode(&req)
+	if decodeErr != nil {
+		req.OnBehalfOf = ""
+	}
+	del := resolveApprovalDelegation(delegatedApprovalEnabled(), p, req.OnBehalfOf)
+	if !del.honored && !requireMutationRole(w, r, auth.RoleWriter) {
+		return
+	}
+	if decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+		badRequest(w, decodeErr)
+		return
+	}
+	trailID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid trail id", http.StatusBadRequest)
+		return
+	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	role := strings.TrimSpace(strings.ToLower(req.Role))
 	if role == "" {
 		role = "approver"
@@ -136,7 +152,6 @@ func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 	kind := p.Kind
 	var delegatedBy any // nil => SQL NULL
 
-	del := resolveApprovalDelegation(delegatedApprovalEnabled(), p, req.OnBehalfOf)
 	if del.honored {
 		// A delegated approval is being recorded — validate the target identity.
 		if !validApproverIdentity(del.onBehalfOf) {
@@ -201,9 +216,13 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT approved_by, approver_kind, COALESCE(reason, ''), COALESCE(NULLIF(role, ''), 'approver'), COALESCE(delegated_by, ''), created_at
-		 FROM trail_approvals WHERE trail_id = $1 AND org_id = $2 ORDER BY created_at`, trailID, orgID)
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT approved_by, approver_kind, COALESCE(reason, ''), COALESCE(NULLIF(role, ''), 'approver'), COALESCE(delegated_by, ''), created_at /* page keys */
+		 FROM trail_approvals WHERE trail_id = $1 AND org_id = $2`, trailID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -228,5 +247,5 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }

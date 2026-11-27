@@ -79,10 +79,14 @@ func (s *Server) handleListExceptions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
 		`SELECT id, control_key, reason, COALESCE(approved_by, ''), created_at, expires_at, revoked,
-		        (NOT revoked AND expires_at > now()) AS active
-		 FROM control_exceptions WHERE org_id = $1 ORDER BY created_at DESC`, orgID)
+		        (NOT revoked AND expires_at > now()) AS active /* page keys */
+		 FROM control_exceptions WHERE org_id = $1`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -108,7 +112,7 @@ func (s *Server) handleListExceptions(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, list)
+	page.write(w, list)
 }
 
 // handleRevokeException revokes an exception (idempotent; org-scoped).

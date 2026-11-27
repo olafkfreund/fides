@@ -32,8 +32,8 @@ scanner can't answer across your whole estate.
 A policy rule evaluates a JQ expression against the recorded scan payload, e.g.
 `.critical == 0` or `.high <= 2`. Two ways to gate in CI:
 
-- **`fides assert --sha256 <artifact> --policy <name>`** — evaluates the artifact's
-  recorded evidence against a named policy; exits non-zero to fail the step.
+- **`fides assert --sha256 <artifact>`** — checks recorded control verdicts for
+  the artifact's build trail and exits `2` if any failed.
 - **[Fides Gate action](ci-gate.md) `change-gate`** — the evidence-backed approval
   verdict for the whole trail (includes recorded-scan compliance); exits `2` on hold.
 
@@ -80,7 +80,7 @@ jobs:
           fides attest sbom  --file sbom.json  --artifact-sha "${{ steps.build.outputs.digest }}" --trail "$TRAIL_ID"
 
       # 5. Gate: fail the PR if the artifact violates policy.
-      - run: fides assert --sha256 "${{ steps.build.outputs.digest }}" --policy no-critical-vulns
+      - run: fides assert --sha256 "${{ steps.build.outputs.digest }}"
 ```
 
 ## GitLab CI — full recipe
@@ -112,13 +112,19 @@ policy-gate:
   script:
     - apk add --no-cache curl jq tar
     - *fides-cli
-    - fides assert --sha256 "$DIGEST" --policy no-critical-vulns
+    - fides assert --sha256 "$DIGEST"
 ```
 
-## Defining the policy
+## Defining rules for scan evidence
+
+Register the scan's attestation type and its JQ rules before recording evidence
+for the artifact gate. The server applies those rules during ingestion. See the
+attestation type example in the [getting started guide](getting_started.md).
+
+For a separate environment policy check, add a rule on the target environment:
 
 ```bash
-# A rule that fails the gate on any critical vulnerability in a recorded scan.
+# An environment rule that rejects any critical vulnerability in a recorded scan.
 fides policy add --env prod --name no-critical-vulns --rule '.critical == 0'
 ```
 
