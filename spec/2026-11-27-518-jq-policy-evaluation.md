@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 518
 intent: intent/2026-11-27-518-jq-policy-evaluation.md
 ---
