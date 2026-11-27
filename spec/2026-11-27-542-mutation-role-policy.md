@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 542
 intent: intent/2026-11-27-542-mutation-role-policy.md
 ---
