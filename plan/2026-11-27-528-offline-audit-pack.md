@@ -40,6 +40,35 @@ commitments and historical policy inputs. [#557](https://github.com/olafkfreund/
 tracks signer-proof retention and independent verification. After both land,
 use their stored proof formats in the audit-pack export and verifier.
 
+## Implementation contract
+
+- Add `GET /api/v1/trails/{id}/signed-audit-pack` beside the legacy export.
+  Read an explicit tenant snapshot, stage a bounded ZIP, and send its
+  detached JSON signature as standard base64 in `X-Fides-Audit-Signature`.
+  Use an Ed25519 PKCS #8 PEM key from `FIDES_AUDIT_PACK_PRIVATE_KEY_FILE`.
+- The `pkg/auditpack` writer exposes
+  `NewWriter(io.Writer)`, `Add(name string, source io.Reader) (Member, error)`,
+  and `Close(Manifest) error`. A `Member` stores Name, SHA256, and Size.
+  `Sign(ed25519.PrivateKey, digest []byte)` returns the detached JSON bytes.
+  Derive the key ID from SHA-256 of the raw public key and separate the
+  archive signature domain from other Fides signatures.
+- The manifest stores Version, TrailID, ChainHead, Coverage, Members, and
+  Attachments. Write ordered records to `chain.json` using
+  `ChainRecord{ID string, Entry ledger.Entry}` and time proofs to
+  `anchors.json` using `Anchor{Head string, Token []byte}`. Include
+  tenant trail metadata, artifacts, and approvals as separately hashed
+  members. The v2 chain records carry the captured policy definitions.
+- The attachment index uses
+  `Attachment{ID, AttestationID, Name, SHA256, Member string; Size int64}`.
+  Generate file names from attachment IDs. Check committed size and digest
+  while reading the tenant's storage object. An unbound historical attachment
+  can have an empty member path, which the verifier reports as incomplete.
+- Extend `fides audit --signed` to preserve the ZIP and its `.sig` sibling.
+  `fides verify-pack` requires an independent archive public key, local TSA
+  roots for present anchors, and an explicit local signer policy and trust
+  source for each present signer proof. Verify archive membership and every
+  present proof before returning an incomplete result for historical gaps.
+
 ## Risks
 
 Identify the ledger and attachment prerequisites before implementation. Key rotation and verification of historical packs require retained trusted key IDs. Enforce archive bounds, reject duplicate or unlisted members, and document required proof classes and legacy limitations.
