@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 526
 intent: intent/2026-11-27-526-recording-replay.md
 ---
