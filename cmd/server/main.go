@@ -245,6 +245,7 @@ func main() {
 			names = append(names, sk.Name())
 		}
 		go events.NewDispatcher(db, sinks...).Run(ctx)
+		go api.RunCRAReminders(ctx, db, time.Now)
 		// Derived from the slice, never restated: this line is what people grep
 		// to confirm what is actually live, and a hand-written list drifts. It
 		// had already lost the Slack sink before it lost the GRC one.

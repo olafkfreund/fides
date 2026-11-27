@@ -259,6 +259,15 @@ func newMutationRouteFixture(t *testing.T, route mutationRoute) (*routeAuthFixtu
 	f := newRouteAuthFixture(t)
 	ids := f.own
 	switch route.pattern {
+	case "PATCH /api/v1/cra/cases/{id}", "POST /api/v1/cra/cases/{id}/exports", "POST /api/v1/cra/cases/{id}/submissions":
+		ids["craCase"], ids["craExport"] = uuid.NewString(), uuid.NewString()
+		mustExec(t, f.pool, `INSERT INTO cra_cases (id,org_id,kind,title,awareness_at,created_at,created_by)
+			VALUES ($1,$2,'vulnerability','fixture','2026-01-01T00:00:00Z',now(),'{}')`, ids["craCase"], ids["org"])
+		mustExec(t, f.pool, `INSERT INTO cra_case_deadlines (org_id,case_id,stage,revision)
+			VALUES ($1,$2,'early-warning',1),($1,$2,'notification',1),($1,$2,'final',1)`, ids["org"], ids["craCase"])
+		mustExec(t, f.pool, `INSERT INTO cra_case_exports
+			(id,org_id,case_id,stage,revision,version,payload,payload_sha256,created_at,created_by)
+			VALUES ($1,$2,$3,'early-warning',1,1,'{}',repeat('0',64),now(),'{}')`, ids["craExport"], ids["org"], ids["craCase"])
 	case "POST /api/v1/attest/fetch":
 		mustExec(t, f.pool, `INSERT INTO artifacts (sha256, org_id, trail_id, name, type)
 			VALUES ($1, $2, $3, 'fixture', 'docker')`, ids["sha"], ids["org"], ids["trail"])

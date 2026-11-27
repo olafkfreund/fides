@@ -73,3 +73,14 @@ func TestFormatMessage(t *testing.T) {
 		t.Fatalf("irrelevant events must produce no message")
 	}
 }
+
+func TestCRADeadlineMessage(t *testing.T) {
+	ev := events.Event{Type: events.CRADeadlineOverdue, Payload: []byte(`{
+		"case_id":"d90baabe-29a9-4069-84c9-2f16211b3ebd",
+		"stage":"final","revision":1,"due_at":"2026-11-01T12:00:00Z","private":"restricted"
+	}`)}
+	text := formatMessage(ev)
+	if !strings.Contains(text, "final overdue") || !strings.Contains(text, "2026-11-01T12:00:00Z") || strings.Contains(text, "restricted") {
+		t.Fatalf("unexpected reminder %q", text)
+	}
+}

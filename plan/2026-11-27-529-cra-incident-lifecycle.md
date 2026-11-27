@@ -22,6 +22,23 @@ Line references are from the reviewed base. Refresh them after dependent changes
 2. **cmd/server/main.go:240–260 and pkg/events/events.go:52** — After #519, schedule due and overdue events with an injected clock and unique case/stage/deadline revision identity. Only authorized users may link evidence, correct dates or confirm submissions. Send minimal safe event content and preserve prior overdue records after deadline corrections.
 3. **pkg/api/server.go:144, pkg/api/swagger.go:180, cmd/cli/integrations.go:531–554 and pkg/api/ingest_handlers.go:96–270** — Add case API and CLI, versioned structured manual exports, and idempotent attestation of actual confirmed submissions on affected tenant trails using the shared evidence path. Verify supported ENISA workflows before claiming format compatibility. Keep export and filing distinct.
 
+## Implementation details
+
+- Case reads use one tenant-scoped snapshot. Writer and Admin can create cases,
+  link evidence, and record filings. Correcting an established milestone
+  requires Admin and a reason.
+- The manual worksheet follows the stage fields and filing flow documented by
+  ENISA. The receipt records the separate worksheet and actual filing
+  digests, deadline revision, operator, and filing reference. Service
+  credentials record a declared operator. Confirmations apply to the current
+  deadline revision and append evidence to the trails linked at that moment.
+- If information in an earlier confirmed severe-incident filing satisfies
+  the notification stage, use that filing time as the final-report clock
+  trigger. Store one outstanding requested intermediate report per case.
+- Deadline revisions are locked and enqueued atomically with delivery
+  markers. The outbox sends due-soon and overdue events to configured Slack
+  and ServiceNow sinks, using only case ID, stage, revision, and deadline.
+
 ## Risks
 
 Confirm stage fields, any exceptions, and export compatibility before promising acceptance by the reporting platform. Record deadline changes and protect sensitive case data from unauthorized tenants and downstream notification channels. [Article 14](https://eur-lex.europa.eu/eli/reg/2024/2847/oj/eng) [ENISA Single Reporting Platform](https://www.enisa.europa.eu/topics/product-security/vulnerability-services/eu-incident-response-and-cyber-crisis-management/single-reporting-platform-srp)
