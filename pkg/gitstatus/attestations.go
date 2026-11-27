@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"fides/internal/outbound"
 )
 
 // Statement is one platform-native attestation fetched from a git provider's
@@ -30,14 +32,56 @@ func FetchAttestations(ctx context.Context, c *http.Client, provider, apiBase, t
 	if len(sha) != 64 {
 		return nil, fmt.Errorf("artifact sha256 must be a 64-character hex digest, got %d characters", len(sha))
 	}
-	switch provider {
-	case ProviderGitHub:
-		return fetchGitHubAttestations(ctx, c, apiBase, token, repo, sha)
-	case ProviderGitLab:
-		return fetchGitLabAttestations(ctx, c, apiBase, token, repo, sha)
-	default:
+	if provider != ProviderGitHub && provider != ProviderGitLab {
 		return nil, fmt.Errorf("attestation ingest is not supported for git provider %q (supported: github, gitlab)", provider)
 	}
+	origin, err := parseAttestationURL(apiBase)
+	if err != nil {
+		return nil, fmt.Errorf("invalid git provider API URL: %w", err)
+	}
+	c = attestationClient(c, origin)
+	if provider == ProviderGitHub {
+		return fetchGitHubAttestations(ctx, c, origin, token, repo, sha)
+	}
+	return fetchGitLabAttestations(ctx, c, origin, token, repo, sha)
+}
+
+func parseAttestationURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
+		return nil, fmt.Errorf("expected an absolute HTTP(S) URL without user information")
+	}
+	return u, nil
+}
+
+func attestationClient(c *http.Client, origin *url.URL) *http.Client {
+	client := *c
+	checkOrigin := func(req *http.Request) error {
+		if req.URL.User != nil || !outbound.SameOrigin(origin, req.URL) {
+			return fmt.Errorf("attestation redirect must stay on the initial origin")
+		}
+		return nil
+	}
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkOrigin(req); err != nil {
+			return err
+		}
+		// net/http may strip Authorization when only hostname case changes.
+		if auth := via[0].Header.Get("Authorization"); auth != "" && req.Header.Get("Authorization") == "" {
+			req.Header.Set("Authorization", auth)
+		}
+		if c.CheckRedirect != nil {
+			if err := c.CheckRedirect(req, via); err != nil {
+				return err
+			}
+			return checkOrigin(req)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &client
 }
 
 // ResolveProvider picks the configured provider matching wantProvider (and,
@@ -64,13 +108,13 @@ type githubAttestationsResp struct {
 	} `json:"attestations"`
 }
 
-func fetchGitHubAttestations(ctx context.Context, c *http.Client, apiBase, token string, repo Repo, sha string) ([]Statement, error) {
+func fetchGitHubAttestations(ctx context.Context, c *http.Client, origin *url.URL, token string, repo Repo, sha string) ([]Statement, error) {
 	ownerRepo, err := repo.OwnerRepo()
 	if err != nil {
 		return nil, err
 	}
 	digest := "sha256:" + sha
-	endpoint := strings.TrimRight(apiBase, "/") + "/repos/" + ownerRepo + "/attestations/" + url.PathEscape(digest)
+	endpoint := strings.TrimRight(origin.String(), "/") + "/repos/" + ownerRepo + "/attestations/" + url.PathEscape(digest)
 	headers := map[string]string{
 		"Authorization": "Bearer " + token,
 		"Accept":        "application/vnd.github+json",
@@ -84,7 +128,7 @@ func fetchGitHubAttestations(ctx context.Context, c *http.Client, apiBase, token
 		if a.BundleURL == "" {
 			continue
 		}
-		stmt, err := fetchBundle(ctx, c, a.BundleURL, headers)
+		stmt, err := fetchBundle(ctx, c, origin, a.BundleURL, headers)
 		if err != nil {
 			return nil, fmt.Errorf("fetch github attestation bundle: %w", err)
 		}
@@ -101,8 +145,8 @@ type gitlabAttestation struct {
 	DownloadURL   string `json:"download_url"`
 }
 
-func fetchGitLabAttestations(ctx context.Context, c *http.Client, apiBase, token string, repo Repo, sha string) ([]Statement, error) {
-	endpoint := strings.TrimRight(apiBase, "/") + "/projects/" + url.PathEscape(repo.Path) + "/attestations/" + sha
+func fetchGitLabAttestations(ctx context.Context, c *http.Client, origin *url.URL, token string, repo Repo, sha string) ([]Statement, error) {
+	endpoint := strings.TrimRight(origin.String(), "/") + "/projects/" + url.PathEscape(repo.Path) + "/attestations/" + sha
 	headers := map[string]string{"PRIVATE-TOKEN": token}
 	var list []gitlabAttestation
 	if err := getJSON(ctx, c, endpoint, headers, &list); err != nil {
@@ -113,7 +157,7 @@ func fetchGitLabAttestations(ctx context.Context, c *http.Client, apiBase, token
 		if a.DownloadURL == "" {
 			continue
 		}
-		stmt, err := fetchBundle(ctx, c, a.DownloadURL, headers)
+		stmt, err := fetchBundle(ctx, c, origin, a.DownloadURL, headers)
 		if err != nil {
 			return nil, fmt.Errorf("fetch gitlab attestation bundle: %w", err)
 		}
@@ -132,9 +176,39 @@ type sigstoreBundle struct {
 	} `json:"dsseEnvelope"`
 }
 
-func fetchBundle(ctx context.Context, c *http.Client, endpoint string, headers map[string]string) (Statement, error) {
-	body, err := getBody(ctx, c, endpoint, headers)
+func bundleRequest(ctx context.Context, provider *http.Client, origin *url.URL, endpoint string, headers map[string]string) (*http.Client, *http.Request, error) {
+	u, err := parseAttestationURL(endpoint)
 	if err != nil {
+		return nil, nil, err
+	}
+	c := provider
+	if !outbound.SameOrigin(origin, u) {
+		if err := outbound.ValidateHTTPS(endpoint); err != nil {
+			return nil, nil, fmt.Errorf("invalid signed download destination: %w", err)
+		}
+		c = attestationClient(outbound.NewHTTPSClient(provider.Timeout), u)
+		headers = nil
+	}
+	req, err := attestationRequest(ctx, endpoint, headers)
+	return c, req, err
+}
+
+func fetchBundle(ctx context.Context, provider *http.Client, origin *url.URL, endpoint string, headers map[string]string) (Statement, error) {
+	c, req, err := bundleRequest(ctx, provider, origin, endpoint, headers)
+	if err != nil {
+		return Statement{}, err
+	}
+	source := endpoint
+	signedDownload := c != provider
+	if signedDownload {
+		defer c.CloseIdleConnections()
+		source = signedDownloadSource(req.URL)
+	}
+	body, err := getBody(c, req)
+	if err != nil {
+		if signedDownload {
+			return Statement{}, fmt.Errorf("signed bundle download from %s failed", req.URL.Hostname())
+		}
 		return Statement{}, err
 	}
 	var bundle sigstoreBundle
@@ -152,18 +226,29 @@ func fetchBundle(ctx context.Context, c *http.Client, endpoint string, headers m
 		PredicateType string `json:"predicateType"`
 	}
 	_ = json.Unmarshal(statement, &meta) // best-effort; NormalizeProvenance validates this properly
-	return Statement{PredicateType: meta.PredicateType, Statement: statement, SourceURL: endpoint}, nil
+	return Statement{PredicateType: meta.PredicateType, Statement: statement, SourceURL: source}, nil
+}
+
+func signedDownloadSource(endpoint *url.URL) string {
+	source := *endpoint
+	source.RawQuery, source.Fragment, source.RawFragment = "", "", ""
+	source.ForceQuery = false
+	return source.String()
 }
 
 func getJSON(ctx context.Context, c *http.Client, endpoint string, headers map[string]string, out any) error {
-	body, err := getBody(ctx, c, endpoint, headers)
+	req, err := attestationRequest(ctx, endpoint, headers)
+	if err != nil {
+		return err
+	}
+	body, err := getBody(c, req)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal(body, out)
 }
 
-func getBody(ctx context.Context, c *http.Client, endpoint string, headers map[string]string) ([]byte, error) {
+func attestationRequest(ctx context.Context, endpoint string, headers map[string]string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -171,6 +256,10 @@ func getBody(ctx context.Context, c *http.Client, endpoint string, headers map[s
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}
+	return req, nil
+}
+
+func getBody(c *http.Client, req *http.Request) ([]byte, error) {
 	resp, err := c.Do(req)
 	if err != nil {
 		return nil, err
