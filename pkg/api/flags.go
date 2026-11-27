@@ -15,6 +15,7 @@ import (
 	"github.com/lib/pq"
 
 	"fides/pkg/events"
+	"fides/pkg/models"
 )
 
 // FlagChangedAttestationType is the well-known attestation type recorded when a
@@ -102,15 +103,15 @@ func (s *Server) writeFlagChange(ctx context.Context, orgID, flowID uuid.UUID, r
 	if err != nil {
 		return uuid.UUID{}, uuid.UUID{}, err
 	}
-	contentHash, prevHash, err := s.attestationChain(ctx, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant)
-	if err != nil {
-		return uuid.UUID{}, uuid.UUID{}, err
-	}
 	attID := uuid.New()
-	if _, err := s.q(ctx).ExecContext(ctx,
-		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now())`,
-		attID, trailID, FlagChangedAttestationType, FlagChangedAttestationType, string(payload), compliant, contentHash, prevHash); err != nil {
+	if err := s.appendAttestation(ctx, &models.Attestation{
+		ID:          attID,
+		TrailID:     trailID,
+		Name:        FlagChangedAttestationType,
+		TypeName:    FlagChangedAttestationType,
+		Payload:     string(payload),
+		IsCompliant: compliant,
+	}, nil); err != nil {
 		return uuid.UUID{}, uuid.UUID{}, err
 	}
 
