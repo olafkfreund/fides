@@ -28,6 +28,19 @@ const (
 	StatusDead      = "dead"
 )
 
+const (
+	CRADeadlineDueSoon = "cra.deadline.due_soon"
+	CRADeadlineOverdue = "cra.deadline.overdue"
+)
+
+// CRADeadline is the minimal payload sent to reminder destinations.
+type CRADeadline struct {
+	CaseID   uuid.UUID `json:"case_id"`
+	Stage    string    `json:"stage"`
+	Revision int64     `json:"revision"`
+	DueAt    time.Time `json:"due_at"`
+}
+
 // Event is one outbox record.
 type Event struct {
 	ID         uuid.UUID

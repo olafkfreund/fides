@@ -37,6 +37,7 @@ type Server struct {
 	States       *auth.StateStore
 	Sessions     *auth.SessionStore
 	httpClient   *http.Client
+	craNow       func() time.Time
 }
 
 func NewServer(db *sql.DB, store storage.StorageBackend, llm ai.LLMClient) *Server {
@@ -137,6 +138,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
 	mux.HandleFunc("GET /api/v1/reports/cra-incidents", s.handleCRAIncidents)
+	mux.HandleFunc("GET /api/v1/cra/cases", s.craRoute("", false, s.listCRACases))
+	mux.HandleFunc("POST /api/v1/cra/cases", s.craRoute(auth.RoleWriter, false, createCRACase))
+	mux.HandleFunc("GET /api/v1/cra/cases/{id}", s.craRoute("", true, getCRACase))
+	mux.HandleFunc("PATCH /api/v1/cra/cases/{id}", s.craRoute(auth.RoleWriter, true, patchCRACase))
+	mux.HandleFunc("POST /api/v1/cra/cases/{id}/exports", s.craRoute(auth.RoleWriter, true, exportCRACase))
+	mux.HandleFunc("POST /api/v1/cra/cases/{id}/submissions", s.craRoute(auth.RoleWriter, true, s.submitCRACase))
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)

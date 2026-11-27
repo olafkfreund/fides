@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -44,7 +45,8 @@ type snapshotPayload struct {
 
 // Deliver emits one em_event per shadow/drift finding for the event's tenant.
 func (s *ITOMSink) Deliver(ctx context.Context, ev events.Event) error {
-	if ev.Type != EventType {
+	cra := ev.Type == events.CRADeadlineDueSoon || ev.Type == events.CRADeadlineOverdue
+	if ev.Type != EventType && !cra {
 		return nil
 	}
 	cfg, enabled, err := s.loader.ServiceNowConfig(ctx, ev.OrgID)
@@ -53,6 +55,10 @@ func (s *ITOMSink) Deliver(ctx context.Context, ev events.Event) error {
 	}
 	if !enabled {
 		return nil // ServiceNow not configured for this tenant
+	}
+
+	if cra {
+		return s.sendCRADeadline(ctx, cfg, ev)
 	}
 
 	var p snapshotPayload
@@ -89,6 +95,31 @@ func (s *ITOMSink) Deliver(ctx context.Context, ev events.Event) error {
 		return err
 	}
 	return client.SendEvents(ctx, em...)
+}
+
+func (s *ITOMSink) sendCRADeadline(ctx context.Context, cfg Config, ev events.Event) error {
+	var deadline events.CRADeadline
+	if err := json.Unmarshal(ev.Payload, &deadline); err != nil {
+		return err
+	}
+	info, err := json.Marshal(deadline)
+	if err != nil {
+		return err
+	}
+	client, err := s.newClient(cfg)
+	if err != nil {
+		return err
+	}
+	status, severity := "due soon", "4"
+	if ev.Type == events.CRADeadlineOverdue {
+		status, severity = "overdue", "2"
+	}
+	return client.SendEvents(ctx, Event{
+		Source: "Fides-Compliance", EventClass: "CRAReportingDeadline", Node: deadline.CaseID.String(),
+		MetricName: deadline.Stage, Severity: severity, AdditionalInfo: string(info),
+		Description: fmt.Sprintf("CRA %s %s (deadline %s)", deadline.Stage, status, deadline.DueAt.UTC().Format(time.RFC3339)),
+		MessageKey:  messageKey(ev.Type, deadline.CaseID.String(), fmt.Sprintf("%s:%d", deadline.Stage, deadline.Revision)),
+	})
 }
 
 // messageKey is a stable de-dup key so repeated snapshots update the same alert

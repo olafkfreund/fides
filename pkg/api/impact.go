@@ -95,6 +95,15 @@ func (s *Server) handleRecordVEX(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"id": id, "cve": req.CVE, "status": req.Status})
 }
 
+// vexSuppressesArtifact uses the artifact_vulnerabilities alias av.
+const vexSuppressesArtifact = `SELECT 1 FROM vex_statements vx
+		     WHERE vx.org_id = av.org_id AND vx.cve_id = av.cve_id
+		       AND vx.status = 'not_affected'
+		       AND (vx.product = '' OR vx.product = av.artifact_sha256
+		         OR EXISTS (SELECT 1 FROM sbom_components sc
+		                    WHERE sc.org_id = av.org_id AND sc.artifact_sha256 = av.artifact_sha256
+		                      AND sc.purl <> '' AND sc.purl = vx.product))`
+
 // handleImpact answers "which artifacts and running environments are affected by
 // CVE-X?", applying VEX not_affected suppression so the result reflects
 // exploitable exposure rather than raw scanner output.
@@ -128,14 +137,7 @@ func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
 		 -- dropped by the nil-env check below.
 		 LEFT JOIN environments e ON e.id = es.environment_id AND e.org_id = av.org_id
 		 WHERE av.org_id = $1 AND av.cve_id = $2
-		   AND NOT EXISTS (
-		     SELECT 1 FROM vex_statements vx
-		     WHERE vx.org_id = av.org_id AND vx.cve_id = av.cve_id
-		       AND vx.status = 'not_affected'
-		       AND (vx.product = '' OR vx.product = av.artifact_sha256
-		         OR EXISTS (SELECT 1 FROM sbom_components sc
-		                    WHERE sc.org_id = av.org_id AND sc.artifact_sha256 = av.artifact_sha256
-		                      AND sc.purl <> '' AND sc.purl = vx.product)))
+		   AND NOT EXISTS (`+vexSuppressesArtifact+`)
 		 ORDER BY a.name, e.name NULLS LAST`, orgID, cve)
 	if err != nil {
 		internalError(w, err)
@@ -200,14 +202,7 @@ func (s *Server) handleImpact(w http.ResponseWriter, r *http.Request) {
 		`SELECT count(DISTINCT av.artifact_sha256)
 		 FROM artifact_vulnerabilities av
 		 WHERE av.org_id = $1 AND av.cve_id = $2
-		   AND EXISTS (
-		     SELECT 1 FROM vex_statements vx
-		     WHERE vx.org_id = av.org_id AND vx.cve_id = av.cve_id
-		       AND vx.status = 'not_affected'
-		       AND (vx.product = '' OR vx.product = av.artifact_sha256
-		         OR EXISTS (SELECT 1 FROM sbom_components sc
-		                    WHERE sc.org_id = av.org_id AND sc.artifact_sha256 = av.artifact_sha256
-		                      AND sc.purl <> '' AND sc.purl = vx.product)))`, orgID, cve).Scan(&suppressed); err != nil {
+		   AND EXISTS (`+vexSuppressesArtifact+`)`, orgID, cve).Scan(&suppressed); err != nil {
 		internalError(w, err)
 		return
 	}
