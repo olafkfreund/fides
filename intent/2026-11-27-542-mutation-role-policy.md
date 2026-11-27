@@ -24,4 +24,4 @@ Preserve tenant checks, public signed callbacks, and existing delegated approval
 
 ## Open questions
 
-Operations without a documented minimum role require a separate policy decision.
+The owner approved Admin for governance and Writer or Admin for evidence and routine operations. Explicit approval delegation remains available under its existing capability rules.
