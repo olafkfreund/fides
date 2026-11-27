@@ -44,6 +44,7 @@ func TestIntegrationSoDSurvivesClientDisconnect(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])

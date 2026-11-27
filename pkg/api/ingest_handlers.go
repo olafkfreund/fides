@@ -29,51 +29,6 @@ import (
 // post from every cluster. handleReportSnapshot is also where a shadow change
 // is first detected, by comparing running digests against registered artifacts.
 
-type createAttestationTypeReq struct {
-	OrgID       string   `json:"org_id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Schema      string   `json:"schema"`
-	JQRules     []string `json:"jq_rules"`
-}
-
-func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Request) {
-	var req createAttestationTypeReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var err error
-
-	attType := &models.AttestationType{
-		ID:          uuid.New(),
-		OrgID:       orgID,
-		Name:        req.Name,
-		Description: req.Description,
-		Schema:      req.Schema,
-		JQRules:     req.JQRules,
-		CreatedAt:   time.Now(),
-	}
-
-	query := `INSERT INTO attestation_types (id, org_id, name, description, schema, jq_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(attType)
-}
-
 type reportAttestationReq struct {
 	TrailID             string `json:"trail_id"`
 	ArtifactSHA256      string `json:"artifact_sha256"`
@@ -150,6 +105,11 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.Payload = string(decrypted)
 	}
 
+	if !json.Valid([]byte(req.Payload)) {
+		http.Error(w, "invalid attestation payload JSON", http.StatusBadRequest)
+		return
+	}
+
 	var artifactSHA *string
 	if req.ArtifactSHA256 != "" {
 		artifactSHA = &req.ArtifactSHA256
@@ -174,31 +134,13 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Fetch rules for verification, scoped to the caller's org: attestation_types
-	// is org-scoped (UNIQUE(org_id,name)), so an unscoped lookup could apply
-	// another tenant's JQ rules for a same-named type (#326).
 	orgID := callerOrg
-	var rules []string
-	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 AND org_id = $2 LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName, orgID).Scan(pq.Array(&rules))
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	check, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, req.TypeName, req.Payload)
+	if err != nil {
 		internalError(w, err)
 		return
 	}
-
-	// Evaluate JQ rules
-	isCompliant := true
-	if len(rules) > 0 {
-		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(r.Context(), req.Payload, rules)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		if !ok {
-			isCompliant = false
-			log.Printf("Compliance check failed for rules: %v", failedRules)
-		}
-	}
+	isCompliant := check.compliant
 
 	// code.authorship: an AI-authored change must carry a human reviewer to be
 	// compliant, so a control requiring code.authorship holds the change gate on
@@ -224,6 +166,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		TypeName:            req.TypeName,
 		Payload:             req.Payload,
 		IsCompliant:         isCompliant,
+		ValidationErrors:    check.reasons,
 		SignedBy:            req.SignedBy,
 		Signature:           req.Signature,
 		SignatureAlgorithm:  req.SignatureAlgorithm,

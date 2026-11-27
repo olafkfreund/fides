@@ -41,6 +41,7 @@ func TestSBOMIngestionIntegration(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 	// sbom_components is not yet baked into schema.sql (it ships as an
 	// additive migration for existing databases); apply it explicitly here.
 	migration, err := os.ReadFile(filepath.Join("..", "..", "pkg", "db", "migrations", "0012_sbom_components.sql"))

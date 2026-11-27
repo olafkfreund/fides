@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 
 	"fides/pkg/events"
 	"fides/pkg/models"
@@ -218,21 +217,22 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	}
 	payloadJSON, _ := json.Marshal(payload)
 
-	// Evaluate against the servicenow-change attestation type's jq rules.
-	var rules pq.StringArray
-	_ = s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT jq_rules FROM attestation_types WHERE name = 'servicenow-change' AND org_id = $1 LIMIT 1`, orgID).Scan(&rules)
-	rulesOK, failed, _ := s.PolicyEngine.EvaluateAttestation(r.Context(), string(payloadJSON), []string(rules))
-	compliant := found && rulesOK
+	check, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, "servicenow-change", string(payloadJSON))
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	compliant := found && check.compliant
 
 	// Record the attestation on the trail (with tamper-evidence chain).
 	if err := s.appendAttestation(r.Context(), &models.Attestation{
-		ID:          uuid.New(),
-		TrailID:     trailID,
-		Name:        "servicenow-change-check",
-		TypeName:    "servicenow-change",
-		Payload:     string(payloadJSON),
-		IsCompliant: compliant,
+		ID:               uuid.New(),
+		TrailID:          trailID,
+		Name:             "servicenow-change-check",
+		TypeName:         "servicenow-change",
+		Payload:          string(payloadJSON),
+		IsCompliant:      compliant,
+		ValidationErrors: check.reasons,
 	}, nil); err != nil {
 		internalError(w, err)
 		return
@@ -249,7 +249,7 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 		"compliant":     compliant,
 		"found":         found,
 		"change_number": str2(payload["number"]),
-		"failed_rules":  failed,
+		"failed_rules":  check.failedRules,
 	})
 }
 

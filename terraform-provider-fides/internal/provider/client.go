@@ -18,6 +18,16 @@ type Client struct {
 	http     *http.Client
 }
 
+type apiError struct {
+	method, path string
+	status       int
+	body         string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("fides API %s %s -> %d: %s", e.method, e.path, e.status, e.body)
+}
+
 func NewClient(endpoint, token string) *Client {
 	return &Client{Endpoint: endpoint, Token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -52,7 +62,7 @@ func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, err
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("fides API %s %s -> %d: %s", method, req.URL.Path, resp.StatusCode, string(out))
+		return nil, nil, &apiError{method: method, path: req.URL.Path, status: resp.StatusCode, body: string(out)}
 	}
 	return out, resp.Header, nil
 }

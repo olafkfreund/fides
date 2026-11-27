@@ -71,6 +71,7 @@ func attestationChainFixture(t *testing.T) (*sql.DB, uuid.UUID, uuid.UUID) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])

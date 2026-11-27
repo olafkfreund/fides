@@ -22,6 +22,12 @@ Line references are from the reviewed base. Refresh them after dependent changes
 2. **pkg/api/server.go:184 and pkg/db/migrations/** — Expose tenant-scoped type CRUD and list routes, document them in Swagger, and add a migration for persisted reasons. Bound list reads in accordance with the pagination contract. Keep `0001_init.sql` and `schema.sql` byte-identical by adding a migration and applying it in relevant test setup.
 3. **cmd/cli/main.go:35–222, portal/src/app/(portal)/attestations/page.tsx and terraform-provider-fides/internal/provider/provider.go:66** — Add schema-file input and type management, inspect schemas and failure reasons in the portal, and register a Terraform resource with import, read, update and delete behavior. Use the established provider resource and client patterns. Document migration and correction of invalid definitions in maintained docs, with copies kept in sync.
 
+### Implementation decisions
+
+1. Use `github.com/santhosh-tekuri/jsonschema/v6` for Draft 2020-12. Its validator has no cancellation API, so the server performs compilation and validation in bounded child processes of the server executable. Each child has a deadline, with CPU and data-memory limits on Linux. The same evaluator covers direct reports, flag changes and ServiceNow checks that already evaluate tenant rules.
+2. `PATCH` preserves an omitted schema and clears one set to JSON null or an empty string. Check the size of the PostgreSQL-normalized definition before storing a schema. Existing JSON Schema values remain subject to validation. Validation reasons use the new `0029_attestation_validation_errors.sql` migration and sit alongside the payload. Existing ledger hashes keep their current format.
+3. Use the validator's default Go regular-expression engine. Document its syntax for `pattern` and `patternProperties`.
+
 ## Risks
 
 There may be existing invalid schema values because writes were not compiled. Document remediation and keep empty types compatible. Terraform adoption needs a clear import and update contract. Historical evidence retains its recorded verdict and input.

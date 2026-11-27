@@ -29,6 +29,19 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
 
+For custom evidence, an administrator can attach a Draft 2020-12 JSON Schema
+to the attestation type.
+
+```bash
+fides attestation-type create --name release-check --schema ./release-check.schema.json
+```
+
+Fides evaluates the schema and any jq rules when it records the attestation.
+Schema failures make the attestation non-compliant and appear in the
+attestation's validation errors. The submitted payload is recorded separately.
+Use local references within the schema document and Go-compatible regular
+expressions in `pattern` and `patternProperties`.
+
 `fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
 persists a row per component (name, version, purl, licenses), linked to the
 artifact — so you can search across every SBOM ever attested:
