@@ -691,6 +691,12 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	op, r := s.beginRecording(w, r, req, false)
+	if op == nil {
+		return
+	}
+	defer op.rollback()
+
 	trail := &models.Trail{
 		ID:            uuid.New(),
 		FlowID:        flowID,
@@ -726,9 +732,7 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(trail)
+	op.created(w, r.Context(), trail)
 }
 
 // handleAdmissionValidate is the Kubernetes ValidatingAdmissionWebhook entry
