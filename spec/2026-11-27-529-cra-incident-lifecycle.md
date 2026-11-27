@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 529
 intent: intent/2026-11-27-529-cra-incident-lifecycle.md
 ---
