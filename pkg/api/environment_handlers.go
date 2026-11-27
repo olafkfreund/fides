@@ -91,6 +91,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
+	defer rows.Close()
 
 	// Complete detailed Environment view model mapping to what frontend app.js expects
 	type RuntimeArtifact struct {
@@ -120,7 +121,6 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description, &ev.Archived); err != nil {
-			rows.Close()
 			internalError(w, err)
 			return
 		}
@@ -152,21 +152,22 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		            FROM snapshot_artifacts sa
 		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
 		            WHERE sa.snapshot_id = $1`
-		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		var running []RuntimeArtifact
-		for saRows.Next() {
-			var ra RuntimeArtifact
-			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-				running = append(running, ra)
+		running, err := func() ([]RuntimeArtifact, error) {
+			saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
+			if err != nil {
+				return nil, err
 			}
-		}
-		saRows.Close()
-		// A failed iteration must not read as a short result.
-		if err := saRows.Err(); err != nil {
+			defer saRows.Close()
+			var running []RuntimeArtifact
+			for saRows.Next() {
+				var ra RuntimeArtifact
+				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
+					running = append(running, ra)
+				}
+			}
+			return running, saRows.Err()
+		}()
+		if err != nil {
 			internalError(w, err)
 			return
 		}

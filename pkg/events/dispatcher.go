@@ -102,11 +102,11 @@ func (d *Dispatcher) DispatchBatch(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("claim: %w", err)
 	}
+	defer rows.Close()
 	var batch []Event
 	for rows.Next() {
 		var ev Event
 		if err := rows.Scan(&ev.ID, &ev.OrgID, &ev.Type, &ev.Payload, &ev.Attempts, &ev.CreatedAt); err != nil {
-			rows.Close()
 			return 0, fmt.Errorf("scan: %w", err)
 		}
 		batch = append(batch, ev)
