@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2, Archive, ArchiveRestore } from "lucide-react";
-import { apiList, apiPost } from "@/lib/api";
+import { ApiError, apiList, apiPost } from "@/lib/api";
 import { usePagedList } from "@/lib/usePagedList";
 import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
@@ -31,6 +31,7 @@ export default function Environments() {
   const [filter, setFilter] = useState("");
   const [conns, setConns] = useState<MCPConn[]>([]);
   const [checks, setChecks] = useState<Record<string, Check>>({});
+  const [verificationDenied, setVerificationDenied] = useState(false);
   const [allow, setAllow] = useState<Approval[]>([]);
   const [advanced, setAdvanced] = useState(false);
   // advanced / manual
@@ -75,6 +76,11 @@ export default function Environments() {
         });
         setChecks((m) => ({ ...m, [c.name]: { loading: false, verdict: v } }));
       } catch (e) {
+        if (e instanceof ApiError && e.status === 403) {
+          setVerificationDenied(true);
+          setChecks({});
+          return;
+        }
         setChecks((m) => ({ ...m, [c.name]: { loading: false, error: String((e as Error).message || e) } }));
       }
     }
@@ -86,7 +92,7 @@ export default function Environments() {
       const list = c || [];
       setConns(list);
       if (list.length) setServer(list[0].name);
-      runChecks(id, list);
+      if (!verificationDenied) runChecks(id, list);
     }).catch(() => setConns([]));
     apiList<Approval>(`/api/v1/environments/${id}/allowlist`).then((a) => setAllow(a || [])).catch(() => setAllow([]));
   };
@@ -100,7 +106,15 @@ export default function Environments() {
         environment_id: sel, server_name: server, tool_name: tool, arguments: {},
         rules: rules.split("\n").map((s) => s.trim()).filter(Boolean),
       }));
-    } catch (e) { setErr(String((e as Error).message || e)); }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setVerificationDenied(true);
+        setChecks({});
+        setVerdict(null);
+      } else {
+        setErr(String((e as Error).message || e));
+      }
+    }
   };
   const runQuery = async () => {
     setErr(""); setQueryOut("");
@@ -206,13 +220,15 @@ export default function Environments() {
           right={
             <div className="flex items-center gap-3">
               {overall.length > 0 && <Chip tone={allCompliant ? "ok" : "bad"}>{allCompliant ? "ALL COMPLIANT" : "ISSUES FOUND"}</Chip>}
-              <button onClick={() => loadEnv(sel)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs"><RefreshCw className="size-3.5" /> Re-run</button>
+              {!verificationDenied && <button onClick={() => loadEnv(sel)} className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs"><RefreshCw className="size-3.5" /> Re-run</button>}
             </div>
           }
         >
           <p className="mb-4 flex items-start gap-2 rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
             <Info className="mt-0.5 size-4 shrink-0 text-primary" />
-            <span>Fides connects to this environment&apos;s <strong>MCP servers</strong> (e.g. the in-cluster <code className="rounded bg-muted px-1">fides-mcp-sensor</code>) and automatically runs runtime compliance checks — no queries to write. Each connection below is checked for workload readiness on load.</span>
+            {verificationDenied
+              ? <span>Live verification requires the Writer or Admin role.</span>
+              : <span>Fides checks workload readiness against this environment&apos;s MCP servers.</span>}
           </p>
 
           {conns.length === 0 ? (
@@ -274,7 +290,7 @@ export default function Environments() {
               </div>
               <label className="text-sm"><span className="text-muted-foreground">Compliance jq rules (one per line)</span><textarea className={`${input} h-24`} value={rules} onChange={(e) => setRules(e.target.value)} /></label>
               <div className="flex gap-2">
-                <button onClick={runManualVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify</button>
+                {!verificationDenied && <button onClick={runManualVerify} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Verify</button>}
                 <button onClick={runQuery} className="rounded-md border border-border px-4 py-2 text-sm">Query State</button>
               </div>
               {verdict && <div className={`text-sm font-semibold ${verdict.compliant ? "text-green-400" : "text-red-400"}`}>{verdict.compliant ? "✅ COMPLIANT" : `❌ NON-COMPLIANT — ${(verdict.failed_rules || []).join(" | ")}`}</div>}

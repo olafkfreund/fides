@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"net/mail"
@@ -97,20 +99,12 @@ func validApproverIdentity(s string) bool {
 //
 // It optionally accepts on_behalf_of to record a real human approval attributed
 // to a logged-in user when the caller is a shared service token (the SARC portal
-// case). Delegation is default-deny and gated by FIDES_DELEGATED_APPROVAL_ENABLED
-// plus an Admin service principal; see resolveApprovalDelegation.
+// case). Delegation can also admit a read-only service account when enabled
+// and explicitly granted; see resolveApprovalDelegation.
 func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 	p, ok := auth.FromContext(r.Context())
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	trailID, err := uuid.Parse(r.PathValue("id"))
-	if err != nil {
-		http.Error(w, "invalid trail id", http.StatusBadRequest)
-		return
-	}
-	if !s.requireTrailInOrg(w, r, trailID) {
 		return
 	}
 	var req struct {
@@ -121,10 +115,29 @@ func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 		Role string `json:"role"`
 		// OnBehalfOf, when set and honored, attributes this approval to a human
 		// approver (email) rather than the calling service token. Honored only
-		// under the config + role gate (see resolveApprovalDelegation).
+		// under the delegation gate (see resolveApprovalDelegation).
 		OnBehalfOf string `json:"on_behalf_of"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	decodeErr := json.NewDecoder(r.Body).Decode(&req)
+	if decodeErr != nil {
+		req.OnBehalfOf = ""
+	}
+	del := resolveApprovalDelegation(delegatedApprovalEnabled(), p, req.OnBehalfOf)
+	if !del.honored && !requireMutationRole(w, r, auth.RoleWriter) {
+		return
+	}
+	if decodeErr != nil && !errors.Is(decodeErr, io.EOF) {
+		badRequest(w, decodeErr)
+		return
+	}
+	trailID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid trail id", http.StatusBadRequest)
+		return
+	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	role := strings.TrimSpace(strings.ToLower(req.Role))
 	if role == "" {
 		role = "approver"
@@ -139,7 +152,6 @@ func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 	kind := p.Kind
 	var delegatedBy any // nil => SQL NULL
 
-	del := resolveApprovalDelegation(delegatedApprovalEnabled(), p, req.OnBehalfOf)
 	if del.honored {
 		// A delegated approval is being recorded — validate the target identity.
 		if !validApproverIdentity(del.onBehalfOf) {

@@ -59,13 +59,16 @@ Roles, in short:
 
 | Role | Use it for |
 |:--|:--|
-| `Writer` | Pipelines. Can record trails, artifacts, attestations, and snapshots. |
-| `Auditor` | Read-only. Dashboards, exports, evidence review. |
-| `Admin` | Required to change flows (including through AI chat), policies, integrations, and tenant configuration. Can also record evidence. |
+| `Writer` | Pipelines and routine operations. Can record trails, artifacts, attestations, snapshots, and training. Can propose remediation, reevaluate snapshot drift, submit ServiceNow change gates and incidents, and run environment MCP verification. |
+| `Viewer`, `Auditor` | Read-only access, including dashboards, exports, and evidence review. |
+| `Admin` | Required for flow writes (including through AI chat), policies, integrations, and tenant configuration. Also required for control exceptions, service ownership, logical environments and membership, environment registration and tags, allowlists, remediation decisions and application, attestation types, ServiceNow control links, and generic ServiceNow MCP tool calls. Can also perform Writer operations. |
 
-Authenticated users can use AI chat for reads. When delegated approvals are enabled,
-a service account with the `may_delegate_approvals` capability can record a trail
-approval on behalf of a human. Admin service principals are also eligible to delegate.
+Authenticated users can use AI chat for reads. Trail approvals require Writer or
+Admin by default. With `FIDES_DELEGATED_APPROVAL_ENABLED=true`, a service account
+with `may_delegate_approvals` can submit an approval even with a read-only role
+when `on_behalf_of` identifies a registered user in the same organization. Admin
+service principals are also eligible to delegate when enabled. The approval
+body is optional for direct approvals. Supply valid JSON when sending a body.
 See [the authorization inventory (#523)](https://github.com/olafkfreund/fides/issues/523).
 
 Same thing from the CLI:
@@ -135,8 +138,8 @@ fides verify-chain --trail $TRAIL      # exit 2 if the chain is broken
 Attestations are hash-linked: each one commits to the one before it. Editing
 history after the fact breaks the chain, and this command is how you show that.
 
-For evidence that has to stand up outside your own infrastructure, anchor the
-chain head to a public timestamp authority:
+For evidence that has to stand up outside your own infrastructure, use an Admin
+credential to anchor the chain head to a public timestamp authority:
 
 ```bash
 fides anchor --trail $TRAIL
@@ -239,8 +242,9 @@ Recording what you built answers half the question. The other half is whether
 that is what is actually running.
 
 **Portal:** **Environments** → **Advanced — custom check & add connection**.
-Fides connects to the environment's MCP servers (e.g. the in-cluster
-`fides-mcp-sensor`) and runs runtime compliance checks itself.
+Use Admin to register the environment and add an MCP connection, such as the
+in-cluster `fides-mcp-sensor`. Writer and Admin can report snapshots and run MCP
+verification.
 
 ```bash
 fides snapshot k8s --env $ENV_ID --namespace production
@@ -254,8 +258,7 @@ things: CI is not recording digests by value, or third-party images are not
 allowlisted. Both are covered in
 [Onboarding a repository](onboarding-a-repo.md).
 
-Images you do not build need explicit approval, or the environment can never go
-green:
+Use an Admin credential to allowlist approved third-party images:
 
 ```bash
 fides allowlist add --env $ENV_ID --sha $DIGEST --reason "vendor base image, reviewed 2026-08-20"
