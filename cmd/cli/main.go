@@ -80,7 +80,7 @@ func main() {
 	case "audit":
 		handleAudit(config, os.Args[2:])
 	case "verify-pack":
-		os.Exit(runVerifyPack(os.Stderr, os.Args[2:]))
+		os.Exit(runVerifyPack(os.Stdout, os.Args[2:]))
 	case "policy":
 		handlePolicy(config, os.Args[2:])
 	case "logical-env":

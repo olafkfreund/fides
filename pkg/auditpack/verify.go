@@ -96,6 +96,9 @@ func verifyZIP(raw []byte) (Manifest, map[string]*zip.File, error) {
 	if err != nil {
 		return Manifest{}, nil, fmt.Errorf("read ZIP: %w", err)
 	}
+	if len(z.File) > maxMembers {
+		return Manifest{}, nil, errors.New("audit pack member count limit exceeded")
+	}
 	files := make(map[string]*zip.File, len(z.File))
 	var total uint64
 	for _, f := range z.File {

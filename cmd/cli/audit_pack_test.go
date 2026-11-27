@@ -209,6 +209,7 @@ func TestVerifyPackLocalFixtures(t *testing.T) {
 	_, previousPub := archiveKeyFixture(t, dir, "previous.pem")
 	roots, token := timestampFixture(t, dir)
 	_, badRoots := archiveKeyFixture(t, dir, "not-a-root.pem")
+	untrustedRoots, _ := timestampFixture(t, t.TempDir())
 	provider, cosign, policy := signerFixtures(t, dir)
 	run := func(t *testing.T, zip, sig []byte, options []string, want int, message string) {
 		t.Helper()
@@ -227,6 +228,14 @@ func TestVerifyPackLocalFixtures(t *testing.T) {
 	run(t, valid, validSig, []string{"--archive-key", pub}, 2, "no local signer policy")
 	run(t, valid, validSig, []string{"--archive-key", pub, "--signer-policy", policy}, 2, "local TSA roots")
 	run(t, valid, validSig, []string{"--archive-key", pub, "--tsa-roots", badRoots}, 1, "no certificates")
+	run(t, valid, validSig, []string{"--archive-key", pub, "--tsa-roots", untrustedRoots, "--signer-policy", policy}, 2, "certificate signed by unknown authority")
+	config, err := os.ReadFile(policy)
+	wrongSigner := auditFile(t, dir, "wrong-signer.json", bytes.ReplaceAll(auditValue(t, config, err), []byte("signer@example.test"), []byte("different@example.test")))
+	run(t, valid, validSig, []string{"--archive-key", pub, "--tsa-roots", roots, "--signer-policy", wrongSigner}, 2, "signer proof")
+	otherDigest := strings.Repeat("a", 64)
+	alteredProvider := strings.Replace(provider, auditDigest([]byte("provider artifact")), otherDigest, 1)
+	alteredZIP, alteredSig := makeAuditFixture(t, key, alteredProvider, cosign, token, nil)
+	run(t, alteredZIP, alteredSig, opts, 2, "does not match the")
 	changed := bytes.Clone(valid)
 	changed[len(changed)-1] ^= 1
 	run(t, changed, validSig, opts, 2, "signature does not match")
@@ -247,12 +256,12 @@ func TestVerifyPackLocalFixtures(t *testing.T) {
 }
 
 func TestDownloadSignedAuditPublishesPair(t *testing.T) {
-	raw := []byte("fixture download body")
-	key, _ := archiveKeyFixture(t, t.TempDir(), "archive.pem")
-	digest := sha256.Sum256(raw)
-	sig, err := auditpack.Sign(key, digest[:])
-	sig = auditValue(t, sig, err)
-	for _, tc := range []string{"success", "existing ZIP", "signature symlink", "missing header", "truncated"} {
+	fixtures := t.TempDir()
+	key, pub := archiveKeyFixture(t, fixtures, "archive.pem")
+	roots, token := timestampFixture(t, fixtures)
+	provider, cosign, policy := signerFixtures(t, fixtures)
+	raw, sig := makeAuditFixture(t, key, provider, cosign, token, nil)
+	for _, tc := range []string{"success", "existing ZIP", "signature symlink", "missing header", "malformed header", "truncated"} {
 		t.Run(tc, func(t *testing.T) {
 			dir := t.TempDir()
 			dest := filepath.Join(dir, "pack.zip")
@@ -270,6 +279,9 @@ func TestDownloadSignedAuditPublishesPair(t *testing.T) {
 				}
 				if tc != "missing header" {
 					w.Header().Set(auditpack.SignatureHeader, base64.StdEncoding.EncodeToString(sig))
+				}
+				if tc == "malformed header" {
+					w.Header().Set(auditpack.SignatureHeader, base64.StdEncoding.EncodeToString([]byte("{}")))
 				}
 				if tc == "truncated" {
 					w.Header().Set("Content-Length", strconv.Itoa(len(raw)+10))
@@ -293,6 +305,10 @@ func TestDownloadSignedAuditPublishesPair(t *testing.T) {
 				}
 				if len(files) != 2 {
 					t.Fatalf("unexpected files: %v", files)
+				}
+				var out bytes.Buffer
+				if status := runVerifyPack(&out, []string{dest, "--archive-key", pub, "--tsa-roots", roots, "--signer-policy", policy}); status != 0 {
+					t.Fatalf("downloaded pack verification exited %d: %s", status, &out)
 				}
 			case "existing ZIP":
 				got, err := os.ReadFile(dest)

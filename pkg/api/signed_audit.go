@@ -197,7 +197,7 @@ func (s *Server) readSignedAuditSnapshot(ctx context.Context, orgID, trailID uui
 	}
 	chain := make([]auditpack.ChainRecord, 0, len(entries))
 	for _, entry := range entries {
-		chain = append(chain, auditpack.ChainRecord{ID: entry.id, Entry: entry.Entry})
+		chain = append(chain, auditpack.ChainRecord{ID: entry.id, ArtifactSHA256: entry.artifactSHA256, Entry: entry.Entry})
 		if entry.ContentHash != "" {
 			manifest.ChainHead = entry.ContentHash
 		}

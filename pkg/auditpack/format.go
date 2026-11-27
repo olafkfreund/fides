@@ -45,8 +45,9 @@ type Manifest struct {
 }
 
 type ChainRecord struct {
-	ID    string       `json:"id"`
-	Entry ledger.Entry `json:"entry"`
+	ID             string       `json:"id"`
+	ArtifactSHA256 *string      `json:"artifact_sha256,omitempty"`
+	Entry          ledger.Entry `json:"entry"`
 }
 
 type Anchor struct {

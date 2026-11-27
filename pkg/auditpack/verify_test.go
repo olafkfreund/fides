@@ -13,7 +13,25 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"fides/pkg/cosignverify"
+	"fides/pkg/ledger"
 )
+
+func TestRetainedProofMustMatchLegacyArtifactLink(t *testing.T) {
+	recorded := strings.Repeat("a", 64)
+	other := strings.Repeat("b", 64)
+	proof, err := json.Marshal(map[string]any{
+		"digest": other, "proof": cosignverify.Proof{Bundle: []byte(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := ChainRecord{Entry: ledger.Entry{Version: 1, TypeName: "cosign-verification", Payload: string(proof)}}
+	if _, err := verifySignerProof(record, &recorded, false, nil, nil); err == nil || !strings.Contains(err.Error(), "recorded artifact") {
+		t.Fatalf("expected a different linked artifact to fail proof verification, got %v", err)
+	}
+}
 
 func TestArchiveMembership(t *testing.T) {
 	pub, key, err := ed25519.GenerateKey(rand.Reader)

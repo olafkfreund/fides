@@ -53,8 +53,8 @@ use their stored proof formats in the audit-pack export and verifier.
   Derive the key ID from SHA-256 of the raw public key and separate the
   archive signature domain from other Fides signatures.
 - The manifest stores Version, TrailID, ChainHead, Coverage, Members, and
-  Attachments. Write ordered records to `chain.json` using
-  `ChainRecord{ID string, Entry ledger.Entry}` and time proofs to
+  Attachments. Write ordered records to `chain.json` with
+  record ID, recorded artifact digest, and ledger entry, and time proofs to
   `anchors.json` using `Anchor{Head string, Token []byte}`. Include
   tenant trail metadata, artifacts, and approvals as separately hashed
   members. The v2 chain records carry the captured policy definitions.

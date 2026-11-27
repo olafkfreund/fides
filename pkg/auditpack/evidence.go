@@ -66,6 +66,9 @@ func (r *Result) verifyEvidence(files map[string]*zip.File, trust Trust) error {
 	if err := readJSONMember(files, "anchors.json", &anchors, true); err != nil {
 		return err
 	}
+	if records == nil || anchors == nil || artifacts == nil || approvals == nil {
+		return errors.New("chain, anchors, artifacts, and approvals must be JSON arrays")
+	}
 	chain := make([]ledger.Entry, 0, len(records))
 	hashes := make(map[string]bool, len(records))
 	versions := make(map[string]int, len(records))
@@ -131,7 +134,12 @@ func (r *Result) verifyEvidence(files map[string]*zip.File, trust Trust) error {
 				}
 			}
 		}
-		missing, err := verifySignerProof(record, inputs.ArtifactSHA256, trust.Signers, verifier)
+		artifact := record.ArtifactSHA256
+		if record.Entry.Version == 2 {
+			artifact = inputs.ArtifactSHA256
+		}
+		standalone := inputs.Signature != nil && *inputs.Signature != ""
+		missing, err := verifySignerProof(record, artifact, standalone, trust.Signers, verifier)
 		if err != nil {
 			return fmt.Errorf("signer proof at %q: %w", record.ID, err)
 		}
@@ -202,13 +210,13 @@ func (r *Result) verifyAttachments(files map[string]*zip.File, versions map[stri
 	return nil
 }
 
-func verifySignerProof(record ChainRecord, artifact *string, policies map[string]cosignverify.OfflineOptions, verifier *cosignverify.SigstoreVerifier) (missing bool, err error) {
+func verifySignerProof(record ChainRecord, artifact *string, standalone bool, policies map[string]cosignverify.OfflineOptions, verifier *cosignverify.SigstoreVerifier) (missing bool, err error) {
 	entry := record.Entry
 	if !strings.HasPrefix(strings.TrimSpace(entry.Payload), "{") {
 		if entry.TypeName == "cosign-verification" {
 			return false, errors.New("cosign payload must be an object")
 		}
-		return false, nil
+		return standalone, nil
 	}
 	var payload map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(entry.Payload), &payload); err != nil {
@@ -254,15 +262,15 @@ func verifySignerProof(record ChainRecord, artifact *string, policies map[string
 		}
 	default:
 		_, fromProvider := payload["provider"]
-		return entry.TypeName == "cosign-verification" || (entry.TypeName == "slsa-provenance" && fromProvider), nil
+		return standalone || entry.TypeName == "cosign-verification" || (entry.TypeName == "slsa-provenance" && fromProvider), nil
 	}
 
 	digest = strings.ToLower(digest)
 	if !validDigest(digest) {
 		return false, errors.New("missing or invalid signer artifact digest")
 	}
-	if entry.Version == 2 && (artifact == nil || !strings.EqualFold(*artifact, digest)) {
-		return false, errors.New("signer digest does not match the committed artifact")
+	if artifact == nil || !strings.EqualFold(*artifact, digest) {
+		return false, errors.New("signer digest does not match the recorded artifact")
 	}
 	policy, ok := policies[digest]
 	if !ok {
