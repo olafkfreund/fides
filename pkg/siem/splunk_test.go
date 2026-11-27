@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -68,5 +69,51 @@ func TestSplunkSinkErrorOnNon200(t *testing.T) {
 	// A non-200 must return an error so the dispatcher retries (not silently drop).
 	if err := sink.Deliver(context.Background(), events.Event{CreatedAt: time.Now()}); err == nil {
 		t.Fatal("expected an error on non-200 HEC response")
+	}
+}
+
+type collectorTransport func(*http.Request) (*http.Response, error)
+
+func (f collectorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestSinksDeliverToConfiguredPrivateCollectors(t *testing.T) {
+	const hecURL = "https://10.0.0.10:8088/services/collector/event"
+	const otlpURL = "http://10.0.0.20:4318/v1/logs"
+	splunk := NewSplunkSink(hecURL, "test-token")
+	otlp := NewOTLPSink(otlpURL, "")
+
+	for _, tc := range []struct {
+		sink   events.Sink
+		client *http.Client
+		url    string
+		auth   []string
+		status int
+	}{
+		{splunk, splunk.client, hecURL, []string{"Splunk test-token"}, http.StatusOK},
+		{otlp, otlp.client, otlpURL, nil, http.StatusAccepted},
+	} {
+		t.Run(tc.sink.Name(), func(t *testing.T) {
+			called := false
+			tc.client.Transport = collectorTransport(func(req *http.Request) (*http.Response, error) {
+				defer req.Body.Close()
+				called = true
+				if req.Method != http.MethodPost || req.URL.String() != tc.url {
+					t.Errorf("request = %s %s, want POST %s", req.Method, req.URL, tc.url)
+				}
+				if auth := req.Header.Values("Authorization"); !slices.Equal(auth, tc.auth) {
+					t.Errorf("Authorization = %q, want %q", auth, tc.auth)
+				}
+				return &http.Response{StatusCode: tc.status, Body: http.NoBody}, nil
+			})
+			ev := events.Event{Type: "compliance.evaluated", Payload: json.RawMessage(`{}`)}
+			if err := tc.sink.Deliver(t.Context(), ev); err != nil {
+				t.Fatalf("Deliver: %v", err)
+			}
+			if !called {
+				t.Fatal("collector request was never sent")
+			}
+		})
 	}
 }

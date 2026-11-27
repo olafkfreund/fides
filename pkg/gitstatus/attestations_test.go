@@ -43,13 +43,17 @@ func TestFetchGitHubAttestations(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
+	bundlePath := "/repos/acme/widgets/attestations/sha256:" + testDigest + "/bundle"
 	mux.HandleFunc("/repos/acme/widgets/attestations/", func(w http.ResponseWriter, r *http.Request) {
 		gotListPath = r.URL.Path
 		gotAuth = r.Header.Get("Authorization")
 		gotAccept = r.Header.Get("Accept")
-		fmt.Fprintf(w, `{"attestations":[{"repository_id":1,"bundle_url":"%s/repos/acme/widgets/attestations/sha256:%s/bundle"}]}`, srv.URL, testDigest)
+		fmt.Fprintf(w, `{"attestations":[{"repository_id":1,"bundle_url":%q}]}`, srv.URL+bundlePath)
 	})
-	mux.HandleFunc("/repos/acme/widgets/attestations/sha256:"+testDigest+"/bundle", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(bundlePath, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer tok123" {
+			t.Error("expected an authenticated GET to the GitHub bundle endpoint")
+		}
 		w.Write([]byte(bundleJSON))
 	})
 
@@ -62,6 +66,9 @@ func TestFetchGitHubAttestations(t *testing.T) {
 	}
 	if statements[0].PredicateType != "https://slsa.dev/provenance/v1" {
 		t.Errorf("PredicateType = %q", statements[0].PredicateType)
+	}
+	if statements[0].SourceURL != srv.URL+bundlePath {
+		t.Errorf("SourceURL = %q, want %q", statements[0].SourceURL, srv.URL+bundlePath)
 	}
 	if !strings.Contains(gotListPath, "/repos/acme/widgets/attestations/sha256:"+testDigest) {
 		t.Errorf("unexpected list path: %s", gotListPath)
@@ -81,15 +88,19 @@ func TestFetchGitLabAttestations(t *testing.T) {
 	})
 
 	var gotListPath, gotToken string
+	const bundlePath = "/projects/group%2Fproject/attestations/1/download"
 	var srv *httptest.Server
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/download"):
+		case r.URL.EscapedPath() == bundlePath:
+			if r.Method != http.MethodGet || r.Header.Get("PRIVATE-TOKEN") != "glpat-xyz" {
+				t.Error("expected an authenticated GET to the GitLab bundle endpoint")
+			}
 			w.Write([]byte(bundleJSON))
 		default:
 			gotListPath = r.RequestURI
 			gotToken = r.Header.Get("PRIVATE-TOKEN")
-			fmt.Fprintf(w, `[{"iid":1,"predicate_type":"https://slsa.dev/provenance/v1","download_url":"%s/projects/group%%2Fproject/attestations/1/download"}]`, srv.URL)
+			fmt.Fprintf(w, `[{"iid":1,"predicate_type":"https://slsa.dev/provenance/v1","download_url":%q}]`, srv.URL+bundlePath)
 		}
 	}))
 	defer srv.Close()
@@ -100,6 +111,9 @@ func TestFetchGitLabAttestations(t *testing.T) {
 	}
 	if len(statements) != 1 {
 		t.Fatalf("got %d statements, want 1", len(statements))
+	}
+	if statements[0].SourceURL != srv.URL+bundlePath {
+		t.Errorf("SourceURL = %q, want %q", statements[0].SourceURL, srv.URL+bundlePath)
 	}
 	if !strings.Contains(gotListPath, "/projects/group%2Fproject/attestations/"+testDigest) {
 		t.Errorf("unexpected list path: %s", gotListPath)
