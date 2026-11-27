@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -16,6 +15,7 @@ import (
 	_ "github.com/lib/pq"
 
 	"fides/pkg/auth"
+	"fides/pkg/db"
 )
 
 // A Writer-scoped key holding may_delegate_approvals lifts a change-gate hold.
@@ -44,9 +44,8 @@ func TestWriterWithDelegationCapabilityLiftsTheChangeGate(t *testing.T) {
 	}
 	t.Cleanup(func() { pool.Close() })
 
-	schema, _ := os.ReadFile(filepath.Join("..", "..", "schema.sql"))
-	if _, err := pool.Exec(string(schema)); err != nil {
-		t.Fatalf("schema: %v", err)
+	if err := db.Migrate(context.Background(), pool); err != nil {
+		t.Fatal(err)
 	}
 
 	const (

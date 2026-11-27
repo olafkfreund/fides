@@ -549,8 +549,10 @@ Add this tool mapping to your configuration profile (`~/.config/Claude/claude_de
   "mcpServers": {
     "fides-mcp": {
       "command": "/usr/local/bin/fides-mcp",
+      "args": ["--read-only"],
       "env": {
-        "FIDES_SERVER_URL": "http://localhost:8191"
+        "FIDES_SERVER_URL": "http://localhost:8191",
+        "FIDES_API_TOKEN": "<read-only service-account API key>"
       }
     }
   }

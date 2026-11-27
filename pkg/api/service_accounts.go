@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -61,16 +64,17 @@ func (s *Server) authServiceAccountKey(ctx context.Context, token string) *auth.
 		expiresAt   *time.Time
 		revokedAt   *time.Time
 		mayDelegate bool
+		readOnly    bool
 	)
 	err := s.DB.QueryRowContext(ctx,
 		`SELECT sa.org_id, sa.role, sa.enabled, sa.may_delegate_approvals,
-		        k.id, k.key_hash, k.expires_at, k.revoked_at
+		        k.id, k.key_hash, k.expires_at, k.revoked_at, k.read_only
 		 FROM service_account_keys k JOIN service_accounts sa ON sa.id = k.service_account_id
-		 WHERE k.prefix = $1`, prefix).Scan(&orgID, &role, &enabled, &mayDelegate, &keyID, &keyHash, &expiresAt, &revokedAt)
+		 WHERE k.prefix = $1`, prefix).Scan(&orgID, &role, &enabled, &mayDelegate, &keyID, &keyHash, &expiresAt, &revokedAt, &readOnly)
 	if err != nil {
 		return nil
 	}
-	if !enabled || revokedAt != nil {
+	if !enabled || revokedAt != nil || (readOnly && role != auth.RoleViewer) {
 		return nil
 	}
 	if expiresAt != nil && time.Now().After(*expiresAt) {
@@ -79,9 +83,11 @@ func (s *Server) authServiceAccountKey(ctx context.Context, token string) *auth.
 	if !crypto.VerifyPassword(secret, keyHash) {
 		return nil
 	}
-	// Best-effort last-used stamp.
-	_, _ = s.DB.ExecContext(ctx, `UPDATE service_account_keys SET last_used_at = now() WHERE id = $1`, keyID)
-	return &auth.Principal{OrgID: orgID, Role: role, Kind: "service", MayDelegateApprovals: mayDelegate}
+	if !readOnly {
+		// Best-effort last-used stamp for unscoped keys.
+		_, _ = s.DB.ExecContext(ctx, `UPDATE service_account_keys SET last_used_at = now() WHERE id = $1`, keyID)
+	}
+	return &auth.Principal{OrgID: orgID, Role: role, Kind: "service", ReadOnly: readOnly, MayDelegateApprovals: mayDelegate && !readOnly}
 }
 
 // ----- management handlers (Admin only) -----
@@ -205,7 +211,7 @@ func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 	rows, err := s.queryPage(r, page,
-		`SELECT k.id, k.prefix, COALESCE(k.label,''), k.expires_at, k.revoked_at, k.last_used_at, k.created_at /* page keys */
+		`SELECT k.id, k.prefix, COALESCE(k.label,''), k.expires_at, k.revoked_at, k.last_used_at, k.created_at, k.read_only /* page keys */
 		 FROM service_account_keys k JOIN service_accounts sa ON sa.id = k.service_account_id
 		 WHERE sa.id = $1 AND sa.org_id = $2`, saID, orgID)
 	if err != nil {
@@ -218,12 +224,13 @@ func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Req
 		var id uuid.UUID
 		var prefix, label string
 		var expires, revoked, lastUsed, created *time.Time
-		if err := rows.Scan(&id, &prefix, &label, &expires, &revoked, &lastUsed, &created); err != nil {
+		var readOnly bool
+		if err := rows.Scan(&id, &prefix, &label, &expires, &revoked, &lastUsed, &created, &readOnly); err != nil {
 			internalError(w, err)
 			return
 		}
 		out = append(out, map[string]any{"id": id, "prefix": prefix, "label": label,
-			"expires_at": expires, "revoked_at": revoked, "last_used_at": lastUsed, "created_at": created})
+			"expires_at": expires, "revoked_at": revoked, "last_used_at": lastUsed, "created_at": created, "read_only": readOnly})
 	}
 	// A failed iteration must not read as a short result.
 	if err := rows.Err(); err != nil {
@@ -246,18 +253,32 @@ func (s *Server) handleIssueServiceAccountKey(w http.ResponseWriter, r *http.Req
 	var req struct {
 		Label        string `json:"label"`
 		ExpiresHours int    `json:"expires_hours"`
+		ReadOnly     bool   `json:"read_only"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&req); err != nil && err != io.EOF {
+		badRequest(w, err)
+		return
+	}
+	if err := decoder.Decode(new(json.RawMessage)); err != io.EOF {
+		badRequest(w, err)
+		return
+	}
 
 	// Ownership check (org-scoped).
-	var exists bool
-	if err := s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT EXISTS(SELECT 1 FROM service_accounts WHERE id = $1 AND org_id = $2)`, saID, p.OrgID).Scan(&exists); err != nil {
+	var role string
+	err = s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT role FROM service_accounts WHERE id = $1 AND org_id = $2`, saID, p.OrgID).Scan(&role)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "service account not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
 		internalError(w, err)
 		return
 	}
-	if !exists {
-		http.Error(w, "service account not found", http.StatusNotFound)
+	if req.ReadOnly && role != auth.RoleViewer {
+		http.Error(w, "read-only keys require a Viewer service account", http.StatusBadRequest)
 		return
 	}
 
@@ -277,15 +298,15 @@ func (s *Server) handleIssueServiceAccountKey(w http.ResponseWriter, r *http.Req
 		expiresAt = &t
 	}
 	if _, err := s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO service_account_keys (service_account_id, prefix, key_hash, label, expires_at)
-		 VALUES ($1, $2, $3, $4, $5)`, saID, prefix, hash, req.Label, expiresAt); err != nil {
+		`INSERT INTO service_account_keys (service_account_id, prefix, key_hash, label, expires_at, read_only)
+		 VALUES ($1, $2, $3, $4, $5, $6)`, saID, prefix, hash, req.Label, expiresAt, req.ReadOnly); err != nil {
 		internalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	// The full key is returned ONCE and never retrievable again.
-	json.NewEncoder(w).Encode(map[string]any{"api_key": full, "prefix": prefix, "expires_at": expiresAt})
+	json.NewEncoder(w).Encode(map[string]any{"api_key": full, "prefix": prefix, "expires_at": expiresAt, "read_only": req.ReadOnly})
 }
 
 func (s *Server) handleRevokeServiceAccountKey(w http.ResponseWriter, r *http.Request) {

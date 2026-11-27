@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,6 +74,36 @@ func TestPostRequestReturnsErrorOnServerFailure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "boom") {
 		t.Errorf("error %q should carry the server body", err)
+	}
+}
+
+func TestIssueReadOnlyServiceAccountKey(t *testing.T) {
+	if endpoint := os.Getenv("FIDES_TEST_KEY_ISSUE_ENDPOINT"); endpoint != "" {
+		handleServiceAccount(CLIConfig{ServerURL: endpoint}, []string{"issue-key", "--account", "fixture", "--read-only"})
+		return
+	}
+
+	for _, tc := range []struct {
+		name, scope string
+		wantSuccess bool
+	}{
+		{name: "supported", scope: `,"read_only":true`, wantSuccess: true},
+		{name: "legacy server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const token = "fixture-key"
+			server, got := recordingServer(t, `{"api_key":"`+token+`","prefix":"fixture"`+tc.scope+`}`)
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestIssueReadOnlyServiceAccountKey$")
+			cmd.Env = append(os.Environ(), "FIDES_TEST_KEY_ISSUE_ENDPOINT="+server.URL)
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != tc.wantSuccess || strings.Contains(string(output), token) != tc.wantSuccess {
+				t.Errorf("issuing scoped key from %s returned %v, output %q", tc.name, err, output)
+			}
+			if got.method != http.MethodPost || got.path != "/api/v1/tenant/service-accounts/fixture/keys" ||
+				!strings.Contains(got.raw, `"read_only":true`) {
+				t.Errorf("unexpected issue-key request: %+v", got)
+			}
+		})
 	}
 }
 

@@ -159,6 +159,10 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // queries and transactions share the same tenant scope. The connection is
 // released after the handler returns.
 func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
+	if p.ReadOnly && !readOnlyServiceRoute(r) {
+		http.Error(w, "route is outside the read-only key scope", http.StatusForbidden)
+		return
+	}
 	ctx := auth.WithPrincipal(r.Context(), p)
 
 	if db.RLSEnabled() && s.DB != nil {
@@ -172,6 +176,25 @@ func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *a
 	}
 
 	next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+// Only the audited MCP destinations are in scope. The trail change gate
+// writes evidence, and the ServiceNow status and CMDB reads can mint OAuth tokens.
+func readOnlyServiceRoute(r *http.Request) bool {
+	switch r.Method + " " + r.URL.EscapedPath() {
+	case "GET /api/v1/flows",
+		"GET /api/v1/environments",
+		"GET /api/v1/policies",
+		"GET /api/v1/compliance",
+		"GET /api/v1/search/artifacts",
+		"GET /api/v1/search/attestations",
+		"GET /api/v1/controls/coverage",
+		"GET /api/v1/metrics/deployment-frequency",
+		"GET /api/v1/servicenow/grounding",
+		"POST /api/v1/mcp": // The JSON-RPC dispatcher exposes only the curated reads.
+		return true
+	}
+	return false
 }
 
 // principalOrg returns the authenticated tenant for the request. Handlers use
