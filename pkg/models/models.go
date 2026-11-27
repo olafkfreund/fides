@@ -55,19 +55,26 @@ type AttestationType struct {
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 }
 
+type AttestationValidationError struct {
+	Code    string `json:"code"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+}
+
 type Attestation struct {
-	ID                  uuid.UUID `json:"id" db:"id"`
-	TrailID             uuid.UUID `json:"trail_id" db:"trail_id"`
-	ArtifactSHA256      *string   `json:"artifact_sha256" db:"artifact_sha256"`
-	Name                string    `json:"name" db:"name"` // unit-tests, sbom, snyk-scan
-	TypeName            string    `json:"type_name" db:"type_name"`
-	Payload             string    `json:"payload" db:"payload"` // raw JSON payload
-	IsCompliant         bool      `json:"is_compliant" db:"is_compliant"`
-	SignedBy            string    `json:"signed_by" db:"signed_by"`
-	Signature           string    `json:"signature" db:"signature"`
-	SignatureAlgorithm  string    `json:"signature_algorithm" db:"signature_algorithm"`
-	ManifestationReason string    `json:"manifestation_reason" db:"manifestation_reason"`
-	CreatedAt           time.Time `json:"created_at" db:"created_at"`
+	ID                  uuid.UUID                    `json:"id" db:"id"`
+	TrailID             uuid.UUID                    `json:"trail_id" db:"trail_id"`
+	ArtifactSHA256      *string                      `json:"artifact_sha256" db:"artifact_sha256"`
+	Name                string                       `json:"name" db:"name"` // unit-tests, sbom, snyk-scan
+	TypeName            string                       `json:"type_name" db:"type_name"`
+	Payload             string                       `json:"payload" db:"payload"` // raw JSON payload
+	IsCompliant         bool                         `json:"is_compliant" db:"is_compliant"`
+	ValidationErrors    []AttestationValidationError `json:"validation_errors" db:"validation_errors"`
+	SignedBy            string                       `json:"signed_by" db:"signed_by"`
+	Signature           string                       `json:"signature" db:"signature"`
+	SignatureAlgorithm  string                       `json:"signature_algorithm" db:"signature_algorithm"`
+	ManifestationReason string                       `json:"manifestation_reason" db:"manifestation_reason"`
+	CreatedAt           time.Time                    `json:"created_at" db:"created_at"`
 }
 
 type TenantAuthConfig struct {

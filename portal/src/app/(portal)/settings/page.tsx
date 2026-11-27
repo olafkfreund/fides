@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiGet, apiPost, api } from "@/lib/api";
+import { useCallback, useEffect, useState } from "react";
+import { apiGet, apiList, apiPost, api } from "@/lib/api";
 import { PageHeader, Panel } from "@/components/dash";
 
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
@@ -125,8 +125,8 @@ function DirectoryTab() {
   const [maps, setMaps] = useState<{ id: string; external_group: string; role: string }[]>([]);
   const [group, setGroup] = useState(""); const [role, setRole] = useState("Viewer");
   const [m, setM] = useState({ t: "", ok: true });
-  const load = () => apiGet<typeof maps>("/api/v1/tenant/group-mappings").then(setMaps).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const load = useCallback(() => apiList<(typeof maps)[number]>("/api/v1/tenant/group-mappings").then(setMaps).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
   const add = async () => {
     try { await apiPost("/api/v1/tenant/group-mappings", { external_group: group, role }); setGroup(""); load(); setM({ t: "Mapping saved.", ok: true }); }
     catch (e) { setM({ t: String((e as Error).message), ok: false }); }
@@ -197,8 +197,8 @@ function ServiceAccountsTab() {
   const [list, setList] = useState<{ id: string; name: string; role: string; active_keys: number }[]>([]);
   const [name, setName] = useState(""); const [role, setRole] = useState("Writer");
   const [key, setKey] = useState(""); const [m, setM] = useState({ t: "", ok: true });
-  const load = () => apiGet<typeof list>("/api/v1/tenant/service-accounts").then(setList).catch(() => {});
-  useEffect(() => { load(); }, []);
+  const load = useCallback(() => apiList<(typeof list)[number]>("/api/v1/tenant/service-accounts").then(setList).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
   const create = async () => { try { await apiPost("/api/v1/tenant/service-accounts", { name, role }); setName(""); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   const issue = async (id: string) => { try { const r = await apiPost<{ api_key: string }>(`/api/v1/tenant/service-accounts/${id}/keys`, { label: "portal", expires_hours: 0 }); setKey(r.api_key); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
@@ -234,7 +234,7 @@ function ServiceAccountsTab() {
 function UsersTab() {
   const [users, setUsers] = useState<{ id: string; name: string; email: string; role: string }[]>([]);
   const [pw, setPw] = useState<Record<string, string>>({}); const [m, setM] = useState({ t: "", ok: true });
-  useEffect(() => { apiGet<typeof users>("/api/v1/tenant/users").then(setUsers).catch(() => {}); }, []);
+  useEffect(() => { apiList<(typeof users)[number]>("/api/v1/tenant/users").then(setUsers).catch(() => {}); }, []);
   const setPass = async (id: string) => { try { await apiPost(`/api/v1/tenant/users/${id}/password`, { password: pw[id] || "" }); setM({ t: "Password set.", ok: true }); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };
   return (
     <Panel>
@@ -264,8 +264,8 @@ function GitWebhooksTab() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [m, setM] = useState({ t: "", ok: true });
   const load = () => {
-    apiGet<GitProvider[]>("/api/v1/tenant/git-providers").then((p) => setProviders(p || [])).catch(() => {});
-    apiGet<Webhook[]>("/api/v1/tenant/webhooks").then((h) => setWebhooks(h || [])).catch(() => {});
+    apiList<GitProvider>("/api/v1/tenant/git-providers").then((p) => setProviders(p || [])).catch(() => {});
+    apiList<Webhook>("/api/v1/tenant/webhooks").then((h) => setWebhooks(h || [])).catch(() => {});
   };
   useEffect(() => { load(); }, []);
   const saveGit = async () => { try { await apiPost("/api/v1/tenant/git-providers", { provider: gp.provider || "github", host: gp.host || "", api_base: gp.api_base || "", token_path: gp.token_path || "", inbound_secret_path: gp.inbound_secret_path || "", enabled: true }); setM({ t: "Git provider saved.", ok: true }); load(); } catch (e) { setM({ t: String((e as Error).message), ok: false }); } };

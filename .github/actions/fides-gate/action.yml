@@ -39,7 +39,7 @@ inputs:
     required: false
     default: ''
   policy:
-    description: 'Policy name to evaluate the artifact against (assert).'
+    description: 'Legacy assert input. Leave empty because named policy selection is unsupported.'
     required: false
     default: ''
   signer:

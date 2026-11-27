@@ -15,6 +15,7 @@ import (
 	"fides/pkg/db"
 	"fides/pkg/events"
 	"fides/pkg/ledger"
+	"fides/pkg/models"
 )
 
 // SegregationOfDutiesAttestationType is the well-known attestation type_name /
@@ -191,14 +192,14 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 		return result, nil // unchanged verdict — don't append a duplicate
 	}
 
-	contentHash, prevHash, err := s.attestationChain(ctx, trailID, SegregationOfDutiesAttestationType, SegregationOfDutiesAttestationType, string(payload), result.Compliant)
-	if err != nil {
-		return sodAttestation{}, err
-	}
-	if _, err := s.q(ctx).ExecContext(ctx,
-		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-		uuid.New(), trailID, SegregationOfDutiesAttestationType, SegregationOfDutiesAttestationType, string(payload), result.Compliant, contentHash, prevHash); err != nil {
+	if err := s.appendAttestation(ctx, &models.Attestation{
+		ID:          uuid.New(),
+		TrailID:     trailID,
+		Name:        SegregationOfDutiesAttestationType,
+		TypeName:    SegregationOfDutiesAttestationType,
+		Payload:     string(payload),
+		IsCompliant: result.Compliant,
+	}, nil); err != nil {
 		return sodAttestation{}, err
 	}
 

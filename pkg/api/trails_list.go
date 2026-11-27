@@ -20,13 +20,16 @@ func (s *Server) handleListFlowTrails(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid flow id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	page, ok := newListPage(w, r, orgID, timeKey("t.created_at"), uuidKey("t.id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
 		`SELECT t.id, t.name, COALESCE(t.git_commit, ''), COALESCE(t.git_branch, ''), t.created_at,
 		        (SELECT COUNT(*) FROM attestations a WHERE a.trail_id = t.id) AS attestations,
-		        COALESCE((SELECT bool_and(a.is_compliant) FROM attestations a WHERE a.trail_id = t.id), true) AS compliant
+		        COALESCE((SELECT bool_and(a.is_compliant) FROM attestations a WHERE a.trail_id = t.id), true) AS compliant /* page keys */
 		 FROM trails t JOIN flows f ON f.id = t.flow_id
-		 WHERE t.flow_id = $1 AND f.org_id = $2
-		 ORDER BY t.created_at DESC LIMIT 200`, flowID, orgID)
+		 WHERE t.flow_id = $1 AND f.org_id = $2`, flowID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -53,7 +56,7 @@ func (s *Server) handleListFlowTrails(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 // handleListFlowArtifacts lists the artifacts recorded across a flow's trails.
@@ -68,12 +71,15 @@ func (s *Server) handleListFlowArtifacts(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid flow id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	page, ok := newListPage(w, r, orgID, timeKey("a.created_at"), textKey("a.sha256"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
 		`SELECT a.sha256, a.name, COALESCE(a.type, ''), COALESCE(t.git_commit, ''), a.created_at,
-		        COALESCE((SELECT bool_and(at.is_compliant) FROM attestations at WHERE at.trail_id = a.trail_id), true) AS compliant
+		        COALESCE((SELECT bool_and(at.is_compliant) FROM attestations at WHERE at.trail_id = a.trail_id), true) AS compliant /* page keys */
 		 FROM artifacts a JOIN trails t ON t.id = a.trail_id JOIN flows f ON f.id = t.flow_id
-		 WHERE t.flow_id = $1 AND f.org_id = $2
-		 ORDER BY a.created_at DESC LIMIT 200`, flowID, orgID)
+		 WHERE t.flow_id = $1 AND f.org_id = $2 AND a.org_id = $2`, flowID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -95,5 +101,5 @@ func (s *Server) handleListFlowArtifacts(w http.ResponseWriter, r *http.Request)
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }

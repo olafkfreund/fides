@@ -29,6 +29,19 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
 
+For custom evidence, an administrator can attach a Draft 2020-12 JSON Schema
+to the attestation type.
+
+```bash
+fides attestation-type create --name release-check --schema ./release-check.schema.json
+```
+
+Fides evaluates the schema and any jq rules when it records the attestation.
+Schema failures make the attestation non-compliant and appear in the
+attestation's validation errors. The submitted payload is recorded separately.
+Use local references within the schema document and Go-compatible regular
+expressions in `pattern` and `patternProperties`.
+
 `fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
 persists a row per component (name, version, purl, licenses), linked to the
 artifact — so you can search across every SBOM ever attested:
@@ -171,6 +184,25 @@ fides slack config --secret-path fides/slack-webhook
 
 Compliance events (`compliance.evaluated`, `snapshot.noncompliant`) are posted to
 the channel when the event engine is enabled (`FIDES_EVENTS_ENABLED=true`).
+
+### Outbound event delivery
+
+With `FIDES_EVENTS_ENABLED=true`, attestation ingest commits its
+`compliance.evaluated` event with the attestation. Snapshot ingest commits its
+`snapshot.noncompliant` event for drift or shadows and its `snapshot.reported`
+event for a nonempty service inventory with the snapshot. An enqueue failure
+rolls back the corresponding ingest write. Events from artifact reports,
+environment and flag changes, fetched attestations, segregation of duties,
+and ServiceNow handlers retain their existing enqueue behavior.
+
+The dispatcher records and retries each configured sink independently until
+it succeeds or reaches its attempt limit. When an event is first scheduled,
+the registered sink names are fixed for that event. A dispatcher with no
+registered sinks leaves unscheduled events queued. A lost acknowledgement can
+cause duplicate delivery. The webhook sink can also retry individual targets
+that already succeeded when another target failed in the same attempt.
+Receivers can deduplicate per destination using the stable delivery or event
+identifier.
 
 ## 13. Other integration config (CLI)
 

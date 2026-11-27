@@ -126,7 +126,7 @@ graph TD
         C --> D[fides artifact report]
         D --> E[Run Vulnerability Scans]
         E --> F[fides attest --encrypt]
-        F --> G[fides assert --policy]
+        F --> G[fides assert --sha256 DIGEST]
     end
 
     subgraph VAULT ["Evidence Vault & Storage"]

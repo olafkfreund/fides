@@ -7,6 +7,41 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## Custom attestation schemas
+
+Apply the database migrations before upgrading the server if auto-migration
+is disabled. A previously stored schema that cannot be compiled now makes
+new attestations of that type non-compliant. A tenant administrator can update
+the type with a valid Draft 2020-12 schema or clear its schema. Historical
+attestations retain their original verdicts and payloads.
+
+## Per-sink outbox delivery
+
+Drain and stop every old dispatcher before enabling the new dispatchers.
+Apply migration `0028_event_deliveries.sql` before starting the new workers
+if auto-migration is disabled. All workers should register the same stable sink
+names. The first worker to schedule a pending event freezes its sink set.
+Keep those names available until their outstanding deliveries finish.
+Legacy pending events retain their retry count and schedule. A sink that
+already received a partly delivered legacy event may receive it again.
+Delivered and dead legacy events retain their history.
+
+The dispatcher uses both outbox tables across tenants without RLS. If the
+migration owner and runtime role are separate, verify the runtime role can
+read, insert, and update both tables. The setup script and chart configure
+default grants for future tables created by the configured owner. For manual
+installs, apply the grant as the migration owner using your runtime role name.
+
+```sql
+GRANT SELECT, INSERT, UPDATE
+    ON integration_events, integration_event_deliveries TO fides_app;
+```
+
+For rollback, drain the new workers and preserve both tables. Reconcile or park
+events with outstanding deliveries before starting an old worker. The old
+dispatcher can resend to sinks that already finished. Prefer a forward fix
+once workers using different models have processed the same queue.
+
 ## v0.8.3
 
 ### A published binary now creates a CMDB CI, where it previously created nothing

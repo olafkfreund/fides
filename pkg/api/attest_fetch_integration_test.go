@@ -49,6 +49,7 @@ func TestAttestFetchIntegration(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	sha := randSHA256()
 	statement := []byte(`{"predicateType":"https://slsa.dev/provenance/v1",` +

@@ -46,7 +46,7 @@ const SwaggerJSON = `{
   "openapi": "3.0.3",
   "info": {
     "title": "Fides Compliance & Provenance API",
-    "description": "Fides supply-chain integrity & compliance API \u2014 build trails, artifacts, attestations, JQ policies, and LLM-assisted compliance.\n\nEvery /api/v1 route the server registers appears here; a route added without an entry fails TestEveryRouteIsDocumented. Entries marked \"schemas not yet described\" are complete as to path, method and auth, and incomplete as to body shape \u2014 see docs/cli-reference.md for those.",
+    "description": "Fides supply-chain integrity & compliance API \u2014 build trails, artifacts, attestations, JQ policies, and LLM-assisted compliance.\n\nEvery /api/v1 route the server registers appears here; a route added without an entry fails TestEveryRouteIsDocumented. Entries marked \"schemas not yet described\" are complete as to path, method and auth, and incomplete as to body shape \u2014 see docs/cli-reference.md for those.\n\nPaginated collection responses remain JSON arrays. The default page size is 100, with a maximum of 500. Clients that make a single request receive only the first page. Follow the response Link with rel=\"next\" until that relation is absent. The cursor is scoped to the authenticated tenant, collection path and filters.",
     "version": "1.0.0"
   },
   "servers": [
@@ -211,9 +211,20 @@ const SwaggerJSON = `{
         "summary": "List all organizations (tenants)",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "summary": "Create a new organization",
@@ -250,9 +261,23 @@ const SwaggerJSON = `{
         "summary": "List compliance flows for a tenant",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/CollectionName"
+          }
+        ]
       },
       "post": {
         "summary": "Register a new flow (pipeline component)",
@@ -339,9 +364,20 @@ const SwaggerJSON = `{
         "summary": "List all registered artifacts",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "summary": "Report a build artifact digest",
@@ -439,7 +475,22 @@ const SwaggerJSON = `{
         },
         "responses": {
           "201": {
-            "description": "Attested"
+            "description": "Attestation recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "validation_errors"
+                  ],
+                  "properties": {
+                    "validation_errors": {
+                      "$ref": "#/components/schemas/AttestationValidationErrors"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -476,9 +527,23 @@ const SwaggerJSON = `{
         "summary": "List tracked runtime environments & drifts",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/CollectionName"
+          }
+        ]
       }
     },
     "/tenant/settings": {
@@ -514,9 +579,20 @@ const SwaggerJSON = `{
         "summary": "List all configured users and roles",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "summary": "Add or update a user and role",
@@ -532,9 +608,20 @@ const SwaggerJSON = `{
         "summary": "List external SSO groups mappings",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "summary": "Create/update an SSO group mapping to a role",
@@ -584,12 +671,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       }
     },
     "/ai/chat": {
@@ -673,21 +771,157 @@ const SwaggerJSON = `{
       }
     },
     "/attestation-types": {
+      "get": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "List tenant attestation types",
+        "responses": {
+          "200": {
+            "description": "A page of attestation types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttestationType"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/NextPage"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
+      },
       "post": {
         "tags": [
           "Attestation Types"
         ],
-        "summary": "Create Attestation Type",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "summary": "Create attestation type",
+        "description": "Admin only. The authenticated tenant owns the new type.",
         "responses": {
-          "200": {
-            "description": "Success"
+          "201": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid request or JSON Schema"
           },
           "401": {
             "description": "Authentication required"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Attestation type name already exists"
+          }
+        },
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AttestationType"
+        }
+      }
+    },
+    "/attestation-types/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Get attestation type",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Attestation type not found"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Update attestation type",
+        "description": "Admin only. Omitted fields retain their existing values.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid request or JSON Schema"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Attestation type not found"
+          },
+          "409": {
+            "description": "Attestation type name already exists"
+          }
+        },
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AttestationType"
+        }
+      },
+      "delete": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Delete attestation type",
+        "description": "Admin only.",
+        "responses": {
+          "204": {
+            "description": "Attestation type deleted"
+          },
+          "400": {
+            "description": "Invalid ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Attestation type not found"
           }
         }
       }
@@ -701,7 +935,22 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Attestation details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "validation_errors"
+                  ],
+                  "properties": {
+                    "validation_errors": {
+                      "$ref": "#/components/schemas/AttestationValidationErrors"
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Authentication required"
@@ -850,12 +1099,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -1026,12 +1286,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -1098,13 +1369,55 @@ const SwaggerJSON = `{
           "Environments"
         ],
         "summary": "List Allowlist",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "description": "List an environment\u2019s approvals or look up approval for one exact runtime digest.",
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Success",
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/NextPage"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "environment_id",
+                        "artifact_sha256",
+                        "approved"
+                      ],
+                      "properties": {
+                        "environment_id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "artifact_sha256": {
+                          "type": "string"
+                        },
+                        "approved": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -1115,6 +1428,20 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "sha",
+            "in": "query",
+            "description": "Exact digest for a single approval lookup. The lookup returns an object and does not use pagination.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       },
@@ -1224,10 +1551,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -1238,6 +1568,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       },
@@ -1461,12 +1797,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -1546,12 +1893,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       }
     },
     "/flags/webhook/{provider}": {
@@ -1590,7 +1948,7 @@ const SwaggerJSON = `{
           "Flows"
         ],
         "summary": "Resolve Evidence Link",
-        "description": "Resolves a flow and trail — each given by name or UUID; a trail also resolves by git commit SHA (newest match wins) — to a 302 redirect at the portal deep link /flows/?flow=<uuid>&trail=<uuid>. An attestation_type query parameter is forwarded unvalidated. This is the canonical, stable URL shape for evidence links written into external systems such as ServiceNow.",
+        "description": "Resolves a flow and trail \u2014 each given by name or UUID; a trail also resolves by git commit SHA (newest match wins) \u2014 to a 302 redirect at the portal deep link /flows/?flow=<uuid>&trail=<uuid>. An attestation_type query parameter is forwarded unvalidated. This is the canonical, stable URL shape for evidence links written into external systems such as ServiceNow.",
         "responses": {
           "302": {
             "description": "Redirect to the portal trail view"
@@ -1639,10 +1997,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -1653,6 +2014,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       }
@@ -1696,10 +2063,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -1710,6 +2080,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       }
@@ -1720,7 +2096,7 @@ const SwaggerJSON = `{
           "Frameworks"
         ],
         "summary": "List Frameworks",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "description": "Bundled framework catalogs and their controls.",
         "responses": {
           "200": {
             "description": "Success"
@@ -1740,12 +2116,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -1904,7 +2291,7 @@ const SwaggerJSON = `{
           "Metrics"
         ],
         "summary": "Deployment Frequency",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "description": "Weekly deployment counts grouped by environment for the requested reporting window.",
         "responses": {
           "200": {
             "description": "Success"
@@ -1924,12 +2311,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2009,12 +2407,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2195,12 +2604,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       }
     },
     "/search/attestations": {
@@ -2212,12 +2632,49 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "A page of attestation summaries",
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/NextPage"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "validation_errors"
+                    ],
+                    "properties": {
+                      "validation_errors": {
+                        "$ref": "#/components/schemas/AttestationValidationErrors"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          },
+          {
+            "$ref": "#/components/parameters/CollectionName"
+          }
+        ]
       }
     },
     "/search/components": {
@@ -2229,12 +2686,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       }
     },
     "/servicenow/change-check": {
@@ -2300,7 +2768,7 @@ const SwaggerJSON = `{
           "Servicenow"
         ],
         "summary": "Service Now Search C M D B",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "description": "Configuration items from the upstream ServiceNow CMDB query.",
         "responses": {
           "200": {
             "description": "Success"
@@ -2434,7 +2902,7 @@ const SwaggerJSON = `{
           "Servicenow"
         ],
         "summary": "S N M C P Servers",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "description": "An object containing the servers discovered through the upstream ServiceNow MCP service.",
         "responses": {
           "200": {
             "description": "Success"
@@ -2474,12 +2942,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2546,12 +3025,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2581,12 +3071,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2646,10 +3147,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -2660,6 +3164,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       },
@@ -2774,12 +3284,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       }
     },
     "/tenant/slack": {
@@ -2856,12 +3377,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -2891,10 +3423,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -2905,6 +3440,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       },
@@ -3000,10 +3541,13 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
         },
         "parameters": [
@@ -3014,6 +3558,12 @@ const SwaggerJSON = `{
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
           }
         ]
       }
@@ -3027,12 +3577,23 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "$ref": "#/components/responses/CollectionPage"
           },
           "401": {
             "description": "Authentication required"
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
           }
-        }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
       },
       "post": {
         "tags": [
@@ -3101,6 +3662,177 @@ const SwaggerJSON = `{
             }
           }
         ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AttestationType": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "description",
+          "schema",
+          "jq_rules",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string",
+            "description": "JSON Schema encoded as a string. Empty when no schema is configured."
+          },
+          "jq_rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AttestationValidationErrors": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "JSON Pointer into the payload, when available."
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "requestBodies": {
+      "AttestationType": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "schema": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Draft 2020-12 schema encoded as a JSON string. An empty string or null clears the schema."
+                },
+                "jq_rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "PageLimit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Maximum number of items in this page.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500,
+          "default": 100
+        }
+      },
+      "PageCursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque continuation from the previous next link. Keep the same tenant, path and filters.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "CollectionName": {
+        "name": "name",
+        "in": "query",
+        "description": "Filter collection items by a case-insensitive name substring.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "headers": {
+      "NextPage": {
+        "description": "Relative URL with rel=\"next\" when another page is available.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "AttestationType": {
+        "description": "Tenant attestation type",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AttestationType"
+            }
+          }
+        }
+      },
+      "CollectionPage": {
+        "description": "A page of collection items",
+        "headers": {
+          "Link": {
+            "$ref": "#/components/headers/NextPage"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      },
+      "InvalidPage": {
+        "description": "Invalid limit or cursor"
       }
     }
   }

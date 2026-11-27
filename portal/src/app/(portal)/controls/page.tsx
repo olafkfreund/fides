@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Info, Archive, ArchiveRestore, ShieldCheck, ChevronRight, Check, Plus, Loader2 } from "lucide-react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiList, apiPost } from "@/lib/api";
 import { PageHeader, StatTile, Chip, Panel, Donut, DistBars } from "@/components/dash";
 
 type Control = { id: string; key: string; name: string; framework?: string; required_types?: string[]; archived?: boolean };
@@ -43,9 +43,9 @@ export default function Controls() {
   const [msg, setMsg] = useState<{ t: string; ok: boolean }>({ t: "", ok: true });
 
   const load = () => {
-    apiGet<Control[]>(`/api/v1/controls?include_archived=true`).then(setControls).catch((e) => setMsg({ t: String(e.message), ok: false }));
+    apiList<Control>(`/api/v1/controls?include_archived=true`).then(setControls).catch((e) => setMsg({ t: String(e.message), ok: false }));
     apiGet<Coverage>("/api/v1/controls/coverage").then(setCov).catch(() => {});
-    apiGet<Env[]>("/api/v1/environments").then((e) => setEnvs(e || [])).catch(() => {});
+    apiList<Env>("/api/v1/environments").then((e) => setEnvs(e || [])).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 

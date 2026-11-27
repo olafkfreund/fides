@@ -39,6 +39,7 @@ func TestRecordFlagChange(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
@@ -123,6 +124,7 @@ func TestFlagChangePolicyCompliance(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
@@ -176,6 +178,7 @@ func TestFlagHistory(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
 	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
@@ -244,6 +247,7 @@ func TestFlagWebhookRecordsChange(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
 	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
@@ -302,6 +306,7 @@ func TestFlagChangeFourEyes(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 	org := uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
 	t.Cleanup(func() { pool.Exec(`DELETE FROM organizations WHERE id=$1`, org) })
@@ -371,6 +376,7 @@ func TestFlagChangeRejectsForeignFlow(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	orgA, orgB, flowB := uuid.New(), uuid.New(), uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2),($3,$4)`, orgA, "a-"+orgA.String()[:8], orgB, "b-"+orgB.String()[:8])
