@@ -48,6 +48,12 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 		trailID = &tID
 	}
 
+	op, r := s.beginRecording(w, r, req, false)
+	if op == nil {
+		return
+	}
+	defer op.rollback()
+
 	artifact := &models.Artifact{
 		SHA256:    req.SHA256,
 		OrgID:     orgID,
@@ -88,15 +94,16 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Keep a queryable CMDB image CI per digest so the change gate can anchor a
-	// change's cmdb_ci to the binary it deployed (best-effort; the CMDB sink is
-	// a no-op when ServiceNow is not configured for the org).
-	_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, servicenow.ArtifactEventType, map[string]any{
+	// change's cmdb_ci to the binary it deployed. Keyed requests commit the
+	// event with the artifact; legacy requests enqueue it best-effort.
+	if err := events.Enqueue(r.Context(), q, orgID, servicenow.ArtifactEventType, map[string]any{
 		"sha256": req.SHA256, "name": req.Name, "type": req.Type,
-	})
+	}); err != nil && op.keyed {
+		internalError(w, err)
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(artifact)
+	op.created(w, r.Context(), artifact)
 }
 
 func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {

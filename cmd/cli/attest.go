@@ -7,11 +7,12 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
-	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"fides/pkg/crypto"
 	"fides/pkg/evidence"
@@ -59,6 +60,7 @@ func handleAttest(config CLIConfig, args []string) {
 	}
 
 	cmd := flag.NewFlagSet("attest", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Trail UUID")
 	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256")
 	name := cmd.String("name", "", "Attestation Name (e.g., snyk-scan, unit-tests)")
@@ -88,6 +90,10 @@ func handleAttest(config CLIConfig, args []string) {
 		rawPayload = *payloadData
 	}
 
+	if config.FailOpen && !json.Valid([]byte(rawPayload)) {
+		fail(fmt.Errorf("invalid attestation payload JSON"), "record attestation")
+	}
+
 	var isEncrypted bool
 	encryptionKeyEnv := os.Getenv("FIDES_ENCRYPTION_KEY")
 	if *encryptFlag || encryptionKeyEnv != "" {
@@ -111,12 +117,7 @@ func handleAttest(config CLIConfig, args []string) {
 	}
 
 	// Make call
-	var files []string
-	if *attachments != "" {
-		files = strings.Split(*attachments, ",")
-	}
-
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, *typeName, rawPayload, files, isEncrypted)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, *typeName, rawPayload, attachmentPaths(*attachments), isEncrypted)
 	if err != nil {
 		fmt.Printf("Failed to report attestation: %v\n", err)
 		os.Exit(1)
@@ -146,6 +147,7 @@ func evidenceTypeName(format string) string {
 // normalized attestation payload and records it (attaching the raw report).
 func handleAttestEvidence(config CLIConfig, format string, args []string) {
 	cmd := flag.NewFlagSet("attest "+format, flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Trail UUID")
 	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (optional)")
 	name := cmd.String("name", format, "Attestation name")
@@ -162,7 +164,7 @@ func handleAttestEvidence(config CLIConfig, format string, args []string) {
 	fail(err, "parse "+format+" report")
 	payload, _ := json.Marshal(result)
 
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, evidenceTypeName(format), string(payload), []string{*file}, false)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, evidenceTypeName(format), string(payload), []attestationAttachment{{path: *file, data: data}}, false)
 	fail(err, "record attestation")
 	fmt.Printf("Recorded %s attestation (compliant=%v): %s\n", format, result.Compliant, respBody)
 }
@@ -195,6 +197,7 @@ func handleAttestFetch(config CLIConfig, args []string) {
 // change gate until an agent-generated change has human review.
 func handleAttestAuthorship(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("attest authorship", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Trail UUID")
 	commit := cmd.String("commit", "HEAD", "git commit to inspect")
 	reviewer := cmd.String("reviewer", "", "human reviewer (overrides a Reviewed-by trailer)")
@@ -224,51 +227,79 @@ func handleAttestAuthorship(config CLIConfig, args []string) {
 		a.AuthorKind, a.HumanReviewer, a.Compliant(), respBody)
 }
 
-func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, payload string, filePaths []string, isEncrypted bool) (string, error) {
+type attestationAttachment struct {
+	path string
+	data []byte
+}
+
+func attachmentPaths(paths string) []attestationAttachment {
+	var files []attestationAttachment
+	if paths != "" {
+		for _, path := range strings.Split(paths, ",") {
+			files = append(files, attestationAttachment{path: path})
+		}
+	}
+	return files
+}
+
+func (a attestationAttachment) writeTo(part io.Writer, limit int64) error {
+	if a.data != nil {
+		if int64(len(a.data)) > limit {
+			return fmt.Errorf("attestation body exceeds the server size limit")
+		}
+		_, err := part.Write(a.data)
+		return err
+	}
+	file, err := os.Open(a.path) // #nosec G304 G703 -- CLI opens a user-specified attachment by design
+	if err != nil {
+		return fmt.Errorf("failed to open attachment: %w", err)
+	}
+	defer file.Close()
+	n, err := io.Copy(part, io.LimitReader(file, limit+1))
+	if err != nil {
+		return fmt.Errorf("failed to copy file content: %w", err)
+	}
+	if n > limit {
+		return fmt.Errorf("attestation body exceeds the server size limit")
+	}
+	return nil
+}
+
+func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, payload string, files []attestationAttachment, isEncrypted bool) (string, error) {
+	if config.FailOpen && (utf8.RuneCountInString(name) > 100 || utf8.RuneCountInString(typeName) > 100 ||
+		(artifactSHA != "" && !isSHA256Hex(artifactSHA))) {
+		return "", fmt.Errorf("invalid attestation name, type, or artifact SHA256")
+	}
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
-	// A field that silently fails to write uploads an attestation that
-	// says something other than what was recorded.
-	if err := writer.WriteField("trail_id", trailID); err != nil {
-		fail(err, "build attestation upload")
+	part, err := writer.CreateFormField("trail_id")
+	if err != nil {
+		return "", err
 	}
-	if err := writer.WriteField("artifact_sha256", artifactSHA); err != nil {
-		fail(err, "build attestation upload")
+	entry := recording{Path: attestationRecord, TrailOffset: body.Len(), ArtifactSHA: artifactSHA}
+	if _, err := io.WriteString(part, trailID); err != nil {
+		return "", err
 	}
-	if err := writer.WriteField("name", name); err != nil {
-		fail(err, "build attestation upload")
-	}
-	if err := writer.WriteField("type_name", typeName); err != nil {
-		fail(err, "build attestation upload")
-	}
-	if err := writer.WriteField("payload", payload); err != nil {
-		fail(err, "build attestation upload")
-	}
-	if isEncrypted {
-		if err := writer.WriteField("encrypted", "true"); err != nil {
-			fail(err, "build attestation upload")
-		}
-	} else {
-		if err := writer.WriteField("encrypted", "false"); err != nil {
-			fail(err, "build attestation upload")
+	for _, field := range [][2]string{
+		{"artifact_sha256", artifactSHA},
+		{"name", name},
+		{"type_name", typeName},
+		{"payload", payload},
+		{"encrypted", strconv.FormatBool(isEncrypted)},
+	} {
+		if err := writer.WriteField(field[0], field[1]); err != nil {
+			return "", err
 		}
 	}
 
-	for _, path := range filePaths {
-		file, err := os.Open(path) // #nosec G304 G703 -- CLI opens a user-specified attachment by design
-		if err != nil {
-			return "", fmt.Errorf("failed to open attachment: %w", err)
-		}
-		defer file.Close()
-
-		part, err := writer.CreateFormFile("attachments", filepath.Base(path))
+	for _, file := range files {
+		part, err := writer.CreateFormFile("attachments", filepath.Base(file.path))
 		if err != nil {
 			return "", fmt.Errorf("failed to write multipart header: %w", err)
 		}
-
-		if _, err := io.Copy(part, file); err != nil {
-			return "", fmt.Errorf("failed to copy file content: %w", err)
+		if err := file.writeTo(part, max(int64(maxRecordingBody-body.Len()), 0)); err != nil {
+			return "", err
 		}
 	}
 
@@ -276,29 +307,6 @@ func uploadMultipart(config CLIConfig, trailID, artifactSHA, name, typeName, pay
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", config.ServerURL+"/api/v1/attestations", body) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	if config.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+config.Token)
-	}
-
-	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("server returned error code: %d, body: %s", resp.StatusCode, string(respBytes))
-	}
-
-	return string(respBytes), nil
+	entry.ContentType = writer.FormDataContentType()
+	return record(config, entry, body.Bytes(), trailID)
 }

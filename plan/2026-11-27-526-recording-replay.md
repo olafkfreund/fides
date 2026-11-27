@@ -22,6 +22,12 @@ Line references are from the reviewed base. Refresh them after dependent changes
 2. **pkg/api/server.go:659–790, pkg/api/ingest_handlers.go:96–270 and pkg/db/migrations/** — Add tenant-scoped idempotency for supported writes with unique operation ID, content fingerprint and conflict rejection. Persist a response with the write outcome so an ambiguous successful response replays without duplicate evidence. Coordinate with #519 and #521. Account for attachment completion before acknowledging the result.
 3. **cmd/cli/main.go:35–162 and new cmd/cli/replay.go** — Replay oldest ready requests with current credentials for the bound destination and durable mappings from offline trail references to server IDs. Coordinate concurrent replay and delete only confirmed entries. Keep dependent entries until prerequisites succeed. Document eligible transport/5xx conditions and queue protection, retention and ephemeral runner mounts. Keep gate overrides outside this release.
 
+### Implementation decisions
+
+1. Carry a UUID in `Idempotency-Key`. Authenticate the writer and verify ownership before replaying a stored result. Use a tenant-scoped advisory transaction lock, an evidence fingerprint, and migration `0030_recording_operations.sql` to commit the response with the evidence. Complete attachment uploads and metadata writes before recording success, using stable object keys for keyed retries.
+2. Bind queue entries to a digest of the configured endpoint and credential. An opaque credential gives the CLI no offline tenant identity. Replay therefore requires the same credential. Use `FIDES_SPOOL_DIR` for persistent runners. Trail mappings retain their server UUID without retaining the request body after confirmation.
+3. Queue selected temporary transport failures and HTTP 502, 503 and 504 responses. Treat authentication, TLS identity, redirect, and validation failures as terminal. Preserve the idempotency table across rollbacks and run the updated server before enabling fail-open on its clients.
+
 ## Risks
 
 CI runners with ephemeral disks can lose spooled evidence. The spool can contain sensitive evidence and can fill up. Document retention, artifact mounting and the exact commands and statuses eligible for spooling.
