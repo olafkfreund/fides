@@ -64,6 +64,19 @@ func TestSlackSinkSkips(t *testing.T) {
 	}
 }
 
+func TestSlackSinkSkipsPlainHTTP(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("plain HTTP webhook reached the server")
+	}))
+	defer srv.Close()
+
+	sink := NewSink(fakeLoader{url: srv.URL, enabled: true})
+	ev := events.Event{Type: "compliance.evaluated", Payload: []byte(`{}`)}
+	if err := sink.Deliver(t.Context(), ev); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+}
+
 func TestFormatMessage(t *testing.T) {
 	shadow := formatMessage(events.Event{Type: "snapshot.noncompliant", Payload: []byte(`{"environment_id":"e1","shadows":["a"],"drifts":[]}`)})
 	if !strings.Contains(shadow, "non-compliant snapshot") || !strings.Contains(shadow, "e1") {

@@ -53,6 +53,9 @@ func TestFetchGitHubAttestations(t *testing.T) {
 	const api = "https://api.example.test"
 	listPath := "/repos/acme/widgets/attestations/sha256:" + testDigest
 	client := &http.Client{Transport: attestationTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("request method = %q, want GET", r.Method)
+		}
 		if got := r.Header.Get("Authorization"); got != "Bearer tok123" {
 			t.Errorf("Authorization = %q", got)
 		}
@@ -75,6 +78,9 @@ func TestFetchGitHubAttestations(t *testing.T) {
 	if len(statements) != 1 {
 		t.Fatalf("got %d statements, want 1", len(statements))
 	}
+	if want := api + listPath + "/bundle"; statements[0].SourceURL != want {
+		t.Errorf("SourceURL = %q, want %q", statements[0].SourceURL, want)
+	}
 	if statements[0].PredicateType != "https://slsa.dev/provenance/v1" {
 		t.Errorf("PredicateType = %q", statements[0].PredicateType)
 	}
@@ -88,6 +94,9 @@ func TestFetchGitLabAttestations(t *testing.T) {
 
 	const api = "http://10.0.0.5/api/v4"
 	client := &http.Client{Transport: attestationTransport(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet {
+			t.Errorf("request method = %q, want GET", r.Method)
+		}
 		if got := r.Header.Get("PRIVATE-TOKEN"); got != "glpat-xyz" {
 			t.Errorf("PRIVATE-TOKEN = %q", got)
 		}
@@ -107,6 +116,9 @@ func TestFetchGitLabAttestations(t *testing.T) {
 	}
 	if len(statements) != 1 {
 		t.Fatalf("got %d statements, want 1", len(statements))
+	}
+	if want := api + "/projects/group%2Fproject/attestations/1/download"; statements[0].SourceURL != want {
+		t.Errorf("SourceURL = %q, want %q", statements[0].SourceURL, want)
 	}
 }
 
