@@ -373,7 +373,7 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 						},
 						"is_compliant": {
 							Type:        "string",
-							Description: "Boolean string ('true' or 'false') indicating if this single step meets compliance",
+							Description: "Deprecated and ignored. Fides computes the compliance verdict.",
 						},
 					},
 					Required: []string{"trail_id", "name", "type_name", "payload"},
@@ -520,7 +520,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 			break
 		}
 		q := neturl.Values{}
-		q.Set("artifact_sha256", sha)
+		q.Set("sha256", sha)
 		reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", serverURL, q.Encode())
 		body, err := makeGetRequest(reqURL)
 		if err != nil {
@@ -615,20 +615,12 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 		}
 
 	case "report_attestation":
-		// convert is_compliant to bool
-		isCompStr, _ := args["is_compliant"].(string)
-		isComp := true
-		if strings.ToLower(isCompStr) == "false" {
-			isComp = false
-		}
-
 		payload := map[string]interface{}{
 			"trail_id":        args["trail_id"],
 			"artifact_sha256": args["artifact_sha256"],
 			"name":            args["name"],
 			"type_name":       args["type_name"],
 			"payload":         args["payload"],
-			"is_compliant":    isComp,
 		}
 
 		url := fmt.Sprintf("%s/api/v1/attestations", serverURL)

@@ -165,10 +165,10 @@ A starting policy that is worth having on day one:
 }
 ```
 
-Check an artifact against it directly:
+Check the recorded control verdicts for an artifact's build trail:
 
 ```bash
-fides assert --sha256 $DIGEST --policy no-critical-vulns    # exit 2 if non-compliant
+fides assert --sha256 $DIGEST    # exit 2 if non-compliant
 ```
 
 You can also have an LLM draft a first policy from your existing evidence with

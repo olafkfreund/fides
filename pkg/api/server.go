@@ -889,7 +889,14 @@ func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	sha := r.URL.Query().Get("sha256")
+	query := r.URL.Query()
+	for _, selector := range query["policy"] {
+		if selector != "" {
+			http.Error(w, "policy selector is unsupported", http.StatusBadRequest)
+			return
+		}
+	}
+	sha := query.Get("sha256")
 	if sha == "" {
 		http.Error(w, "missing sha256 query param", http.StatusBadRequest)
 		return

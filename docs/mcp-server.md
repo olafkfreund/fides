@@ -46,13 +46,16 @@ Issue key** (Auditor role is enough for read-only querying).
 | Tool | What it does |
 |------|--------------|
 | `list_flows` / `list_environments` / `list_policies` | List pipelines, runtime environments, and policies |
-| `check_compliance` | Check an artifact SHA256 against policy rules |
+| `check_compliance` | Check recorded control verdicts for an artifact using `artifact_sha256` |
 | `search_artifacts` | Find artifacts by name / SHA prefix / git commit |
 | `search_attestations` | Find attestations by evidence type / compliance status |
 | `get_controls_coverage` | Governance controls + per-environment coverage |
 | `get_deployment_frequency` | Weekly deployment frequency per environment |
 | `create_flow` / `create_trail` / `report_artifact` / `report_attestation` | Record provenance from an agent |
 | `get_change_request_status` / `create_compliance_incident` / `search_cmdb_ci` | ServiceNow change/incident/CMDB |
+
+`report_attestation` accepts the optional legacy `is_compliant` argument as a
+deprecated input. Fides ignores it and calculates the verdict on the server.
 
 ## Resources (documentation)
 
