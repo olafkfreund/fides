@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 524
 intent: intent/2026-11-27-524-attestation-json-schema.md
 ---
