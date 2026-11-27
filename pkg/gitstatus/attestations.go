@@ -3,6 +3,7 @@ package gitstatus
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 type Statement struct {
 	PredicateType string // from the decoded in-toto statement, for display/filtering
 	Statement     []byte // raw in-toto statement JSON
+	Bundle        []byte // exact downloaded Sigstore bundle when signature material is present
 	SourceURL     string // bundle/download URL it was fetched from, for traceability
 }
 
@@ -31,6 +33,9 @@ func FetchAttestations(ctx context.Context, c *http.Client, provider, apiBase, t
 	sha := strings.ToLower(strings.TrimSpace(subjectSHA256))
 	if len(sha) != 64 {
 		return nil, fmt.Errorf("artifact sha256 must be a 64-character hex digest, got %d characters", len(sha))
+	}
+	if _, err := hex.DecodeString(sha); err != nil {
+		return nil, fmt.Errorf("artifact sha256 must be hexadecimal: %w", err)
 	}
 	if provider != ProviderGitHub && provider != ProviderGitLab {
 		return nil, fmt.Errorf("attestation ingest is not supported for git provider %q (supported: github, gitlab)", provider)
@@ -113,8 +118,12 @@ func fetchGitHubAttestations(ctx context.Context, c *http.Client, origin *url.UR
 	if err != nil {
 		return nil, err
 	}
+	owner, name, _ := strings.Cut(ownerRepo, "/")
+	if owner == "" || name == "" || owner == "." || owner == ".." || name == "." || name == ".." {
+		return nil, fmt.Errorf("repo path must include a valid owner and repository")
+	}
 	digest := "sha256:" + sha
-	endpoint := strings.TrimRight(origin.String(), "/") + "/repos/" + ownerRepo + "/attestations/" + url.PathEscape(digest)
+	endpoint := strings.TrimRight(origin.String(), "/") + "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(name) + "/attestations/" + url.PathEscape(digest)
 	headers := map[string]string{
 		"Authorization": "Bearer " + token,
 		"Accept":        "application/vnd.github+json",
@@ -171,8 +180,10 @@ func fetchGitLabAttestations(ctx context.Context, c *http.Client, origin *url.UR
 // DSSE-enveloped in-toto statement.
 type sigstoreBundle struct {
 	DSSEEnvelope struct {
-		Payload     string `json:"payload"` // base64-encoded in-toto statement JSON
-		PayloadType string `json:"payloadType"`
+		Payload    string `json:"payload"` // base64-encoded in-toto statement JSON
+		Signatures []struct {
+			Sig string `json:"sig"`
+		} `json:"signatures"`
 	} `json:"dsseEnvelope"`
 }
 
@@ -198,11 +209,9 @@ func fetchBundle(ctx context.Context, provider *http.Client, origin *url.URL, en
 	if err != nil {
 		return Statement{}, err
 	}
-	source := endpoint
 	signedDownload := c != provider
 	if signedDownload {
 		defer c.CloseIdleConnections()
-		source = signedDownloadSource(req.URL)
 	}
 	body, err := getBody(c, req)
 	if err != nil {
@@ -226,10 +235,17 @@ func fetchBundle(ctx context.Context, provider *http.Client, origin *url.URL, en
 		PredicateType string `json:"predicateType"`
 	}
 	_ = json.Unmarshal(statement, &meta) // best-effort; NormalizeProvenance validates this properly
-	return Statement{PredicateType: meta.PredicateType, Statement: statement, SourceURL: source}, nil
+	stmt := Statement{PredicateType: meta.PredicateType, Statement: statement, SourceURL: redactedBundleSource(req.URL)}
+	for _, signature := range bundle.DSSEEnvelope.Signatures {
+		if sig, err := base64.StdEncoding.DecodeString(signature.Sig); err == nil && len(sig) > 0 {
+			stmt.Bundle = body
+			break
+		}
+	}
+	return stmt, nil
 }
 
-func signedDownloadSource(endpoint *url.URL) string {
+func redactedBundleSource(endpoint *url.URL) string {
 	source := *endpoint
 	source.RawQuery, source.Fragment, source.RawFragment = "", "", ""
 	source.ForceQuery = false
@@ -265,9 +281,13 @@ func getBody(c *http.Client, req *http.Request) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+	const maxBody = 10 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxBody {
+		return nil, fmt.Errorf("attestation response exceeds %d bytes", maxBody)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

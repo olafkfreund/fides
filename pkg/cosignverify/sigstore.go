@@ -3,8 +3,11 @@ package cosignverify
 import (
 	"context"
 	"crypto"
+	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/sigstore/sigstore-go/pkg/bundle"
@@ -35,6 +38,10 @@ func NewSigstoreVerifier() *SigstoreVerifier {
 
 // Verify implements Verifier.
 func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, error) {
+	return s.verify(opts, root.FetchTrustedRoot)
+}
+
+func (s *SigstoreVerifier) verify(opts Options, fetchRoot func() (*root.TrustedRoot, error)) (*Verdict, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
@@ -59,8 +66,13 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 	artifactDigest := digestBytes
 
 	var b *bundle.Bundle
+	proof := &Proof{}
 	if opts.BundlePath != "" {
-		b, err = bundle.LoadJSONFromPath(opts.BundlePath)
+		proof.Bundle, err = os.ReadFile(opts.BundlePath) // #nosec G304 -- caller-supplied local bundle path.
+		if err == nil {
+			b = new(bundle.Bundle)
+			err = b.UnmarshalJSON(proof.Bundle)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("cosignverify: load bundle %q: %w", opts.BundlePath, err)
 		}
@@ -71,8 +83,78 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		}
 		b = found.Bundle
 		artifactDigest = found.PayloadDigest
+		proof.Registry = found.Proof
 	}
 
+	var trustedRoot *root.TrustedRoot
+	if opts.KeyPath == "" {
+		trustedRoot, err = fetchRoot()
+		if err != nil {
+			return nil, fmt.Errorf("cosignverify: fetch trusted root: %w", err)
+		}
+	}
+	verdict, err := verifyBundle(opts, b, artifactDigest, trustedRoot, false)
+	if err == nil && verdict.Verified {
+		verdict.Proof = proof
+	}
+	return verdict, err
+}
+
+// VerifyOffline verifies a retained proof against the caller's expected digest
+// and local trust. It requires no registry, Rekor, or TUF access. Invalid
+// inputs return an error, and failed signature checks return a failed verdict.
+func (s *SigstoreVerifier) VerifyOffline(proof *Proof, opts OfflineOptions) (*Verdict, error) {
+	if proof == nil || (len(proof.Bundle) == 0 && proof.Registry == nil) {
+		return nil, errors.New("cosignverify: retained proof is missing")
+	}
+	if len(proof.Bundle) != 0 && proof.Registry != nil {
+		return nil, errors.New("cosignverify: retained proof has multiple sources")
+	}
+	digest, err := hex.DecodeString(opts.Digest)
+	if err != nil || len(digest) != sha256.Size {
+		return nil, errors.New("cosignverify: expected a SHA-256 digest in hex")
+	}
+
+	var b *bundle.Bundle
+	if proof.Registry == nil {
+		b = new(bundle.Bundle)
+		if err := b.UnmarshalJSON(proof.Bundle); err != nil {
+			return nil, fmt.Errorf("cosignverify: load retained bundle: %w", err)
+		}
+	} else {
+		if len(proof.Registry.Payload) > maxPayloadBytes {
+			return nil, fmt.Errorf("cosignverify: signature payload exceeds %d bytes", maxPayloadBytes)
+		}
+		found, err := proof.Registry.bind(opts.Digest)
+		if err != nil {
+			return nil, fmt.Errorf("cosignverify: bind retained registry proof: %w", err)
+		}
+		b = found.Bundle
+		digest = found.PayloadDigest
+	}
+
+	var trustedRoot *root.TrustedRoot
+	if opts.KeyPath == "" {
+		if opts.TrustedRootPath == "" || opts.Signer == "" || opts.Issuer == "" {
+			return nil, errors.New("cosignverify: offline keyless verification requires a trusted root, signer, and issuer")
+		}
+		trustedRoot, err = root.NewTrustedRootFromPath(opts.TrustedRootPath)
+		if err != nil {
+			return nil, fmt.Errorf("cosignverify: load trusted root: %w", err)
+		}
+	} else {
+		if opts.TrustedRootPath != "" {
+			return nil, errors.New("cosignverify: choose either a pinned key or a trusted root")
+		}
+		opts.Signer, opts.Issuer = "", ""
+	}
+
+	return verifyBundle(Options{
+		Digest: opts.Digest, KeyPath: opts.KeyPath, Signer: opts.Signer, Issuer: opts.Issuer,
+	}, b, digest, trustedRoot, opts.KeyPath != "")
+}
+
+func verifyBundle(opts Options, b *bundle.Bundle, artifactDigest []byte, trustedRoot *root.TrustedRoot, pinnedKeyOnly bool) (*Verdict, error) {
 	verdict := &Verdict{Digest: opts.Digest}
 
 	var trustedMaterial root.TrustedMaterial
@@ -90,10 +172,6 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		policyOpt = verify.WithKey()
 	} else {
 		verdict.Method = "keyless"
-		trustedRoot, err := root.FetchTrustedRoot()
-		if err != nil {
-			return nil, fmt.Errorf("cosignverify: fetch trusted root: %w", err)
-		}
 		trustedMaterial = trustedRoot
 		identity, err := verify.NewShortCertificateIdentity(opts.Issuer, "", opts.Signer, "")
 		if err != nil {
@@ -102,15 +180,16 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 		policyOpt = verify.WithCertificateIdentity(identity)
 	}
 
-	// Migrating to NewVerifier changes how the trust root is assembled, which
-	// is a behaviour change in signature verification and wants its own change
-	// with its own tests -- not a line in a lint sweep.
-	//nolint:staticcheck // SA1019: tracked migration
-	sev, err := verify.NewSignedEntityVerifier(trustedMaterial,
+	verifierOpts := []verify.VerifierOption{
 		verify.WithSignedCertificateTimestamps(1),
 		verify.WithTransparencyLog(1),
 		verify.WithObserverTimestamps(1),
-	)
+	}
+	if pinnedKeyOnly {
+		// The pinned key authenticates the signature without a log or a timestamp.
+		verifierOpts = []verify.VerifierOption{verify.WithNoObserverTimestamps()}
+	}
+	sev, err := verify.NewVerifier(trustedMaterial, verifierOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("cosignverify: build verifier: %w", err)
 	}
@@ -139,9 +218,11 @@ func (s *SigstoreVerifier) Verify(_ context.Context, opts Options) (*Verdict, er
 	if verdict.Issuer == "" {
 		verdict.Issuer = opts.Issuer
 	}
-	if entries, terr := b.TlogEntries(); terr == nil && len(entries) > 0 {
-		li := entries[0].LogIndex()
-		verdict.LogIndex = &li
+	if !pinnedKeyOnly {
+		if entries, terr := b.TlogEntries(); terr == nil && len(entries) > 0 {
+			li := entries[0].LogIndex()
+			verdict.LogIndex = &li
+		}
 	}
 
 	return verdict, nil

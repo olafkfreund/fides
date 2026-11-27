@@ -33,13 +33,14 @@ func sigstoreBundleJSON(t *testing.T, statement map[string]any) string {
 		"dsseEnvelope": map[string]any{
 			"payload":     base64.StdEncoding.EncodeToString(raw),
 			"payloadType": "application/vnd.in-toto+json",
+			"signatures":  []map[string]string{{"sig": "c2lnbmF0dXJl"}},
 		},
 	}
 	b, err := json.Marshal(bundle)
 	if err != nil {
 		t.Fatalf("marshal bundle: %v", err)
 	}
-	return string(b)
+	return " \n" + string(b) + "\n "
 }
 
 const testDigest = "76c34666f719ef14bd2b124a7db51e9c05e4db2e12a84800296d559064eebe2c"
@@ -64,8 +65,11 @@ func TestFetchGitHubAttestations(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case listPath:
-			return attestationResponse(fmt.Sprintf(`{"attestations":[{"repository_id":1,"bundle_url":%q}]}`, api+listPath+"/bundle")), nil
+			return attestationResponse(fmt.Sprintf(`{"attestations":[{"repository_id":1,"bundle_url":%q}]}`, api+listPath+"/bundle?sig=fixture")), nil
 		case listPath + "/bundle":
+			if r.URL.Query().Get("sig") != "fixture" {
+				t.Error("request lost the bundle download query")
+			}
 			return attestationResponse(bundleJSON), nil
 		default:
 			return nil, fmt.Errorf("unexpected path: %s", r.URL.Path)
@@ -83,6 +87,9 @@ func TestFetchGitHubAttestations(t *testing.T) {
 	}
 	if statements[0].PredicateType != "https://slsa.dev/provenance/v1" {
 		t.Errorf("PredicateType = %q", statements[0].PredicateType)
+	}
+	if string(statements[0].Bundle) != bundleJSON {
+		t.Fatal("GitHub bundle bytes changed")
 	}
 }
 
@@ -119,6 +126,9 @@ func TestFetchGitLabAttestations(t *testing.T) {
 	}
 	if want := api + "/projects/group%2Fproject/attestations/1/download"; statements[0].SourceURL != want {
 		t.Errorf("SourceURL = %q, want %q", statements[0].SourceURL, want)
+	}
+	if string(statements[0].Bundle) != bundleJSON {
+		t.Fatal("GitLab bundle bytes changed")
 	}
 }
 
@@ -186,7 +196,7 @@ func TestSignedAttestationDownloads(t *testing.T) {
 	if client == provider || client.Jar != nil || client.Timeout != provider.Timeout || !ok || transport.Proxy != nil || transport.DialContext == nil {
 		t.Fatal("expected a separate guarded download client without cookies or proxy")
 	}
-	if got := signedDownloadSource(req.URL); got != "https://192.0.2.1/bundle" {
+	if got := redactedBundleSource(req.URL); got != "https://192.0.2.1/bundle" {
 		t.Errorf("signed download metadata = %q, want URL without the signature", got)
 	}
 	client.Transport = attestationTransport(func(r *http.Request) (*http.Response, error) {
@@ -208,9 +218,15 @@ func TestFetchAttestationsUnsupportedProvider(t *testing.T) {
 }
 
 func TestFetchAttestationsInvalidDigest(t *testing.T) {
-	_, err := FetchAttestations(context.Background(), http.DefaultClient, ProviderGitHub, "https://api.github.com", "tok", Repo{Path: "a/b"}, "not-a-digest")
-	if err == nil {
-		t.Fatal("expected error for invalid digest")
+	client := &http.Client{Transport: attestationTransport(func(*http.Request) (*http.Response, error) {
+		t.Fatal("invalid digest reached the provider")
+		return nil, nil
+	})}
+	for _, digest := range []string{"not-a-digest", strings.Repeat("/", 64)} {
+		_, err := FetchAttestations(context.Background(), client, ProviderGitLab, "https://gitlab.example.test", "tok", Repo{Path: "a/b"}, digest)
+		if err == nil {
+			t.Fatal("expected error for invalid digest")
+		}
 	}
 }
 

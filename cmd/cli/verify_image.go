@@ -72,13 +72,12 @@ func runVerifyImage(config CLIConfig, verifier cosignverify.Verifier, out io.Wri
 		return exitError
 	}
 
-	payload, err := json.Marshal(verdict)
-	if err != nil {
-		fmt.Fprintf(out, "Failed to encode verdict: %v\n", err)
-		return exitError
-	}
-
 	if *trail != "" {
+		payload, err := json.Marshal(verdict)
+		if err != nil {
+			fmt.Fprintf(out, "Failed to encode verdict: %v\n", err)
+			return exitError
+		}
 		respBody, uerr := uploadMultipart(config, *trail, *sha, *name, "cosign-verification", string(payload), nil, false)
 		if uerr != nil {
 			fmt.Fprintf(out, "Verification completed (verified=%v) but failed to record attestation: %v\n", verdict.Verified, uerr)
