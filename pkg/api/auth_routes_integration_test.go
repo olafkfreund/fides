@@ -254,16 +254,27 @@ func (f *routeAuthFixture) denied(t *testing.T, path, body string, credential ro
 }
 
 func TestMutationAuthorizationIntegration(t *testing.T) {
-	f := newRouteAuthFixture(t)
-	f.stubGitProvider(t)
-	foreign := routeSession(t, f.server, f.other["org"], auth.RoleAdmin, time.Hour)
-	ids := f.own
 	for _, route := range mutationRoutes {
 		switch route.auth {
 		case signedCallback, localLogin, admissionTLS, ssoState:
 			continue // Exercised by TestPublicMutationAuthorizationIntegration.
 		}
 		t.Run(route.pattern, func(t *testing.T) {
+			f := newRouteAuthFixture(t)
+			ids := f.own
+			switch route.pattern {
+			case "POST /api/v1/attest/fetch":
+				mustExec(t, f.pool, `INSERT INTO artifacts (sha256, org_id, trail_id, name, type)
+					VALUES ($1, $2, $3, 'fixture', 'docker')`, ids["sha"], ids["org"], ids["trail"])
+				f.stubGitProvider(t)
+			case "POST /api/v1/verify-branch-protection":
+				f.stubGitProvider(t)
+			case "POST /api/v1/controls/{id}/unarchive":
+				mustExec(t, f.pool, `UPDATE controls SET archived = true WHERE id = $1`, ids["control"])
+			case "POST /api/v1/environments/{id}/unarchive":
+				mustExec(t, f.pool, `UPDATE environments SET archived = true WHERE id = $1`, ids["env"])
+			}
+
 			provider := "unleash"
 			if !strings.Contains(route.pattern, "/flags/") {
 				provider = "github"
@@ -296,6 +307,11 @@ func TestMutationAuthorizationIntegration(t *testing.T) {
 			}
 			if route.foreign {
 				t.Run("other-tenant", func(t *testing.T) {
+					if route.pattern == "POST /api/v1/trails/{id}/anchor" {
+						// Resolve selects the configured string without dialing.
+						t.Setenv("FIDES_TSA_URL", "https://tsa.example.invalid")
+					}
+					foreign := routeSession(t, f.server, f.other["org"], auth.RoleAdmin, time.Hour)
 					f.denied(t, target, body, foreign, http.StatusNotFound, "")
 				})
 			}
@@ -546,6 +562,9 @@ func (f *routeAuthFixture) checkSignedCallback(t *testing.T, pattern string) {
 				f.own["org"], provider.name, host, "https://"+host)
 			target := strings.ReplaceAll(pattern, "{provider}", provider.name) + "?org=" + f.own["org"]
 			f.denied(t, target, provider.body, nil, 401, "invalid webhook signature")
+			f.denied(t, target, provider.body, func(r *http.Request) {
+				r.Header.Set(provider.header, "fixture-invalid-signature")
+			}, http.StatusUnauthorized, "invalid webhook signature")
 			value := secret
 			if provider.name == "github" {
 				mac := hmac.New(sha256.New, []byte(secret))

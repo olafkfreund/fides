@@ -1,9 +1,6 @@
 package api
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"strings"
 	"testing"
@@ -40,7 +37,7 @@ var mutationRoutes = []mutationRoute{
 	{"POST /api/v1/flows", "", `{"name":"created-flow"}`, adminOnly, 201, "flows", false},
 	{"PUT /api/v1/flows", "", `{"id":"$flow","name":"renamed-flow"}`, adminOnly, 200, "flows", true},
 	{"POST /api/v1/trails", "", `{"flow_id":"$flow","name":"created-trail"}`, writerOnly, 201, "trails", true},
-	{"POST /api/v1/trails/{id}/anchor", "trail", `{}`, adminOnly, 400, "no TSA is configured: set FIDES_TSA_URL, or FIDES_TSA_URLS to the endpoints callers may choose between", false},
+	{"POST /api/v1/trails/{id}/anchor", "trail", `{}`, adminOnly, 400, "no TSA is configured: set FIDES_TSA_URL, or FIDES_TSA_URLS to the endpoints callers may choose between", true},
 	{"POST /api/v1/trails/{id}/approvals", "trail", `{"reason":"fixture review"}`, roleUndecided, 201, "trail_approvals", true},
 	{"POST /api/v1/vex", "", `{"cve":"CVE-2024-0001","status":"not_affected","justification":"fixture review"}`, adminOnly, 201, "vex_statements", false},
 	{"POST /api/v1/vulnerabilities/backfill", "", `{}`, adminOnly, 200, "", false},
@@ -90,7 +87,7 @@ var mutationRoutes = []mutationRoute{
 	{"POST /api/v1/flags/changed", "", `{"flag_key":"fixture","new_state":"on"}`, writerOnly, 201, "attestations", false},
 	{"POST /api/v1/flags/webhook/{provider}", "", `{"type":"feature-enabled","featureName":"fixture"}`, writerOnly, 201, "attestations", false},
 	{"POST /api/v1/servicenow/incident", "", `{"short_description":"Fixture incident"}`, roleUndecided, 400, "ServiceNow is not configured", false},
-	{"POST /api/v1/servicenow/deployment-anchor", "", `{"trail_id":"$trail","change_number":"CHG0012345"}`, writerOnly, 400, "ServiceNow is not configured for this organization", false},
+	{"POST /api/v1/servicenow/deployment-anchor", "", `{"trail_id":"$trail","change_number":"CHG0012345"}`, writerOnly, 400, "ServiceNow is not configured for this organization", true},
 	{"POST /api/v1/mcp", "", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, authenticated, 200, "", false},
 	{"POST /api/v1/servicenow/mcp/lookup", "", `{"table":"cmdb_ci","limit":1}`, authenticated, 400, "ServiceNow is not configured for this organization", false},
 	{"POST /api/v1/servicenow/mcp/tools", "", `{"server":"fixture"}`, authenticated, 400, "ServiceNow is not configured for this organization", false},
@@ -118,10 +115,6 @@ var mutationRoutes = []mutationRoute{
 // Parse the direct ServeMux registrations because ServeMux offers no route
 // iterator. Run this in the DB-free suite so a new route has to pick a class.
 func TestMutationRouteInventory(t *testing.T) {
-	file, err := parser.ParseFile(token.NewFileSet(), "server.go", nil, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
 	classified := make(map[string]mutationAuth)
 	for _, route := range mutationRoutes {
 		if _, duplicate := classified[route.pattern]; duplicate {
@@ -141,40 +134,24 @@ func TestMutationRouteInventory(t *testing.T) {
 		}
 		classified[route.pattern] = route.auth
 	}
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || (sel.Sel.Name != "HandleFunc" && sel.Sel.Name != "Handle") {
-			return true
-		}
-		literal, ok := call.Args[0].(*ast.BasicLit)
-		if !ok || literal.Kind != token.STRING {
-			t.Errorf("route registration must use a literal pattern for the authorization inventory")
-			return true
-		}
-		pattern := strings.Trim(literal.Value, "\"`")
-		method, path, _ := strings.Cut(pattern, " ")
-		if strings.HasPrefix(pattern, "/api/v1/") {
-			t.Errorf("methodless API registration must be explicitly scoped: %s", pattern)
-		}
+	for path, methods := range registeredRoutes(t) {
 		if !strings.HasPrefix(path, "/api/v1/") {
-			return true
+			continue
 		}
-		switch method {
-		case http.MethodGet, http.MethodHead, http.MethodOptions:
-			if !strings.HasPrefix(path, "/api/v1/auth/") {
-				return true
+		for _, method := range methods {
+			switch method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				if !strings.HasPrefix(path, "/api/v1/auth/") {
+					continue
+				}
 			}
+			pattern := method + " " + path
+			if _, ok := classified[pattern]; !ok {
+				t.Errorf("classify new route %s in mutationRoutes", pattern)
+			}
+			delete(classified, pattern)
 		}
-		if _, ok := classified[pattern]; !ok {
-			t.Errorf("classify new route %s in mutationRoutes", pattern)
-		}
-		delete(classified, pattern)
-		return true
-	})
+	}
 	for pattern := range classified {
 		t.Errorf("inventory entry %s has no registered route", pattern)
 	}
