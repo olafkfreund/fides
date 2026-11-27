@@ -509,19 +509,25 @@ func handleReport(config CLIConfig, args []string) {
 	fmt.Println(body)
 }
 
-// fides audit --trail <id> [--output <file.zip>]
+// fides audit --trail <id> [--signed] [--output <file.zip>]
 func handleAudit(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("audit", flag.ExitOnError)
 	trail := cmd.String("trail", "", "trail UUID")
 	output := cmd.String("output", "", "output zip path")
+	signed := cmd.Bool("signed", false, "download a signed ZIP and detached .sig sibling")
 	cmd.Parse(args)
 	if *trail == "" {
-		fmt.Println("Usage: fides audit --trail <id> [--output <file.zip>]")
+		fmt.Println("Usage: fides audit --trail <id> [--signed] [--output <file.zip>]")
 		os.Exit(1)
 	}
 	dest := *output
 	if dest == "" {
 		dest = "trail-" + *trail + "-audit.zip"
+	}
+	if *signed {
+		fail(downloadSignedAudit(config, *trail, dest), "download signed audit package")
+		fmt.Printf("Wrote signed audit package to %s and %s.sig\n", dest, dest)
+		return
 	}
 	req, _ := http.NewRequest("GET", config.ServerURL+"/api/v1/trails/"+*trail+"/audit-package", nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if config.Token != "" {

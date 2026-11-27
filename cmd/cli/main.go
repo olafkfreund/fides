@@ -79,6 +79,8 @@ func main() {
 		handleVEX(config, os.Args[2:])
 	case "audit":
 		handleAudit(config, os.Args[2:])
+	case "verify-pack":
+		os.Exit(runVerifyPack(os.Stdout, os.Args[2:]))
 	case "policy":
 		handlePolicy(config, os.Args[2:])
 	case "logical-env":
@@ -191,7 +193,8 @@ func printUsage() {
 	fmt.Println("  policy           Policies (create|delete|generate | add|list|check --env <id>)")
 	fmt.Println("  metrics          DORA metrics (--days N), deployment-frequency (--weeks N), or")
 	fmt.Println("                   compliance-correlation (--days N): DORA vs risk score & control coverage")
-	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--output])")
+	fmt.Println("  verify-pack      Verify a signed audit pack offline (pack.zip --archive-key <pem>)")
+	fmt.Println("  audit            Download a trail's audit package ZIP (--trail <id> [--signed] [--output])")
 	fmt.Println("  search           Search artifacts/attestations/components (search artifacts|attestations|components ...)")
 	fmt.Println("  impact           Show artifacts + running environments affected by a CVE (--cve <CVE-ID>)")
 	fmt.Println("  vex              Record a VEX statement to suppress/annotate a CVE (--cve --status [--product --justification])")
