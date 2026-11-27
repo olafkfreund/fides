@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 528
 spec: spec/2026-11-27-528-offline-audit-pack.md
 ---
