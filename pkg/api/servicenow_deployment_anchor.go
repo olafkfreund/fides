@@ -52,6 +52,20 @@ func (s *Server) handleServiceNowAnchorDeployment(w http.ResponseWriter, r *http
 		return
 	}
 
+	var flowName, commit string
+	err = s.q(r.Context()).QueryRowContext(r.Context(),
+		`SELECT f.name, COALESCE(t.git_commit, '') FROM trails t
+		 JOIN flows f ON f.id = t.flow_id
+		 WHERE t.id = $1 AND f.org_id = $2`, trailID, orgID).Scan(&flowName, &commit)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "trail not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+
 	client, enabled, err := s.snowClient(r.Context(), orgID)
 	if err != nil {
 		internalError(w, err)
@@ -69,20 +83,6 @@ func (s *Server) handleServiceNowAnchorDeployment(w http.ResponseWriter, r *http
 	}
 	if ciSysID == "" {
 		http.Error(w, "could not resolve a CMDB CI from change_number/ci", http.StatusNotFound)
-		return
-	}
-
-	var flowName, commit string
-	err = s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT f.name, COALESCE(t.git_commit, '') FROM trails t
-		 JOIN flows f ON f.id = t.flow_id
-		 WHERE t.id = $1 AND f.org_id = $2`, trailID, orgID).Scan(&flowName, &commit)
-	if errors.Is(err, sql.ErrNoRows) {
-		http.Error(w, "trail not found", http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		internalError(w, err)
 		return
 	}
 

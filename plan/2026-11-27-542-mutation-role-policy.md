@@ -18,7 +18,7 @@ Use the existing request principal. Admin may configure flow, integration and po
 1. **`pkg/api/server.go:68`, `pkg/api/auth_middleware.go:158`** — Add explicit Admin-only and Writer-or-Admin gates to documented API mutations identified by the #523 inventory. Apply the gate before body validation or side effects. Preserve existing route registration, authentication and public callback behavior. Exercise the #523 authorization cases.
 2. **`pkg/api/assistant_handlers.go:191`** — Require Admin on each branch that persists a flow, including the model and no-model paths. Check that read-only chat is available at the current roles. Keep existing tenant scoping and assistant behavior.
 3. **`docs/first-run.md:57`, `web/first-run.md:57`** — State the enforced rules and existing capability exception together. Run the checks below and link #523.
-4. **`pkg/api/approvals.go:102`, `artifact_handlers.go:25`, and `servicenow_handlers.go:165`** — Use the existing tenant guard before writing against a requested trail. On artifact digest conflicts, update only a row belonging to the caller's organization. Check that a denied request leaves both tenants' rows unchanged.
+4. **`pkg/api/approvals.go:102`, `artifact_handlers.go:25`, `servicenow_handlers.go:165`, and `servicenow_deployment_anchor.go:35`** — Use the existing tenant guard before writing against a requested trail or contacting ServiceNow. On artifact digest conflicts, update only a row belonging to the caller's organization. Check that a denied request leaves both tenants' rows unchanged.
 
 ## Tests
 
