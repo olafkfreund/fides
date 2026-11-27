@@ -24,7 +24,7 @@ Line references are from the reviewed base. Refresh them after dependent changes
 
 ### Implementation decisions
 
-1. Carry a UUID in `Idempotency-Key`. Authenticate the writer and verify ownership before replaying a stored result. Use a tenant-scoped advisory transaction lock, an evidence fingerprint, and migration `0030_recording_operations.sql` to commit the response with the evidence. Complete attachment uploads and metadata writes before recording success, using stable object keys for keyed retries.
+1. Carry a UUID in `Idempotency-Key`. Authenticate the writer and verify ownership before replaying a stored result. Set the authenticated tenant in the recording transaction. Use a tenant-scoped advisory transaction lock, an evidence fingerprint, and migration `0030_recording_operations.sql` to commit the response with the evidence. Complete attachment uploads and metadata writes before recording success, using stable object keys for keyed retries.
 2. Bind queue entries to a digest of the configured endpoint and credential. An opaque credential gives the CLI no offline tenant identity. Replay therefore requires the same credential. Use `FIDES_SPOOL_DIR` for persistent runners. Trail mappings retain their server UUID without retaining the request body after confirmation.
 3. Queue selected temporary transport failures and HTTP 502, 503 and 504 responses. Treat authentication, TLS identity, redirect, and validation failures as terminal. Preserve the idempotency table across rollbacks and run the updated server before enabling fail-open on its clients.
 

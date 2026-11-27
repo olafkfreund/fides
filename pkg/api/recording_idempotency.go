@@ -31,6 +31,12 @@ func (s *Server) beginRecording(w http.ResponseWriter, r *http.Request, payload 
 	if len(keys) == 0 && !uploads {
 		return op, r
 	}
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return nil, r
+	}
+	op.orgID = orgID
 	if len(keys) != 0 {
 		if !requireMutationRole(w, r, auth.RoleWriter) {
 			return nil, r
@@ -49,7 +55,6 @@ func (s *Server) beginRecording(w http.ResponseWriter, r *http.Request, payload 
 			return nil, r
 		}
 		op.fingerprint = sha256.Sum256(data)
-		op.orgID, _ = principalOrg(r)
 		op.endpoint = r.URL.Path
 	}
 
@@ -71,13 +76,11 @@ func (s *Server) beginRecording(w http.ResponseWriter, r *http.Request, payload 
 			op.rollback()
 		}
 	}()
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.current_org', $1, true)", op.orgID.String()); err != nil {
+		internalError(w, err)
+		return nil, r
+	}
 	if op.keyed {
-		if _, scoped := db.QuerierFromContext(ctx); !scoped {
-			if _, err := tx.ExecContext(ctx, "SELECT set_config('app.current_org', $1, true)", op.orgID.String()); err != nil {
-				internalError(w, err)
-				return nil, r
-			}
-		}
 		lockKey := "recording:" + op.orgID.String() + ":" + op.operationID.String()
 		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
 			internalError(w, err)
