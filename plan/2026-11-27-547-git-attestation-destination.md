@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 547
 spec: spec/2026-11-27-547-git-attestation-destination.md
 coders:
