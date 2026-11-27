@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-
-	"fides/pkg/ledger"
 )
 
 // computeEvidenceBundle assembles the tamper-evident evidence summary for a
@@ -15,26 +13,12 @@ import (
 // alongside the risk score on the ServiceNow change-gate write-back, so the
 // change_request carries more than a verdict — it carries the evidence.
 func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (map[string]any, error) {
-	rows, err := s.q(ctx).QueryContext(ctx,
-		`SELECT name, type_name, payload::text, is_compliant, COALESCE(content_hash,''), COALESCE(prev_hash,'')
-		 FROM attestations WHERE trail_id = $1 ORDER BY created_at, id`, trailID)
+	entries, err := s.readTrailChain(ctx, trailID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var entries []ledger.Entry
 	typeCounts := map[string]map[string]int{}
-	for rows.Next() {
-		var e ledger.Entry
-		var payload string
-		if err := rows.Scan(&e.Name, &e.TypeName, &payload, &e.IsCompliant, &e.ContentHash, &e.PrevHash); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		e.TrailID = trailID.String()
-		e.Payload = ledger.CanonicalJSON(payload)
-		entries = append(entries, e)
-
+	for _, e := range entries {
 		tc, ok := typeCounts[e.TypeName]
 		if !ok {
 			tc = map[string]int{"total": 0, "compliant": 0, "non_compliant": 0}
@@ -47,13 +31,6 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 			tc["non_compliant"]++
 		}
 	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-
 	artifacts := []map[string]any{}
 	arows, err := s.q(ctx).QueryContext(ctx,
 		`SELECT sha256, name, type FROM artifacts WHERE trail_id = $1 ORDER BY created_at`, trailID)
@@ -77,7 +54,7 @@ func (s *Server) computeEvidenceBundle(ctx context.Context, trailID uuid.UUID) (
 	arows.Close()
 
 	return map[string]any{
-		"chain":             ledger.Verify(entries),
+		"chain":             verifyTrailEntries(entries),
 		"artifacts":         artifacts,
 		"attestation_types": typeCounts,
 	}, nil

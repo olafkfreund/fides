@@ -108,7 +108,7 @@ func (s *Server) writeFlagChange(ctx context.Context, orgID, flowID uuid.UUID, r
 		Payload:          string(payload),
 		IsCompliant:      check.compliant,
 		ValidationErrors: check.reasons,
-	}, nil); err != nil {
+	}, nil, attestationEvidence{Policy: check.policy}); err != nil {
 		return uuid.UUID{}, uuid.UUID{}, err
 	}
 

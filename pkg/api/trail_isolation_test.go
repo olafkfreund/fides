@@ -31,6 +31,7 @@ func trailProbeDB(t *testing.T) *sql.DB {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 	return pool
 }
 

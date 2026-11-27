@@ -150,7 +150,7 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 			TypeName:       "slsa-provenance",
 			Payload:        string(payload),
 			IsCompliant:    result.Compliant,
-		}, nil); err != nil {
+		}, nil, attestationEvidence{}); err != nil {
 			internalError(w, err)
 			return
 		}
