@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 525
 intent: intent/2026-11-27-525-cloud-snapshots.md
 ---
