@@ -41,6 +41,7 @@ func (s *Server) handleMCPServer(w http.ResponseWriter, r *http.Request) {
 }
 
 // fidesMCPTools is the curated, read-only tool set exposed to remote MCP clients.
+// Keep discovery and dispatch read-only because scoped service keys can reach this endpoint.
 func fidesMCPTools() []mcp.Tool {
 	return []mcp.Tool{
 		{

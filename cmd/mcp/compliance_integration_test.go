@@ -24,7 +24,7 @@ import (
 
 func TestMCPComplianceIntegration(t *testing.T) {
 	if os.Getenv("FIDES_MCP_TEST_PROCESS") == "1" {
-		main()
+		runMCP(nil)
 		os.Exit(0)
 	}
 
@@ -130,7 +130,7 @@ func TestMCPComplianceIntegration(t *testing.T) {
 	send(5, "tools/call", map[string]any{"name": "check_compliance", "arguments": map[string]string{"artifact_sha256": errorDigest}})
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMCPComplianceIntegration$")
-	cmd.Env = append(os.Environ(), "FIDES_MCP_TEST_PROCESS=1", "FIDES_SERVER_URL="+server.URL)
+	cmd.Env = append(os.Environ(), "FIDES_MCP_TEST_PROCESS=1", "FIDES_MCP_READ_ONLY=false", "FIDES_SERVER_URL="+server.URL)
 	cmd.Stdin = &input
 	cmd.Stderr = os.Stderr
 	output, err := cmd.Output()

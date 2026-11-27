@@ -290,7 +290,8 @@ Desktop can query your compliance data **and read the docs** in-conversation.
 // .mcp.json
 { "mcpServers": { "fides": {
   "command": "/path/to/fides-mcp",
-  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<service-account key>" }
+  "args": ["--read-only"],
+  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<read-only service-account key>" }
 } } }
 ```
 
