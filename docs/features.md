@@ -489,6 +489,52 @@ fides report --framework CRA               # add --format oscal for a machine-re
 fides report --cra-incidents --hours 24
 ```
 
+### Reporting cases and deadlines
+
+Start a case when the operator establishes awareness of an actively exploited
+vulnerability or severe incident. The 24-hour early warning and 72-hour
+notification deadlines use that awareness timestamp. The final deadline uses
+the case type and the timestamp of its trigger.
+
+| Case type | Final report deadline |
+|-----------|-----------------------|
+| Actively exploited vulnerability | 14 days after a corrective or mitigating measure becomes available |
+| Severe incident | One calendar month after the incident notification is submitted |
+
+A final deadline stays pending until its trigger is known. Track intermediate
+reports requested by the coordinating CSIRT as separate filings. Keep evidence
+of earlier filings when relying on information already provided. Check the
+reporting obligations and platform workflow for your case.
+[Article 14 of the Cyber Resilience Act](https://eur-lex.europa.eu/legal-content/EN/TXT/PDF/?uri=CELEX%3A32024R2847)
+· [ENISA filing guidance](https://www.enisa.europa.eu/topics/product-security/single-reporting-platform-srp/cra-srp-guidance-ar-notification-submission-and-update)
+
+Create a case with `fides cra create --file case.json`. Supply `kind`
+(`vulnerability` or `severe-incident`), `title`, and an RFC 3339
+`awareness_at`. A vulnerability case also accepts `cve` and
+`measure_available_at`. Link tenant trails or artifacts through `links`.
+Use `fides cra correct --case "$CASE_ID" --file update.json` to add links or a
+milestone. A case Admin supplies a `correction_reason` when changing an
+established timestamp.
+
+Prepare a draft with `fides cra export --case "$CASE_ID" --file stage.json`.
+Supply `stage` (`early-warning`, `notification`, `final`, or a requested
+`intermediate`) and optional `fields`. The response includes the worksheet
+payload, its ID, and its SHA-256 digest. Use the worksheet to complete the
+required fields and file in the Single Reporting Platform.
+
+After actual filing, run `fides cra submit --case "$CASE_ID" --file filing.json`.
+Supply `export_id`, `worksheet_sha256` from the worksheet response,
+`payload_sha256` of the exact filed report saved by the operator,
+`submitted_at`, and `external_reference`. With a service credential, include
+the operator's name or email in `operator`. Fides records the declared
+operator alongside the credential type. A confirmed filing adds evidence to
+the trails linked at confirmation time.
+
+With `FIDES_EVENTS_ENABLED=true`, the outbox queues due-soon reminders one
+hour before a deadline and overdue reminders once the deadline passes.
+Configured Slack and ServiceNow destinations receive the case ID, stage, and
+deadline. Corrections retain prior deadlines and reminder history.
+
 ## 24. External RFC3161 timestamp anchoring
 
 The tamper-evidence chain is an internal hash chain. Anchor a trail's chain head

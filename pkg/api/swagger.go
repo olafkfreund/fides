@@ -196,6 +196,114 @@ const SwaggerJSON = `{
         }
       }
     },
+    "/cra/cases": {
+      "get": {
+        "summary": "List CRA reporting cases",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/CollectionPage"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a CRA reporting case",
+        "responses": {
+          "201": {
+            "description": "Case created"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "description": "Requires a tenant Writer or Admin. Request schemas not yet described."
+      }
+    },
+    "/cra/cases/{id}": {
+      "get": {
+        "summary": "Read a CRA case and its reporting history",
+        "responses": {
+          "200": {
+            "description": "Case and history"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Link CRA evidence or update reporting milestones",
+        "responses": {
+          "200": {
+            "description": "Updated case and history"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "description": "Requires a tenant Writer or Admin. Request schemas not yet described."
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ]
+    },
+    "/cra/cases/{id}/exports": {
+      "post": {
+        "summary": "Save a CRA filing worksheet",
+        "responses": {
+          "201": {
+            "description": "Stored worksheet and SHA-256 digest"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "description": "Requires a tenant Writer or Admin. Request schemas not yet described."
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ]
+    },
+    "/cra/cases/{id}/submissions": {
+      "post": {
+        "summary": "Record a confirmed CRA filing",
+        "responses": {
+          "200": {
+            "description": "Existing filing record"
+          },
+          "201": {
+            "description": "Filing recorded"
+          },
+          "403": {
+            "description": "Forbidden"
+          }
+        },
+        "description": "Requires a tenant Writer or Admin. Request schemas not yet described."
+      },
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ]
+    },
     "/controls/import-framework": {
       "post": {
         "summary": "Adopt a regulated framework's control catalog",
