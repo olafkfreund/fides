@@ -50,7 +50,7 @@ flowchart TD
     subgraph CI/CD Pipelines [CI/CD Pipelines (GitHub, GitLab, Jenkins)]
         CLI_Init[fides trail start] --> CLI_Report[fides artifact report]
         CLI_Report --> CLI_Scan[fides attest --type snyk/trivy/gitleaks]
-        CLI_Scan --> CLI_Gate[fides assert --policy prod-policy]
+        CLI_Scan --> CLI_Gate[fides assert --sha256 DIGEST]
     end
 
     subgraph Runtimes [Runtime Systems]
@@ -651,7 +651,7 @@ Authentication is via environment variables (`FIDES_SERVER_URL`, `FIDES_API_TOKE
 | **Artifacts** | `fides artifact report --sha256 <s> --name <n>` | Record an artifact fingerprint |
 | **Attestations** | `fides attest --type <t> --payload <json>` | Generic attestation |
 | **Attestations (parsers)** | `fides attest junit\|snyk\|trivy --file <report>` | Parse a real report into a normalized attestation |
-| **Verification** | `fides assert --policy <p> --sha256 <s>` | Policy gate for an artifact |
+| **Verification** | `fides assert --sha256 <s>` | Policy gate for an artifact |
 | **Tamper-evidence** | `fides verify-chain --trail <id>` | Verify the attestation hash chain (exit 2 if broken) |
 | **Audit** | `fides audit --trail <id> [--output <zip>]` | Download a trail audit package |
 | **Runtimes** | `fides snapshot docker\|k8s\|ecs\|lambda --env <id>` | Report a runtime snapshot |

@@ -53,7 +53,7 @@ func TestEveryHandlerEstablishesTenantScope(t *testing.T) {
 		trails attestations llm_assessments evidence_attachments environment_snapshots
 		snapshot_artifacts environment_mcp_servers environment_allowlist environment_policies
 		logical_environment_members
-		service_accounts service_account_keys integration_events`)
+		service_accounts service_account_keys integration_events recording_operations`)
 
 	guards := map[string]bool{
 		"requireTrailInOrg": true, "requireEnvInOrg": true, "requireFlowInOrg": true,

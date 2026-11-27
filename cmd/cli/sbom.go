@@ -20,6 +20,7 @@ import (
 // the artifact.
 func handleAttestSBOM(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("attest sbom", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Trail UUID (optional; resolved from the artifact when omitted)")
 	artSHA := cmd.String("artifact-sha", "", "Artifact SHA256 (required)")
 	name := cmd.String("name", "sbom", "Attestation name")
@@ -44,7 +45,7 @@ func handleAttestSBOM(config CLIConfig, args []string) {
 	// control frameworks already require for "software bill of materials
 	// produced" (see pkg/api/framework_catalogs.go); the detected format is
 	// still recorded in the normalized payload's "format" field.
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, "sbom-cyclonedx", string(payload), []string{*file}, false)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, *name, "sbom-cyclonedx", string(payload), []attestationAttachment{{path: *file, data: data}}, false)
 	fail(err, "record SBOM attestation")
 	fmt.Printf("Recorded sbom attestation (format=%s, %d components): %s\n", result.Format, len(result.Components), respBody)
 }

@@ -4,15 +4,19 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	neturl "net/url"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"fides/internal/pagination"
 	"fides/pkg/version"
 )
 
@@ -58,9 +62,29 @@ type ServerInfo struct {
 }
 
 type Tool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema InputSchema `json:"inputSchema"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema InputSchema     `json:"inputSchema"`
+	Annotations ToolAnnotations `json:"annotations"`
+}
+
+type ToolAnnotations struct {
+	ReadOnlyHint    bool `json:"readOnlyHint"`
+	DestructiveHint bool `json:"destructiveHint"`
+}
+
+type toolEffect uint8
+
+const (
+	unclassified toolEffect = iota
+	readOnly
+	additive
+	destructive
+)
+
+type registeredTool struct {
+	effect toolEffect
+	tool   Tool
 }
 
 type InputSchema struct {
@@ -94,6 +118,29 @@ type ToolCallResult struct {
 }
 
 func main() {
+	runMCP(os.Args[1:])
+}
+
+func runMCP(args []string) {
+	flags := flag.NewFlagSet("fides-mcp", flag.ExitOnError)
+	readOnlyMode := flags.Bool("read-only", false, "disable tools that change state (overrides FIDES_MCP_READ_ONLY)")
+	if err := flags.Parse(args); err != nil {
+		return
+	}
+	explicitMode := false
+	flags.Visit(func(option *flag.Flag) {
+		if option.Name == "read-only" {
+			explicitMode = true
+		}
+	})
+	if value := os.Getenv("FIDES_MCP_READ_ONLY"); !explicitMode && value != "" {
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			log.Fatal("FIDES_MCP_READ_ONLY must be a boolean")
+		}
+		*readOnlyMode = enabled
+	}
+
 	// Redirect standard logging to stderr since stdout/stdin is used for JSON-RPC
 	log.SetOutput(os.Stderr)
 	log.Println("Starting Fides MCP Server...")
@@ -122,15 +169,23 @@ func main() {
 			continue
 		}
 
-		handleRequest(&req, serverURL)
+		handleRequest(&req, serverURL, *readOnlyMode)
 	}
 }
 
-func handleRequest(req *JsonRpcRequest, serverURL string) {
+func handleRequest(req *JsonRpcRequest, serverURL string, readOnlyMode bool) {
 	switch req.Method {
 	case "initialize":
 		var res InitializeResult
-		res.ProtocolVersion = "2024-11-05"
+		res.ProtocolVersion = "2025-03-26"
+		if req.Params != nil {
+			var params struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			if json.Unmarshal(*req.Params, &params) == nil && params.ProtocolVersion == "2024-11-05" {
+				res.ProtocolVersion = params.ProtocolVersion
+			}
+		}
 		res.ServerInfo.Name = "fides-mcp"
 		res.ServerInfo.Version = version.String()
 		sendResponse(req.Id, res)
@@ -162,223 +217,17 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 		})
 
 	case "tools/list":
-		var list ToolsListResult
-		list.Tools = []Tool{
-			{
-				Name:        "list_flows",
-				Description: "List all active build and CI/CD streams/flows in Fides",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
-			},
-			{
-				Name:        "list_environments",
-				Description: "List runtime environments monitored by Fides, along with current snapshots and drifts",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
-			},
-			{
-				Name:        "list_policies",
-				Description: "List all release gate security and compliance rules configs",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
-			},
-			{
-				Name:        "check_compliance",
-				Description: "Verify and query compliance of a build or artifact SHA256 signature against policy rules",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"artifact_sha256": {
-							Type:        "string",
-							Description: "The SHA256 signature hash of the artifact to check",
-						},
-					},
-					Required: []string{"artifact_sha256"},
-				},
-			},
-			{
-				Name:        "get_change_request_status",
-				Description: "Get the status of a ServiceNow change request (state, approval, risk, on_hold) by change number",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
-					},
-					Required: []string{"change_number"},
-				},
-			},
-			{
-				Name:        "create_compliance_incident",
-				Description: "Open a ServiceNow incident (e.g. when a Fides compliance gate fails)",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"short_description": {Type: "string", Description: "Incident title"},
-						"description":       {Type: "string", Description: "Incident details"},
-					},
-					Required: []string{"short_description"},
-				},
-			},
-			{
-				Name:        "search_cmdb_ci",
-				Description: "Search the ServiceNow CMDB for configuration items (owner, class, dependencies) by name",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"name": {Type: "string", Description: "CI name or partial name to search for"},
-					},
-					Required: []string{"name"},
-				},
-			},
-			{
-				Name:        "search_artifacts",
-				Description: "Search build artifacts by name, SHA256 prefix, or git commit",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
-					"name":   {Type: "string", Description: "artifact name (partial match)"},
-					"sha":    {Type: "string", Description: "SHA256 prefix"},
-					"commit": {Type: "string", Description: "git commit"},
-				}},
-			},
-			{
-				Name:        "search_attestations",
-				Description: "Search compliance attestations by evidence type and/or compliance status",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
-					"type":      {Type: "string", Description: "evidence type (junit, snyk, trivy, sbom-cyclonedx…)"},
-					"compliant": {Type: "string", Description: "'true' or 'false'"},
-				}},
-			},
-			{
-				Name:        "get_controls_coverage",
-				Description: "Get governance controls and how many environments enforce each (coverage report)",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
-			},
-			{
-				Name:        "ground_change",
-				Description: "Ground Now Assist for a ServiceNow change: return Fides's authoritative control-coverage + evidence + change-gate risk for a change number, with a natural-language grounding_summary to quote verbatim (Fides advises; ServiceNow decides).",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
-					},
-					Required: []string{"change_number"},
-				},
-			},
-			{
-				Name:        "get_deployment_frequency",
-				Description: "Weekly deployment frequency per environment over the last N weeks",
-				InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
-					"weeks": {Type: "string", Description: "number of weeks (default 12)"},
-				}},
-			},
-			{
-				Name:        "create_flow",
-				Description: "Create a new pipeline or project flow stream in Fides",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"name": {
-							Type:        "string",
-							Description: "Unique name of the flow",
-						},
-						"description": {
-							Type:        "string",
-							Description: "Detailed description of the flow's purpose",
-						},
-					},
-					Required: []string{"name"},
-				},
-			},
-			{
-				Name:        "create_trail",
-				Description: "Initialize a new execution trail instance for a flow (e.g. CI build, Git PR)",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"flow_id": {
-							Type:        "string",
-							Description: "UUID of the flow this trail belongs to",
-						},
-						"name": {
-							Type:        "string",
-							Description: "Trail name (e.g. Git commit hash, build number, run ID)",
-						},
-						"git_repository": {
-							Type:        "string",
-							Description: "URL of the Git repository",
-						},
-						"git_commit": {
-							Type:        "string",
-							Description: "40-character commit SHA",
-						},
-						"git_branch": {
-							Type:        "string",
-							Description: "Branch name",
-						},
-						"git_message": {
-							Type:        "string",
-							Description: "Git commit message",
-						},
-					},
-					Required: []string{"flow_id", "name"},
-				},
-			},
-			{
-				Name:        "report_artifact",
-				Description: "Record a newly built artifact fingerprint (SHA256) into a build trail",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"sha256": {
-							Type:        "string",
-							Description: "SHA256 signature hash of the artifact",
-						},
-						"name": {
-							Type:        "string",
-							Description: "Filename, docker image tag, or logical identifier of the artifact",
-						},
-						"type": {
-							Type:        "string",
-							Description: "Artifact format type (e.g. docker, binary, tarball)",
-						},
-						"trail_id": {
-							Type:        "string",
-							Description: "UUID of the trail this artifact was built in",
-						},
-					},
-					Required: []string{"sha256", "name", "type"},
-				},
-			},
-			{
-				Name:        "report_attestation",
-				Description: "Upload quality evidence, test results, or vulnerability scanning reports for a build trail",
-				InputSchema: InputSchema{
-					Type: "object",
-					Properties: map[string]SchemaProp{
-						"trail_id": {
-							Type:        "string",
-							Description: "UUID of the trail this attestation belongs to",
-						},
-						"artifact_sha256": {
-							Type:        "string",
-							Description: "Optional: SHA256 of the specific artifact this evidence attests to",
-						},
-						"name": {
-							Type:        "string",
-							Description: "Attestation instance name (e.g. 'snyk-scan', 'unit-tests')",
-						},
-						"type_name": {
-							Type:        "string",
-							Description: "Attestation type schema name (e.g. 'snyk-scan', 'junit')",
-						},
-						"payload": {
-							Type:        "string",
-							Description: "JSON payload string representing the attestation findings or metrics",
-						},
-						"is_compliant": {
-							Type:        "string",
-							Description: "Boolean string ('true' or 'false') indicating if this single step meets compliance",
-						},
-					},
-					Required: []string{"trail_id", "name", "type_name", "payload"},
-				},
-			},
+		list := ToolsListResult{Tools: []Tool{}}
+		for _, entry := range toolRegistry {
+			if entry.effect == unclassified || (readOnlyMode && entry.effect != readOnly) {
+				continue
+			}
+			tool := entry.tool
+			tool.Annotations = ToolAnnotations{
+				ReadOnlyHint:    entry.effect == readOnly,
+				DestructiveHint: entry.effect == destructive,
+			}
+			list.Tools = append(list.Tools, tool)
 		}
 		sendResponse(req.Id, list)
 
@@ -392,14 +241,250 @@ func handleRequest(req *JsonRpcRequest, serverURL string) {
 			sendError(req.Id, -32602, "Invalid params format", nil)
 			return
 		}
-		handleToolCall(req.Id, callParams, serverURL)
+		handleToolCall(req.Id, callParams, serverURL, readOnlyMode)
 
 	default:
 		sendError(req.Id, -32601, "Method not found", nil)
 	}
 }
 
-func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) {
+var toolRegistry = []registeredTool{
+	{readOnly, Tool{
+		Name:        "list_flows",
+		Description: "List all active build and CI/CD streams/flows in Fides",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
+	}},
+	{readOnly, Tool{
+		Name:        "list_environments",
+		Description: "List runtime environments monitored by Fides, along with current snapshots and drifts",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
+	}},
+	{readOnly, Tool{
+		Name:        "list_policies",
+		Description: "List all release gate security and compliance rules configs",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
+	}},
+	{readOnly, Tool{
+		Name:        "check_compliance",
+		Description: "Verify and query compliance of a build or artifact SHA256 signature against policy rules",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"artifact_sha256": {
+					Type:        "string",
+					Description: "The SHA256 signature hash of the artifact to check",
+				},
+			},
+			Required: []string{"artifact_sha256"},
+		},
+	}},
+	// This GET can mint a ServiceNow OAuth token.
+	{additive, Tool{
+		Name:        "get_change_request_status",
+		Description: "Get the status of a ServiceNow change request (state, approval, risk, on_hold) by change number",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
+			},
+			Required: []string{"change_number"},
+		},
+	}},
+	{additive, Tool{
+		Name:        "create_compliance_incident",
+		Description: "Open a ServiceNow incident (e.g. when a Fides compliance gate fails)",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"short_description": {Type: "string", Description: "Incident title"},
+				"description":       {Type: "string", Description: "Incident details"},
+			},
+			Required: []string{"short_description"},
+		},
+	}},
+	// This GET can mint a ServiceNow OAuth token.
+	{additive, Tool{
+		Name:        "search_cmdb_ci",
+		Description: "Search the ServiceNow CMDB for configuration items (owner, class, dependencies) by name",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"name": {Type: "string", Description: "CI name or partial name to search for"},
+			},
+			Required: []string{"name"},
+		},
+	}},
+	{readOnly, Tool{
+		Name:        "search_artifacts",
+		Description: "Search build artifacts by name, SHA256 prefix, or git commit",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+			"name":   {Type: "string", Description: "artifact name (partial match)"},
+			"sha":    {Type: "string", Description: "SHA256 prefix"},
+			"commit": {Type: "string", Description: "git commit"},
+		}},
+	}},
+	{readOnly, Tool{
+		Name:        "search_attestations",
+		Description: "Search compliance attestations by evidence type and/or compliance status",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+			"type":      {Type: "string", Description: "evidence type (junit, snyk, trivy, sbom-cyclonedx…)"},
+			"compliant": {Type: "string", Description: "'true' or 'false'"},
+		}},
+	}},
+	{readOnly, Tool{
+		Name:        "get_controls_coverage",
+		Description: "Get governance controls and how many environments enforce each (coverage report)",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{}},
+	}},
+	{readOnly, Tool{
+		Name:        "ground_change",
+		Description: "Ground Now Assist for a ServiceNow change: return Fides's authoritative control-coverage + evidence + change-gate risk for a change number, with a natural-language grounding_summary to quote verbatim (Fides advises; ServiceNow decides).",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"change_number": {Type: "string", Description: "ServiceNow change number, e.g. CHG0030192"},
+			},
+			Required: []string{"change_number"},
+		},
+	}},
+	{readOnly, Tool{
+		Name:        "get_deployment_frequency",
+		Description: "Weekly deployment frequency per environment over the last N weeks",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]SchemaProp{
+			"weeks": {Type: "string", Description: "number of weeks (default 12)"},
+		}},
+	}},
+	{additive, Tool{
+		Name:        "create_flow",
+		Description: "Create a new pipeline or project flow stream in Fides",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"name": {
+					Type:        "string",
+					Description: "Unique name of the flow",
+				},
+				"description": {
+					Type:        "string",
+					Description: "Detailed description of the flow's purpose",
+				},
+			},
+			Required: []string{"name"},
+		},
+	}},
+	{additive, Tool{
+		Name:        "create_trail",
+		Description: "Initialize a new execution trail instance for a flow (e.g. CI build, Git PR)",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"flow_id": {
+					Type:        "string",
+					Description: "UUID of the flow this trail belongs to",
+				},
+				"name": {
+					Type:        "string",
+					Description: "Trail name (e.g. Git commit hash, build number, run ID)",
+				},
+				"git_repository": {
+					Type:        "string",
+					Description: "URL of the Git repository",
+				},
+				"git_commit": {
+					Type:        "string",
+					Description: "40-character commit SHA",
+				},
+				"git_branch": {
+					Type:        "string",
+					Description: "Branch name",
+				},
+				"git_message": {
+					Type:        "string",
+					Description: "Git commit message",
+				},
+			},
+			Required: []string{"flow_id", "name"},
+		},
+	}},
+	// Reporting an existing digest can replace its trail link.
+	{destructive, Tool{
+		Name:        "report_artifact",
+		Description: "Record a newly built artifact fingerprint (SHA256) into a build trail",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"sha256": {
+					Type:        "string",
+					Description: "SHA256 signature hash of the artifact",
+				},
+				"name": {
+					Type:        "string",
+					Description: "Filename, docker image tag, or logical identifier of the artifact",
+				},
+				"type": {
+					Type:        "string",
+					Description: "Artifact format type (e.g. docker, binary, tarball)",
+				},
+				"trail_id": {
+					Type:        "string",
+					Description: "UUID of the trail this artifact was built in",
+				},
+			},
+			Required: []string{"sha256", "name", "type"},
+		},
+	}},
+	{additive, Tool{
+		Name:        "report_attestation",
+		Description: "Upload quality evidence, test results, or vulnerability scanning reports for a build trail",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]SchemaProp{
+				"trail_id": {
+					Type:        "string",
+					Description: "UUID of the trail this attestation belongs to",
+				},
+				"artifact_sha256": {
+					Type:        "string",
+					Description: "Optional: SHA256 of the specific artifact this evidence attests to",
+				},
+				"name": {
+					Type:        "string",
+					Description: "Attestation instance name (e.g. 'snyk-scan', 'unit-tests')",
+				},
+				"type_name": {
+					Type:        "string",
+					Description: "Attestation type schema name (e.g. 'snyk-scan', 'junit')",
+				},
+				"payload": {
+					Type:        "string",
+					Description: "JSON payload string representing the attestation findings or metrics",
+				},
+				"is_compliant": {
+					Type:        "string",
+					Description: "Deprecated and ignored. Fides computes the compliance verdict.",
+				},
+			},
+			Required: []string{"trail_id", "name", "type_name", "payload"},
+		},
+	}},
+}
+
+func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string, readOnlyMode bool) {
+	index := slices.IndexFunc(toolRegistry, func(entry registeredTool) bool {
+		return entry.effect != unclassified && entry.tool.Name == params.Name
+	})
+	var refusal string
+	switch {
+	case index < 0:
+		refusal = "Unknown tool: " + params.Name
+	case readOnlyMode && toolRegistry[index].effect != readOnly:
+		refusal = "Tool is disabled in read-only mode: " + params.Name
+	}
+	if refusal != "" {
+		sendResponse(reqId, ToolCallResult{IsError: true, Content: []TextContent{{Type: "text", Text: refusal}}})
+		return
+	}
+
 	var args map[string]interface{}
 	if params.Arguments != nil {
 		// These arrive from an MCP client. Running the tool with silently-empty
@@ -415,7 +500,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 	switch params.Name {
 	case "list_flows":
 		url := fmt.Sprintf("%s/api/v1/flows", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching flows: %v", err)}}
@@ -425,7 +510,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 
 	case "list_environments":
 		url := fmt.Sprintf("%s/api/v1/environments", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching environments: %v", err)}}
@@ -479,7 +564,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 				q.Set(k, v)
 			}
 		}
-		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/artifacts?%s", serverURL, q.Encode()))
+		body, err := makeListRequest(fmt.Sprintf("%s/api/v1/search/artifacts?%s", serverURL, q.Encode()))
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
@@ -494,7 +579,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 				q.Set(k, v)
 			}
 		}
-		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/attestations?%s", serverURL, q.Encode()))
+		body, err := makeListRequest(fmt.Sprintf("%s/api/v1/search/attestations?%s", serverURL, q.Encode()))
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
@@ -504,7 +589,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 
 	case "list_policies":
 		url := fmt.Sprintf("%s/api/v1/policies", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching policies: %v", err)}}
@@ -520,7 +605,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 			break
 		}
 		q := neturl.Values{}
-		q.Set("artifact_sha256", sha)
+		q.Set("sha256", sha)
 		reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", serverURL, q.Encode())
 		body, err := makeGetRequest(reqURL)
 		if err != nil {
@@ -615,20 +700,12 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 		}
 
 	case "report_attestation":
-		// convert is_compliant to bool
-		isCompStr, _ := args["is_compliant"].(string)
-		isComp := true
-		if strings.ToLower(isCompStr) == "false" {
-			isComp = false
-		}
-
 		payload := map[string]interface{}{
 			"trail_id":        args["trail_id"],
 			"artifact_sha256": args["artifact_sha256"],
 			"name":            args["name"],
 			"type_name":       args["type_name"],
 			"payload":         args["payload"],
-			"is_compliant":    isComp,
 		}
 
 		url := fmt.Sprintf("%s/api/v1/attestations", serverURL)
@@ -707,27 +784,36 @@ func setAuthHeaders(req *http.Request) {
 // makeGetRequest calls the operator-configured Fides server (FIDES_SERVER_URL).
 // The URL is not user/attacker input, so the SSRF (G704) findings are suppressed.
 func makeGetRequest(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- url is the configured Fides server, not user input
+	body, _, err := getPage(httpClient, url) //nolint:bodyclose // getPage closes the body before returning.
+	return body, err
+}
+
+func makeListRequest(url string) ([]byte, error) {
+	return pagination.ReadList(httpClient, url, 0, getPage)
+}
+
+func getPage(client *http.Client, url string) ([]byte, *http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	setAuthHeaders(req)
 
-	resp, err := httpClient.Do(req) // #nosec G704 -- url is the configured Fides server, not user input
+	resp, err := client.Do(req) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
 	}
-	return body, nil
+	return body, resp, nil
 }
 
 func makePostRequest(url string, payload interface{}) ([]byte, error) {

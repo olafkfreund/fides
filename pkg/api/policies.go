@@ -82,9 +82,13 @@ func (s *Server) handleListEnvPolicies(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "environment not found", http.StatusNotFound)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT id, name, required_types, COALESCE(if_tag,''), COALESCE(if_value,''), enabled
-		 FROM environment_policies WHERE environment_id = $1 ORDER BY name`, envID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT id, name, required_types, COALESCE(if_tag,''), COALESCE(if_value,''), enabled /* page keys */
+		 FROM environment_policies WHERE environment_id = $1`, envID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -107,7 +111,7 @@ func (s *Server) handleListEnvPolicies(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 func (s *Server) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {

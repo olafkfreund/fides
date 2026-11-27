@@ -94,14 +94,15 @@ fides attest sbom --file bom.json --artifact-sha <hex> [--trail <id>] [--name <n
 - Recorded as an attestation typed `sbom-cyclonedx` (satisfies the SBOM control's
   evidence requirement regardless of the source format).
 
-### `fides assert` — policy gate (**exit 1** on non-compliance)
+### `fides assert` — policy gate (**exit 2** on non-compliance)
 
 ```bash
-fides assert --sha256 <hex> [--policy <name>]
+fides assert --sha256 <hex>
 ```
 
-Evaluates the artifact against policy rules via `GET /api/v1/compliance`. Prints violations
-and exits non-zero to fail the CI step.
+Checks recorded control verdicts for the artifact via `GET /api/v1/compliance`.
+It prints violations and exits **2** on non-compliance. A non-empty `--policy`
+is unsupported and exits **1**.
 
 ### `fides verify-chain` — tamper-evidence check (**exit 2** if broken)
 

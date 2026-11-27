@@ -27,10 +27,10 @@ export default function GlobalSearch() {
       if (term.length < 2) { setResults(null); return; }
       setLoading(true);
       try {
-        const queries = [apiGet<Artifact[]>(`/api/v1/search/artifacts?name=${encodeURIComponent(term)}`)];
+        const queries = [apiGet<Artifact[]>(`/api/v1/search/artifacts?limit=12&name=${encodeURIComponent(term)}`)];
         if (isHex) {
-          queries.push(apiGet<Artifact[]>(`/api/v1/search/artifacts?sha=${encodeURIComponent(term)}`));
-          queries.push(apiGet<Artifact[]>(`/api/v1/search/artifacts?commit=${encodeURIComponent(term)}`));
+          queries.push(apiGet<Artifact[]>(`/api/v1/search/artifacts?limit=12&sha=${encodeURIComponent(term)}`));
+          queries.push(apiGet<Artifact[]>(`/api/v1/search/artifacts?limit=12&commit=${encodeURIComponent(term)}`));
         }
         const all = (await Promise.all(queries.map((p) => p.catch(() => [] as Artifact[])))).flat();
         const seen = new Set<string>();

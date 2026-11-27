@@ -23,30 +23,67 @@ Add to your project's `.mcp.json` (or the Claude Code MCP settings):
   "mcpServers": {
     "fides": {
       "command": "/absolute/path/to/fides-mcp",
+      "args": ["--read-only"],
       "env": {
         "FIDES_SERVER_URL": "https://fides.your-domain.com",
-        "FIDES_API_TOKEN": "<service-account API key>"
+        "FIDES_API_TOKEN": "<read-only service-account API key>"
       }
     }
   }
 }
 ```
 
-Create the API token in the portal: **Settings → Service Accounts → Create →
-Issue key** (Auditor role is enough for read-only querying).
+Upgrade every API server serving the Fides URL before issuing scoped keys.
+If automatic migrations are disabled, apply
+`0031_service_account_key_read_only.sql` before starting the new servers.
+As a tenant Admin, create a Viewer service account and set
+`VIEWER_ACCOUNT_ID` to its returned ID before issuing the key.
+
+```bash
+fides service-account create --name mcp-assistant --role Viewer
+fides service-account issue-key --account "$VIEWER_ACCOUNT_ID" --read-only
+```
+
+Use the issued key as `FIDES_API_TOKEN`. Check that the response shows
+`"read_only": true`. The API limits the key to the read endpoints needed by MCP.
+Keep the key out of version control.
+
+Before rolling back, list each service account's keys with
+`GET /api/v1/tenant/service-accounts/{id}/keys`. Revoke every active key with
+`"read_only": true` using
+`fides service-account revoke-key --account "$ACCOUNT_ID" --key "$KEY_ID"`.
+
+## Read-only and write access
+
+Read-only mode lists only read tools and rejects direct calls to write tools.
+Set `--read-only` or `FIDES_MCP_READ_ONLY=true` to enable it. An explicit flag
+takes precedence over the environment setting.
+
+Existing configurations keep their write-capable tool list unless you enable
+read-only mode. ServiceNow change status and CMDB search require a write-capable
+session because they can request a ServiceNow OAuth token. ServiceNow grounding
+remains available in read-only mode.
+
+For a client that needs writes, set `--read-only=false` and use
+a separate credential with the required role. Configure the client to request
+approval for write calls. MCP tool annotations describe tool behavior to the
+client. The server and API enforce access independently.
 
 ## Tools
 
 | Tool | What it does |
 |------|--------------|
 | `list_flows` / `list_environments` / `list_policies` | List pipelines, runtime environments, and policies |
-| `check_compliance` | Check an artifact SHA256 against policy rules |
+| `check_compliance` | Check recorded control verdicts for an artifact using `artifact_sha256` |
 | `search_artifacts` | Find artifacts by name / SHA prefix / git commit |
 | `search_attestations` | Find attestations by evidence type / compliance status |
 | `get_controls_coverage` | Governance controls + per-environment coverage |
 | `get_deployment_frequency` | Weekly deployment frequency per environment |
 | `create_flow` / `create_trail` / `report_artifact` / `report_attestation` | Record provenance from an agent |
 | `get_change_request_status` / `create_compliance_incident` / `search_cmdb_ci` | ServiceNow change/incident/CMDB |
+
+`report_attestation` accepts the optional legacy `is_compliant` argument as a
+deprecated input. Fides ignores it and calculates the verdict on the server.
 
 ## Resources (documentation)
 

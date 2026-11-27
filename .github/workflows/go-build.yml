@@ -20,11 +20,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          # Pin the patched toolchain: go1.26.6 fixes 7 stdlib advisories reached by
-          # this code (encoding/asn1 GO-2026-5972 via cosignverify+tsa, net/http
-          # GO-2026-5026, encoding/xml via evidence.ParseJUnit, among others).
-          # (govulncheck gate). Bump as newer stdlib advisories land.
-          go-version: '1.26.6'
+          # Pin the patched toolchain for the required govulncheck gate.
+          go-version: '1.26.11'
           check-latest: true
 
       # 430 findings when this was first switched on; the sweep that cleared them
@@ -209,17 +206,17 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.11'
           check-latest: true
 
       # Proves the Postgres RLS policies (schema-rls.sql) enforce tenant
       # isolation: pkg/db verifies ScopedConn directly, and pkg/api runs an
-      # end-to-end HTTP test with RLS enabled. -p 1 serializes the two packages
+      # end-to-end HTTP test with RLS enabled. -p 1 serializes the packages
       # since they share the database.
-      - name: RLS + events integration + E2E tests
+      - name: PostgreSQL integration and E2E tests
         env:
           FIDES_TEST_DB_DSN: host=127.0.0.1 port=5432 user=postgres password=test dbname=fides sslmode=disable
-        run: go test -p 1 ./pkg/db/ ./pkg/api/ ./pkg/events/ ./pkg/servicenow/ -run 'Integration|EndToEnd' -v
+        run: go test -p 1 ./pkg/db/ ./pkg/api/ ./pkg/events/ ./pkg/servicenow/ ./cmd/mcp/ -run 'Integration|EndToEnd' -v
 
   deploy:
     runs-on: ubuntu-latest

@@ -126,8 +126,11 @@ func (s *Server) handleListAllowlist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
 	if sha := r.URL.Query().Get("sha"); sha != "" {
+		if r.URL.Query().Has("cursor") {
+			http.Error(w, "invalid cursor", http.StatusBadRequest)
+			return
+		}
 		var approved bool
 		if err := s.q(r.Context()).QueryRowContext(r.Context(),
 			`SELECT EXISTS(SELECT 1 FROM environment_allowlist WHERE environment_id = $1 AND artifact_sha256 = $2)`,
@@ -135,13 +138,17 @@ func (s *Server) handleListAllowlist(w http.ResponseWriter, r *http.Request) {
 			internalError(w, err)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]any{"environment_id": envID, "artifact_sha256": sha, "approved": approved})
+		writeJSON(w, map[string]any{"environment_id": envID, "artifact_sha256": sha, "approved": approved})
 		return
 	}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT artifact_sha256, COALESCE(approved_by, ''), COALESCE(reason, ''), created_at
-		 FROM environment_allowlist WHERE environment_id = $1 ORDER BY created_at DESC`, envID)
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT artifact_sha256, COALESCE(approved_by, ''), COALESCE(reason, ''), created_at /* page keys */
+		 FROM environment_allowlist WHERE environment_id = $1`, envID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -162,7 +169,7 @@ func (s *Server) handleListAllowlist(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	json.NewEncoder(w).Encode(out)
+	page.write(w, out)
 }
 
 // handleRemoveAllowlist revokes an artifact's approval for an environment.

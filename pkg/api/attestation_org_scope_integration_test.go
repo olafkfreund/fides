@@ -42,6 +42,7 @@ func TestAttestationJQRulesScopedByOrg(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	orgA, orgB := uuid.New(), uuid.New()
 	flowA, trailA := uuid.New(), uuid.New()

@@ -2,15 +2,18 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,51 +32,6 @@ import (
 // post from every cluster. handleReportSnapshot is also where a shadow change
 // is first detected, by comparing running digests against registered artifacts.
 
-type createAttestationTypeReq struct {
-	OrgID       string   `json:"org_id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Schema      string   `json:"schema"`
-	JQRules     []string `json:"jq_rules"`
-}
-
-func (s *Server) handleCreateAttestationType(w http.ResponseWriter, r *http.Request) {
-	var req createAttestationTypeReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var err error
-
-	attType := &models.AttestationType{
-		ID:          uuid.New(),
-		OrgID:       orgID,
-		Name:        req.Name,
-		Description: req.Description,
-		Schema:      req.Schema,
-		JQRules:     req.JQRules,
-		CreatedAt:   time.Now(),
-	}
-
-	query := `INSERT INTO attestation_types (id, org_id, name, description, schema, jq_rules, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, attType.ID, attType.OrgID, attType.Name, attType.Description, attType.Schema, pq.Array(attType.JQRules), attType.CreatedAt)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(attType)
-}
-
 type reportAttestationReq struct {
 	TrailID             string `json:"trail_id"`
 	ArtifactSHA256      string `json:"artifact_sha256"`
@@ -87,13 +45,12 @@ type reportAttestationReq struct {
 }
 
 func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request) {
-	contentType := r.Header.Get("Content-Type")
+	contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 
 	var req reportAttestationReq
-	var fileReaders []io.Reader
-	var fileNames []string
+	var files []*multipart.FileHeader
 
-	if contentType == "application/json" || contentType == "" {
+	if contentType == "application/json" || r.Header.Get("Content-Type") == "" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			badRequest(w, err)
 			return
@@ -116,21 +73,92 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.SignatureAlgorithm = r.FormValue("signature_algorithm")
 		req.ManifestationReason = r.FormValue("manifestation_reason")
 
-		files := r.MultipartForm.File["attachments"]
-		for _, fHeaders := range files {
-			f, err := fHeaders.Open()
-			if err != nil {
-				internalError(w, err)
-				return
-			}
-			defer f.Close()
-			fileReaders = append(fileReaders, f)
-			fileNames = append(fileNames, fHeaders.Filename)
+		defer func() { _ = r.MultipartForm.RemoveAll() }()
+		files = r.MultipartForm.File["attachments"]
+	}
+
+	isEncrypted := r.FormValue("encrypted") == "true" || r.Header.Get("X-Fides-Encrypted") == "true"
+
+	var artifactSHA *string
+	if req.ArtifactSHA256 != "" {
+		artifactSHA = &req.ArtifactSHA256
+	}
+
+	// trail_id is normally required, but `fides attest sbom` may omit --trail
+	// and rely on the artifact's own trail (every artifact is reported against
+	// exactly one trail via `fides artifact report`).
+	callerOrg, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	trailID, err := s.resolveAttestationTrailID(r.Context(), callerOrg, req.TrailID, artifactSHA)
+	if err != nil {
+		var targetErr attestationTargetError
+		if errors.As(err, &targetErr) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			internalError(w, err)
+		}
+		return
+	}
+	// trail_id is caller-supplied. This endpoint WRITES compliance evidence, so
+	// without this a tenant could attest onto another tenant's trail.
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
+
+	if len(r.Header.Values("Idempotency-Key")) != 0 && req.TrailID != "" && artifactSHA != nil {
+		var owned bool
+		err := s.q(r.Context()).QueryRowContext(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM artifacts WHERE sha256 = $1 AND org_id = $2)`, *artifactSHA, callerOrg).Scan(&owned)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if !owned {
+			http.Error(w, "artifact not found", http.StatusNotFound)
+			return
 		}
 	}
 
-	// Payload Decryption Step
-	isEncrypted := r.FormValue("encrypted") == "true" || r.Header.Get("X-Fides-Encrypted") == "true"
+	type attachmentDigest struct {
+		Name string
+		Size int64
+		Hash string
+	}
+	digests := make([]attachmentDigest, 0, len(files))
+	readers := make([]multipart.File, 0, len(files))
+	for _, header := range files {
+		file, err := header.Open()
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		defer file.Close()
+		hash := sha256.New()
+		size, err := io.Copy(hash, file)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			internalError(w, err)
+			return
+		}
+		readers = append(readers, file)
+		digests = append(digests, attachmentDigest{header.Filename, size, hex.EncodeToString(hash.Sum(nil))})
+	}
+	op, r := s.beginRecording(w, r, struct {
+		Request     reportAttestationReq
+		Encrypted   bool
+		Attachments []attachmentDigest
+	}{req, isEncrypted, digests}, len(files) != 0)
+	if op == nil {
+		return
+	}
+	defer op.rollback()
+
 	if isEncrypted {
 		encryptionKey := os.Getenv("FIDES_ENCRYPTION_KEY")
 		if encryptionKey == "" {
@@ -150,55 +178,18 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.Payload = string(decrypted)
 	}
 
-	var artifactSHA *string
-	if req.ArtifactSHA256 != "" {
-		artifactSHA = &req.ArtifactSHA256
-	}
-
-	// trail_id is normally required, but `fides attest sbom` may omit --trail
-	// and rely on the artifact's own trail (every artifact is reported against
-	// exactly one trail via `fides artifact report`).
-	callerOrg, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !json.Valid([]byte(req.Payload)) {
+		http.Error(w, "invalid attestation payload JSON", http.StatusBadRequest)
 		return
 	}
-	trailID, err := s.resolveAttestationTrailID(r.Context(), callerOrg, req.TrailID, artifactSHA)
+
+	orgID := callerOrg
+	check, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, req.TypeName, req.Payload)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	// trail_id is caller-supplied. This endpoint WRITES compliance evidence, so
-	// without this a tenant could attest onto another tenant's trail.
-	if !s.requireTrailInOrg(w, r, trailID) {
-		return
-	}
-
-	// Fetch rules for verification, scoped to the caller's org: attestation_types
-	// is org-scoped (UNIQUE(org_id,name)), so an unscoped lookup could apply
-	// another tenant's JQ rules for a same-named type (#326).
-	orgID, _ := principalOrg(r)
-	var rules []string
-	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 AND org_id = $2 LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName, orgID).Scan(pq.Array(&rules))
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		internalError(w, err)
 		return
 	}
-
-	// Evaluate JQ rules
-	isCompliant := true
-	if len(rules) > 0 {
-		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(req.Payload, rules)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		if !ok {
-			isCompliant = false
-			log.Printf("Compliance check failed for rules: %v", failedRules)
-		}
-	}
+	isCompliant := check.compliant
 
 	// code.authorship: an AI-authored change must carry a human reviewer to be
 	// compliant, so a control requiring code.authorship holds the change gate on
@@ -224,104 +215,76 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		TypeName:            req.TypeName,
 		Payload:             req.Payload,
 		IsCompliant:         isCompliant,
+		ValidationErrors:    check.reasons,
 		SignedBy:            req.SignedBy,
 		Signature:           req.Signature,
 		SignatureAlgorithm:  req.SignatureAlgorithm,
 		ManifestationReason: req.ManifestationReason,
-		CreatedAt:           time.Now(),
 	}
 
-	contentHash, prevHash, err := s.attestationChain(r.Context(), attestation.TrailID, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
-	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, contentHash, prevHash, attestation.CreatedAt)
-	if err != nil {
+	if err := s.appendAttestation(r.Context(), attestation, &orgID); err != nil {
 		internalError(w, err)
 		return
 	}
 
-	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
-	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
-	orgID, hasOrg := principalOrg(r)
-	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		if hasOrg {
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
-				"trail_id": attestation.TrailID.String(),
-				// Both, because they are not the same thing and consumers want
-				// different ones. "attestation" is the human label a Slack
-				// message or commit status shows. "attestation_type" is what
-				// controls.required_types is matched against -- the change gate
-				// has always joined on type_name, so anything resolving controls
-				// must too. They are equal for almost every attestation on the
-				// live estate, which is exactly why the difference goes unnoticed
-				// until it does not: "pull-request" is stored with type_name
-				// "pull_request".
-				"attestation":      attestation.Name,
-				"attestation_type": attestation.TypeName,
-				"compliant":        attestation.IsCompliant,
-			}); err != nil {
-				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
-			}
-		}
-	}
-
-	// `fides attest sbom` normalizes the SBOM client-side (see pkg/evidence.
-	// ParseSBOM) and uploads it as a "sbom-cyclonedx" attestation (the evidence
-	// type the built-in control frameworks require); persist its component list
-	// so `fides search components` can answer "which artifacts contain
-	// component X". Best-effort: a parse/insert failure here does not fail the
-	// attestation itself, since it is already durably recorded. Attestations
-	// recorded via the generic `fides attest --type sbom-cyclonedx` path (a raw,
-	// non-normalized CycloneDX payload) are also matched here but simply fail
-	// this best-effort parse (no "components" field in the expected shape).
-	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil && hasOrg {
+	// Index the findings alongside the evidence when this request owns a transaction.
+	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil {
 		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
+			if op.tx != nil {
+				internalError(w, err)
+				return
+			}
 			log.Printf("failed to persist sbom components: %v", err)
 		}
 	}
-
-	// Vulnerability-scan attestations (trivy/snyk/sarif) carry CVE IDs only as
-	// findings[] strings; extract them into artifact_vulnerabilities so the
-	// CVE->environment impact query can answer "which environments ship CVE-X".
-	// Best-effort, like SBOM components above.
-	if vulnScanTypes[req.TypeName] && artifactSHA != nil && hasOrg {
+	if vulnScanTypes[req.TypeName] && artifactSHA != nil {
 		if err := s.persistVulnerabilities(r.Context(), orgID, *artifactSHA, attestation.ID, req.TypeName, attestation.Payload); err != nil {
+			if op.tx != nil {
+				internalError(w, err)
+				return
+			}
 			log.Printf("failed to persist vulnerabilities: %v", err)
 		}
 	}
 
-	// Upload attachments to Object Store and save mapping
-	for i, reader := range fileReaders {
-		// Use only the base name of the client-supplied filename to prevent
-		// path traversal (e.g. "../../etc/passwd") in the storage key.
-		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
-		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
-		bucket := os.Getenv("AWS_S3_BUCKET")
-		if bucket == "" {
-			bucket = "fides-evidence"
+	bucket := os.Getenv("AWS_S3_BUCKET")
+	if bucket == "" {
+		bucket = "fides-evidence"
+	}
+	prefix := attestation.ID.String()
+	if op.keyed {
+		// A rolled-back upload can be retried at the same key. A different
+		// payload cannot overwrite any object belonging to the earlier attempt.
+		prefix = fmt.Sprintf("recordings/%s/%s/%x", orgID, op.operationID, op.fingerprint)
+	}
+	for i, file := range readers {
+		if s.Storage == nil {
+			internalError(w, errors.New("attachment storage is not configured"))
+			return
 		}
-		path, err := s.Storage.Upload(r.Context(), bucket, key, reader, "application/octet-stream")
+		digest := digests[i]
+		key := fmt.Sprintf("%s/%d-%s", prefix, i, digest.Hash)
+		const contentType = "application/octet-stream"
+		path, err := s.Storage.Upload(r.Context(), bucket, key, file, contentType)
 		if err != nil {
 			internalError(w, err)
 			return
 		}
 
-		attachmentID := uuid.New()
-		queryAttach := `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
-		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-		_, err = s.q(r.Context()).ExecContext(r.Context(), queryAttach, attachmentID, attestation.ID, fileNames[i], 0, "hash", path, "application/octet-stream", time.Now())
-		if err != nil {
-			log.Printf("Failed to record attachment in DB: %v", err)
+		const query = `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		if _, err := s.q(r.Context()).ExecContext(r.Context(), query, uuid.New(), attestation.ID, digest.Name,
+			digest.Size, digest.Hash, path, contentType, time.Now()); err != nil {
+			internalError(w, err)
+			return
 		}
+	}
+	if !op.created(w, r.Context(), attestation) {
+		return
 	}
 
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
-		llmOrgID, _ := principalOrg(r)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -337,7 +300,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
 			             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-			werr := db.WithOrgScope(ctx, s.DB, llmOrgID.String(), func(tx *sql.Tx) error {
+			werr := db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
 				_, e := tx.ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
 				return e
 			})
@@ -346,11 +309,9 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			}
 		}()
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(attestation)
 }
+
+type attestationTargetError struct{ error }
 
 // resolveAttestationTrailID parses trailIDStr, or — when it is empty — resolves
 // the trail from the reported artifact, so `fides attest sbom` can omit
@@ -359,12 +320,12 @@ func (s *Server) resolveAttestationTrailID(ctx context.Context, orgID uuid.UUID,
 	if trailIDStr != "" {
 		id, err := uuid.Parse(trailIDStr)
 		if err != nil {
-			return uuid.UUID{}, fmt.Errorf("invalid trail_id")
+			return uuid.UUID{}, attestationTargetError{errors.New("invalid trail_id")}
 		}
 		return id, nil
 	}
 	if artifactSHA == nil {
-		return uuid.UUID{}, fmt.Errorf("trail_id or artifact_sha256 is required")
+		return uuid.UUID{}, attestationTargetError{errors.New("trail_id or artifact_sha256 is required")}
 	}
 	var trailID uuid.NullUUID
 	// Scoped by org: sha256 is the artifacts PRIMARY KEY, so a digest is global
@@ -373,13 +334,13 @@ func (s *Server) resolveAttestationTrailID(ctx context.Context, orgID uuid.UUID,
 	err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2`, *artifactSHA, orgID).Scan(&trailID)
 	if err == sql.ErrNoRows {
-		return uuid.UUID{}, fmt.Errorf("artifact %s not found", *artifactSHA)
+		return uuid.UUID{}, attestationTargetError{fmt.Errorf("artifact %s not found", *artifactSHA)}
 	}
 	if err != nil {
 		return uuid.UUID{}, err
 	}
 	if !trailID.Valid {
-		return uuid.UUID{}, fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)
+		return uuid.UUID{}, attestationTargetError{fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)}
 	}
 	return trailID.UUID, nil
 }
@@ -397,7 +358,9 @@ func (s *Server) persistSBOMComponents(ctx context.Context, orgID uuid.UUID, art
 		} `json:"components"`
 	}
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		return fmt.Errorf("parse sbom payload: %w", err)
+		// Raw CycloneDX attestations are valid evidence even when they cannot be indexed.
+		log.Printf("parse sbom payload: %v", err)
+		return nil
 	}
 	for _, c := range parsed.Components {
 		if c.Name == "" {
@@ -455,20 +418,14 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.DB.BeginTx(r.Context(), nil)
+	tx, err := db.BeginTx(r.Context(), s.DB, nil)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
 
-	// Establish the tenant RLS session context on this transaction, mirroring
-	// handleImportFramework. handleReportSnapshot begins its transaction on the
-	// raw unscoped pool (s.DB), which has no app.current_org GUC set. Without
-	// this, the environment_snapshots RLS WITH CHECK (whose subquery reads
-	// environments under RLS) sees no visible environments and every insert is
-	// rejected with 42501. This is a harmless no-op when FIDES_RLS_ENABLED is
-	// false, since RLS enforcement itself is not configured on the tables then.
+	// Keep the tenant scope transaction-local even without request pinning.
 	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
 		internalError(w, err)
 		return
@@ -581,40 +538,32 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 		// Check for drift (failing compliance controls in build trail)
 		queryAtt := `SELECT name, is_compliant FROM attestations WHERE trail_id = $1`
-		rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
-		if err != nil {
+		if err := func() error {
+			rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var attName string
+				var compliant bool
+				if err := rows.Scan(&attName, &compliant); err != nil {
+					return err
+				}
+				if !compliant {
+					drifts = append(drifts, fmt.Sprintf("service %s running drifted artifact %s (failing control: %s)", a.ServiceName, a.SHA256, attName))
+					isCompliant = false
+				}
+			}
+			return rows.Err()
+		}(); err != nil {
 			internalError(w, err)
 			return
 		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var attName string
-			var compliant bool
-			if err := rows.Scan(&attName, &compliant); err != nil {
-				internalError(w, err)
-				return
-			}
-			if !compliant {
-				drifts = append(drifts, fmt.Sprintf("service %s running drifted artifact %s (failing control: %s)", a.ServiceName, a.SHA256, attName))
-				isCompliant = false
-			}
-		}
-		// A failed iteration must not read as a short result.
-		if err := rows.Err(); err != nil {
-			internalError(w, err)
-			return
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		internalError(w, err)
-		return
 	}
 
 	// Emit an integration event for downstream gates/alerts (opt-in via
-	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
-	// failure here must not fail the request.
+	// FIDES_EVENTS_ENABLED), atomically with the snapshot.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
 		payload := map[string]any{
 			"environment_id": envID.String(),
@@ -623,19 +572,26 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			"shadows":        shadows,
 			"drifts":         drifts,
 		}
-		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
-			log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
+		if err := events.Enqueue(r.Context(), tx, orgID, "snapshot.noncompliant", payload); err != nil {
+			internalError(w, err)
+			return
 		}
 	}
 
-	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
+	// Emit snapshot.reported when there is a service inventory for CMDB sync.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
-		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
+		if err := events.Enqueue(r.Context(), tx, orgID, "snapshot.reported", map[string]any{
 			"environment": envID.String(),
 			"services":    services,
 		}); err != nil {
-			log.Printf("failed to enqueue snapshot.reported event: %v", err)
+			internalError(w, err)
+			return
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
