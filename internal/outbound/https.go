@@ -82,11 +82,16 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("stopped after 10 redirects")
 	}
 	first := via[0].URL
-	if first.Scheme != "https" || req.URL.Scheme != "https" ||
-		originHost(first) != originHost(req.URL) || effectivePort(first) != effectivePort(req.URL) {
+	if first.Scheme != "https" || !SameOrigin(first, req.URL) {
 		return fmt.Errorf("redirect must stay on the initial HTTPS origin")
 	}
 	return nil
+}
+
+// SameOrigin compares the scheme, DNS hostname and effective port of HTTP URLs.
+func SameOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && (a.Scheme == "http" || a.Scheme == "https") &&
+		a.Hostname() != "" && originHost(a) == originHost(b) && effectivePort(a) == effectivePort(b)
 }
 
 func originHost(u *url.URL) string {
@@ -101,6 +106,9 @@ func originHost(u *url.URL) string {
 
 func effectivePort(u *url.URL) string {
 	if u.Port() == "" {
+		if u.Scheme == "http" {
+			return "80"
+		}
 		return "443"
 	}
 	return strings.TrimLeft(u.Port(), "0")

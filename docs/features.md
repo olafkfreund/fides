@@ -342,6 +342,12 @@ fides approve --trail <trail-id> --role deployer --reason "prod deploy"
 - **Git providers**: commit-status checks and signed inbound push webhooks for
   **GitHub, GitLab, Bitbucket, and Azure DevOps**
   (`fides git-provider config --provider <github|gitlab|bitbucket|azure-devops> ...`).
+- **Git attestation downloads** use the configured GitHub or GitLab API origin
+  for authenticated requests, including redirects. The scheme, hostname, and
+  effective port must match, and the configured API may be private. Signed
+  downloads on a different origin require public HTTPS and use a separate client
+  without provider credentials or cookies. Their redirects stay on the download
+  origin. [Authorization inventory (#523)](https://github.com/olafkfreund/fides/issues/523).
 
 ## 19. Install & seed
 

@@ -15,7 +15,7 @@ The configured provider origin can be private. Authenticated list and bundle req
 
 ## Steps
 
-1. **`pkg/gitstatus/attestations.go:28,67,104,135` and `internal/outbound/https.go:73`** — Reuse the outbound origin normalization to compare scheme, DNS hostname, and effective port. Preserve the caller's client settings and restrict authenticated redirects to its initial origin. Send provider-issued cross-origin public HTTPS links through a fresh guarded client without provider headers, cookies, or proxy credentials. Preserve same-origin headers, bundle parsing, and timeouts.
+1. **`pkg/gitstatus/attestations.go:28,67,104,135` and `internal/outbound/https.go:73`** — Reuse the outbound origin normalization to compare scheme, DNS hostname, and effective port. Preserve the caller's client settings and restrict authenticated redirects to its initial origin. Send direct provider-issued cross-origin public HTTPS links through a fresh guarded client without provider headers, cookies, or proxy credentials. Require its redirects to stay on the signed-download origin. Close its idle connections when the download ends. Redact signed query details from source metadata and request errors. Preserve same-origin headers, bundle parsing, and timeouts.
 2. **`pkg/gitstatus/attestations_test.go` and `internal/outbound/*test.go`** — Check same-origin requests, signed downloads with no provider credential, rejection of disallowed origins before delivery, and the configured private-provider fixture. Use a fake transport at the policy boundary. Preserve the existing API integration tests.
 3. **`docs/features.md:335` and `web/features.md:335`** — Document the provider and signed download boundary and link #523.
 

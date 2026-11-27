@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,17 @@ func TestValidateHTTPS(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestSameOriginHTTP(t *testing.T) {
+	base := &url.URL{Scheme: "http", Host: "provider.test"}
+	if !SameOrigin(base, &url.URL{Scheme: "http", Host: "PROVIDER.test:080"}) {
+		t.Error("HTTP default port and hostname case should match")
+	}
+	if SameOrigin(base, &url.URL{Scheme: "http", Host: "provider.test:443"}) ||
+		SameOrigin(base, &url.URL{Scheme: "https", Host: "provider.test:80"}) {
+		t.Error("different ports and schemes should not match")
+	}
+}
 
 func TestHTTPSRedirects(t *testing.T) {
 	for _, tt := range []struct {
