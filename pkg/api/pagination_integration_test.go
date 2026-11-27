@@ -296,6 +296,15 @@ func TestIntegrationListPagination(t *testing.T) {
 		}
 	})
 
+	t.Run("environment audit enrichment failure", func(t *testing.T) {
+		queries.fail = 2
+		defer func() { queries.fail = 0 }()
+		rec := get("/api/v1/environments/export?environment_id="+env.String(), token)
+		if rec.Code != http.StatusInternalServerError || rec.Header().Get("Content-Disposition") != "" {
+			t.Fatalf("audit export returned a downloadable report on query failure: HTTP %d, headers %v", rec.Code, rec.Header())
+		}
+	})
+
 	t.Run("report retains full training evidence", func(t *testing.T) {
 		rec := get("/api/v1/audit-pack?limit=1", token)
 		var report struct {

@@ -21,6 +21,18 @@ import (
 // Every secret here is stored by REFERENCE (e.g. "fides/aws-access-key"), never
 // by value; the value lives in the configured secrets backend.
 
+type saveTenantSettingsReq struct {
+	OrgID   string                        `json:"org_id"`
+	Auth    *models.TenantAuthConfig      `json:"auth"`
+	Storage *models.TenantStorageSettings `json:"storage"`
+	Vault   *models.TenantVaultSettings   `json:"vault"`
+	LLM     *models.TenantLLMSettings     `json:"llm"`
+}
+
+type setPasswordReq struct {
+	Password string `json:"password"`
+}
+
 type tenantSettingsResp struct {
 	OrgID   string                        `json:"org_id"`
 	Auth    *models.TenantAuthConfig      `json:"auth"`

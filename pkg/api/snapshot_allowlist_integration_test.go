@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,14 @@ func TestIntegrationSnapshotHonoursAllowlist(t *testing.T) {
 	// An approved third-party image (think postgres:15-alpine) and an
 	// unapproved one that must still be caught.
 	const approvedSHA = "aaaa000000000000000000000000000000000000000000000000000000000001"
-	const rogueSHA = "bbbb000000000000000000000000000000000000000000000000000000000002"
+	rogueSHA := strings.ToUpper(approvedSHA)
+	const registeredSHA = "bbbb000000000000000000000000000000000000000000000000000000000002"
+	flowID, trailID := uuid.New(), uuid.New()
+	mustExec(t, pool, `INSERT INTO flows (id, org_id, name) VALUES ($1, $2, 'f')`, flowID, orgID)
+	mustExec(t, pool, `INSERT INTO trails (id, flow_id, name) VALUES ($1, $2, 't')`, trailID, flowID)
+	mustExec(t, pool, `INSERT INTO artifacts (sha256, org_id, trail_id, name, type) VALUES ($1, $2, $3, 'app', 'docker')`, registeredSHA, orgID, trailID)
+	mustExec(t, pool, `INSERT INTO attestations (trail_id, name, type_name, payload, is_compliant)
+		VALUES ($1, 'unit tests', 'junit', '{}', false)`, trailID)
 	mustExec(t, pool,
 		`INSERT INTO environment_allowlist (environment_id, artifact_sha256, approved_by, reason)
 		 VALUES ($1,$2,$3,$4)`,
@@ -99,31 +107,71 @@ func TestIntegrationSnapshotHonoursAllowlist(t *testing.T) {
 		t.Fatalf("compliant = false with only an approved image running; an allowlist that cannot yield a green verdict is not an allowlist")
 	}
 
-	// Unapproved alongside it: still caught, still non-compliant.
+	// The same service with an unapproved spelling of the digest still counts
+	// as an upgrade shadow. Keep the exact approved digest in this snapshot too.
 	out = snapshot([]any{
-		map[string]string{"sha256": approvedSHA, "service_name": "postgres"},
-		map[string]string{"sha256": rogueSHA, "service_name": "rogue"},
+		map[string]string{"sha256": approvedSHA, "service_name": "base"},
+		map[string]string{"sha256": rogueSHA, "service_name": "postgres"},
+		map[string]string{"sha256": registeredSHA, "service_name": "app"},
 	})
 	shadows, _ := out["shadow_changes"].([]any)
-	if len(shadows) != 1 {
-		t.Fatalf("shadow_changes = %v, want exactly the unapproved digest", shadows)
+	if len(shadows) != 1 || !strings.Contains(shadows[0].(string), rogueSHA) ||
+		!strings.Contains(shadows[0].(string), "previously approved") {
+		t.Fatalf("shadow_changes = %v, want exactly the unapproved upgrade %s", shadows, rogueSHA)
 	}
 	if compliant, _ := out["compliant"].(bool); compliant {
 		t.Fatal("compliant = true with an unapproved digest running — the allowlist check suppressed too much")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments?limit=1", nil)
-	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
-	rec := httptest.NewRecorder()
-	srv.Routes().ServeHTTP(rec, req)
-	var list []struct {
-		ShadowChanges []string `json:"shadowChanges"`
+	routes := srv.Routes()
+	get := func(path string, out any) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		rec := httptest.NewRecorder()
+		routes.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), out) != nil {
+			t.Fatalf("%s HTTP %d: %s", path, rec.Code, rec.Body.String())
+		}
+		return rec
 	}
-	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list) != 1 {
-		t.Fatalf("list environments HTTP %d: %s", rec.Code, rec.Body.String())
+
+	var list []map[string]json.RawMessage
+	get("/api/v1/environments?limit=1", &list)
+	if len(list) != 1 || string(list[0]["archived"]) != "false" {
+		t.Fatalf("expected an unarchived environment in list: %v", list)
 	}
-	if len(list[0].ShadowChanges) != 1 || list[0].ShadowChanges[0] != shadows[0] {
-		t.Fatalf("list shadows %v differ from ingestion shadows %v", list[0].ShadowChanges, shadows)
+	var export struct {
+		Environment map[string]json.RawMessage `json:"environment"`
+		MCPServers  json.RawMessage            `json:"mcp_servers"`
+		ExportedAt  time.Time                  `json:"exported_at"`
+	}
+	rec := get("/api/v1/environments/export?environment_id="+envID.String(), &export)
+	if rec.Header().Get("Content-Disposition") != `attachment; filename="audit-report-e.json"` ||
+		string(export.MCPServers) != "null" || export.ExportedAt.IsZero() {
+		t.Fatalf("incorrect audit export envelope: %s", rec.Body)
+	}
+	delete(list[0], "archived")
+	if !reflect.DeepEqual(list[0], export.Environment) {
+		t.Fatalf("environment list and audit differ: %s", rec.Body)
+	}
+	var runtime environmentView
+	environment, err := json.Marshal(export.Environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(environment, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.ShadowChanges) != 1 || runtime.ShadowChanges[0] != shadows[0] {
+		t.Fatalf("list shadows %v differ from ingestion shadows %v", runtime.ShadowChanges, shadows)
+	}
+	wantDrift := "service app running drifted artifact " + registeredSHA + " (failing controls)"
+	if len(runtime.Drifts) != 1 || runtime.Drifts[0] != wantDrift {
+		t.Fatalf("drifts %v, want %q", runtime.Drifts, wantDrift)
+	}
+	if len(runtime.Running) != 3 || runtime.LastSnapshot == "No snapshot reported yet" {
+		t.Fatalf("snapshot enrichment is incomplete: %s", rec.Body)
 	}
 }
 
