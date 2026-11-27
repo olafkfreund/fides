@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 540
 spec: spec/2026-11-27-540-chain-append-order.md
 coders:
