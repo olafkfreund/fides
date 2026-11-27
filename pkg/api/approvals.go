@@ -110,6 +110,9 @@ func (s *Server) handleRecordApproval(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 		// Role distinguishes the segregation-of-duties role this approval

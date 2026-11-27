@@ -59,9 +59,14 @@ Roles, in short:
 
 | Role | Use it for |
 |:--|:--|
-| `Writer` | Pipelines. Can record trails, artifacts, attestations, snapshots. |
+| `Writer` | Pipelines. Can record trails, artifacts, attestations, and snapshots. |
 | `Auditor` | Read-only. Dashboards, exports, evidence review. |
-| `Admin` | Humans who configure integrations and users. |
+| `Admin` | Required to change flows (including through AI chat), policies, integrations, and tenant configuration. Can also record evidence. |
+
+Authenticated users can use AI chat for reads. When delegated approvals are enabled,
+a service account with the `may_delegate_approvals` capability can record a trail
+approval on behalf of a human. Admin service principals are also eligible to delegate.
+See [the authorization inventory (#523)](https://github.com/olafkfreund/fides/issues/523).
 
 Same thing from the CLI:
 
