@@ -28,14 +28,18 @@ type s3SnapshotClient interface {
 }
 
 func newS3SnapshotClient(ctx context.Context) (*s3.Client, error) {
-	client := awshttp.NewBuildableClient().WithTransportOptions(func(t *http.Transport) {
-		t.DisableCompression = true // Hash the stored bytes, including gzip-encoded objects.
-	})
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithHTTPClient(client))
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		return nil, errors.New("could not load AWS configuration")
 	}
-	return s3.NewFromConfig(cfg), nil
+	transport := awshttp.NewBuildableClient().GetTransport()
+	transport.DisableCompression = true // Hash the stored bytes, including gzip-encoded objects.
+	return s3.NewFromConfig(cfg, func(options *s3.Options) {
+		options.HTTPClient = &http.Client{
+			Transport:     transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
+	}), nil
 }
 
 type s3ObjectState struct {

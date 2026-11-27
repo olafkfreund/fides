@@ -192,8 +192,17 @@ func TestS3SnapshotEmptyLongPrefix(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		query := req.URL.Query()
 		if req.Method != http.MethodGet || req.URL.Path != "/"+s3FixtureBucket ||
-			query.Get("list-type") != "2" || query.Get("prefix") != prefix || query.Get("encoding-type") != "url" {
+			query.Get("list-type") != "2" || query.Get("encoding-type") != "url" {
 			t.Errorf("unexpected SDK request %s %s", req.Method, req.URL)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if query.Get("prefix") == "redirect/" {
+			http.Redirect(w, req, "/unexpected-redirect", http.StatusTemporaryRedirect)
+			return
+		}
+		if query.Get("prefix") != prefix {
+			t.Errorf("unexpected prefix %q", query.Get("prefix"))
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
@@ -203,14 +212,25 @@ func TestS3SnapshotEmptyLongPrefix(t *testing.T) {
 			</ListBucketResult>`)
 	}))
 	defer server.Close()
-	client := s3.New(s3.Options{
-		BaseEndpoint: aws.String(server.URL), UsePathStyle: true, Region: "us-east-1",
-		HTTPClient: server.Client(), Credentials: aws.AnonymousCredentials{}, Retryer: aws.NopRetryer{},
-	})
+	for key, value := range map[string]string{
+		"AWS_REGION": "us-east-1", "AWS_ENDPOINT_URL_S3": server.URL, "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS": "false",
+		"AWS_CONFIG_FILE": os.DevNull, "AWS_SHARED_CREDENTIALS_FILE": os.DevNull,
+		"AWS_ACCESS_KEY_ID": "fixture", "AWS_SECRET_ACCESS_KEY": "fixture-only", "AWS_SESSION_TOKEN": "",
+		"AWS_PROFILE": "", "AWS_DEFAULT_PROFILE": "", "AWS_MAX_ATTEMPTS": "1",
+	} {
+		t.Setenv(key, value)
+	}
+	client, err := newS3SnapshotClient(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifacts, err := s3SnapshotArtifacts(ctx, s3FixtureBucket, prefix, client)
 	wantScope := fmt.Sprintf("s3:%x", sha256.Sum256([]byte("s3://"+s3FixtureBucket+"/"+prefix)))
 	wantDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("[]")))
 	if err != nil || len(artifacts) != 1 || artifacts[0]["sha256"] != wantDigest || artifacts[0]["service_name"] != wantScope {
 		t.Fatalf("unexpected snapshot: %v, %v", artifacts, err)
+	}
+	if artifacts, err := s3SnapshotArtifacts(ctx, s3FixtureBucket, "redirect/", client); err == nil || artifacts != nil {
+		t.Fatalf("expected redirect rejection, got %v, %v", artifacts, err)
 	}
 }
