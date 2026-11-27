@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 556
 intent: intent/2026-11-27-556-evidence-commitments.md
 ---
