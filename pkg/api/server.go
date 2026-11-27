@@ -68,8 +68,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/orgs", s.handleListOrgs)
 
 	// Flow API
-	mux.HandleFunc("POST /api/v1/flows", s.handleCreateFlow)
-	mux.HandleFunc("PUT /api/v1/flows", s.handleUpdateFlow)
+	mux.HandleFunc("POST /api/v1/flows", withMutationRole(auth.RoleAdmin, s.handleCreateFlow))
+	mux.HandleFunc("PUT /api/v1/flows", withMutationRole(auth.RoleAdmin, s.handleUpdateFlow))
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
 	mux.HandleFunc("GET /api/v1/flows/{id}/trails", s.handleListFlowTrails)
 	mux.HandleFunc("GET /api/v1/flows/{id}/artifacts", s.handleListFlowArtifacts)
@@ -79,7 +79,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/evidence/flows/{flow}/trails/{trail}", s.handleEvidenceLink)
 
 	// Trail API
-	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
+	mux.HandleFunc("POST /api/v1/trails", withMutationRole(auth.RoleWriter, s.handleCreateTrail))
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
 	// Anchor a trail's chain head to an external RFC3161 timestamp authority (#297).
 	mux.HandleFunc("POST /api/v1/trails/{id}/anchor", s.handleCreateTrailAnchor)
@@ -105,7 +105,7 @@ func (s *Server) Routes() http.Handler {
 	// if drift is detected, write an elevated risk note back onto the
 	// ServiceNow change request that approved the prior state (ServiceNow has
 	// no native post-approval re-scoring).
-	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", withMutationRole(auth.RoleWriter, s.handleDriftReevaluateChange))
 
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
@@ -124,15 +124,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/control-catalog", s.handleControlCatalog)
 	mux.HandleFunc("GET /api/v1/risk-register", s.handleRiskRegister)
 	mux.HandleFunc("GET /api/v1/exceptions", s.handleListExceptions)
-	mux.HandleFunc("POST /api/v1/exceptions", s.handleCreateException)
-	mux.HandleFunc("POST /api/v1/exceptions/{id}/revoke", s.handleRevokeException)
+	mux.HandleFunc("POST /api/v1/exceptions", withMutationRole(auth.RoleAdmin, s.handleCreateException))
+	mux.HandleFunc("POST /api/v1/exceptions/{id}/revoke", withMutationRole(auth.RoleAdmin, s.handleRevokeException))
 	mux.HandleFunc("GET /api/v1/sdlc", s.handleSDLC)
 	mux.HandleFunc("GET /api/v1/audit-pack", s.handleAuditPack)
 	mux.HandleFunc("GET /api/v1/services", s.handleListServices)
-	mux.HandleFunc("POST /api/v1/services", s.handleSaveService)
+	mux.HandleFunc("POST /api/v1/services", withMutationRole(auth.RoleAdmin, s.handleSaveService))
 	mux.HandleFunc("GET /api/v1/training", s.handleListTraining)
-	mux.HandleFunc("POST /api/v1/training", s.handleRecordTraining)
-	mux.HandleFunc("POST /api/v1/verify-branch-protection", s.handleVerifyBranchProtection)
+	mux.HandleFunc("POST /api/v1/training", withMutationRole(auth.RoleWriter, s.handleRecordTraining))
+	mux.HandleFunc("POST /api/v1/verify-branch-protection", withMutationRole(auth.RoleWriter, s.handleVerifyBranchProtection))
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
@@ -140,79 +140,79 @@ func (s *Server) Routes() http.Handler {
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)
-	mux.HandleFunc("POST /api/v1/tenant/slack", s.handleSaveSlack)
+	mux.HandleFunc("POST /api/v1/tenant/slack", withMutationRole(auth.RoleAdmin, s.handleSaveSlack))
 
 	// Logical environments (aggregate physical environments)
 	mux.HandleFunc("GET /api/v1/logical-environments", s.handleListLogicalEnv)
-	mux.HandleFunc("POST /api/v1/logical-environments", s.handleCreateLogicalEnv)
-	mux.HandleFunc("POST /api/v1/logical-environments/{id}/members", s.handleAddLogicalMember)
-	mux.HandleFunc("DELETE /api/v1/logical-environments/{id}/members/{envId}", s.handleRemoveLogicalMember)
+	mux.HandleFunc("POST /api/v1/logical-environments", withMutationRole(auth.RoleAdmin, s.handleCreateLogicalEnv))
+	mux.HandleFunc("POST /api/v1/logical-environments/{id}/members", withMutationRole(auth.RoleAdmin, s.handleAddLogicalMember))
+	mux.HandleFunc("DELETE /api/v1/logical-environments/{id}/members/{envId}", withMutationRole(auth.RoleAdmin, s.handleRemoveLogicalMember))
 	mux.HandleFunc("GET /api/v1/logical-environments/{id}/state", s.handleLogicalEnvState)
 
 	// Environment policies (required attestation types, tag-conditional) + tags
 	mux.HandleFunc("GET /api/v1/environments/{id}/policies", s.handleListEnvPolicies)
-	mux.HandleFunc("POST /api/v1/environments/{id}/policies", s.handleCreatePolicy)
-	mux.HandleFunc("DELETE /api/v1/environments/{id}/policies/{policyId}", s.handleDeletePolicy)
+	mux.HandleFunc("POST /api/v1/environments/{id}/policies", withMutationRole(auth.RoleAdmin, s.handleCreatePolicy))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}/policies/{policyId}", withMutationRole(auth.RoleAdmin, s.handleDeletePolicy))
 	mux.HandleFunc("GET /api/v1/environments/{id}/policy-check", s.handlePolicyCheck)
-	mux.HandleFunc("POST /api/v1/environments/{id}/tags", s.handleSetEnvTags)
-	mux.HandleFunc("POST /api/v1/flows/{id}/tags", s.handleSetFlowTags)
+	mux.HandleFunc("POST /api/v1/environments/{id}/tags", withMutationRole(auth.RoleAdmin, s.handleSetEnvTags))
+	mux.HandleFunc("POST /api/v1/flows/{id}/tags", withMutationRole(auth.RoleAdmin, s.handleSetFlowTags))
 
 	// Per-environment artifact allow-list (explicit approvals)
 	mux.HandleFunc("GET /api/v1/environments/{id}/allowlist", s.handleListAllowlist)
-	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
-	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
+	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", withMutationRole(auth.RoleAdmin, s.handleAddAllowlist))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", withMutationRole(auth.RoleAdmin, s.handleRemoveAllowlist))
 
 	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
 	// gated by an approval record before an action can be applied (issue #235).
-	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("POST /api/v1/remediation", withMutationRole(auth.RoleWriter, s.handleProposeRemediation))
 	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
 	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", withMutationRole(auth.RoleAdmin, s.handleApproveRemediation))
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", withMutationRole(auth.RoleAdmin, s.handleRejectRemediation))
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", withMutationRole(auth.RoleAdmin, s.handleApplyRemediation))
 
 	// Artifact API
-	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
+	mux.HandleFunc("POST /api/v1/artifacts", withMutationRole(auth.RoleWriter, s.handleReportArtifact))
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
 
 	// Attestation Type API
-	mux.HandleFunc("POST /api/v1/attestation-types", s.handleCreateAttestationType)
+	mux.HandleFunc("POST /api/v1/attestation-types", withMutationRole(auth.RoleAdmin, s.handleCreateAttestationType))
 
 	// Attestation API
-	mux.HandleFunc("POST /api/v1/attestations", s.handleReportAttestation)
+	mux.HandleFunc("POST /api/v1/attestations", withMutationRole(auth.RoleWriter, s.handleReportAttestation))
 
 	// Snapshot API
-	mux.HandleFunc("POST /api/v1/snapshots", s.handleReportSnapshot)
+	mux.HandleFunc("POST /api/v1/snapshots", withMutationRole(auth.RoleWriter, s.handleReportSnapshot))
 
 	// Compliance and Drift API
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
-	mux.HandleFunc("POST /api/v1/environments", s.handleCreateEnvironment)
+	mux.HandleFunc("POST /api/v1/environments", withMutationRole(auth.RoleAdmin, s.handleCreateEnvironment))
 	mux.HandleFunc("POST /api/v1/environments/{id}/archive", s.handleArchiveEnvironment)
 	mux.HandleFunc("POST /api/v1/environments/{id}/unarchive", s.handleUnarchiveEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
-	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
+	mux.HandleFunc("POST /api/v1/policies", withMutationRole(auth.RoleAdmin, s.handleSavePolicy))
 	mux.HandleFunc("POST /api/v1/policies/create", s.handleCreatePolicyGlobal)
 	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicyGlobal)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
 
 	// Tenant Webhooks (signed outbound delivery)
 	mux.HandleFunc("GET /api/v1/tenant/webhooks", s.handleListWebhooks)
-	mux.HandleFunc("POST /api/v1/tenant/webhooks", s.handleSaveWebhook)
+	mux.HandleFunc("POST /api/v1/tenant/webhooks", withMutationRole(auth.RoleAdmin, s.handleSaveWebhook))
 
 	// Tenant Git Providers (CI/CD commit-status gating)
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
-	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
+	mux.HandleFunc("POST /api/v1/tenant/git-providers", withMutationRole(auth.RoleAdmin, s.handleSaveGitProvider))
 
 	// Ingest platform-native attestations (GitHub Artifact Attestations,
 	// GitLab Attestations) for a built artifact, using the tenant's configured
 	// git-provider token, and record them onto the matching trail/artifact.
-	mux.HandleFunc("POST /api/v1/attest/fetch", s.handleAttestFetch)
+	mux.HandleFunc("POST /api/v1/attest/fetch", withMutationRole(auth.RoleWriter, s.handleAttestFetch))
 
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
-	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
+	mux.HandleFunc("POST /api/v1/tenant/servicenow", withMutationRole(auth.RoleAdmin, s.handleSaveServiceNow))
 	mux.HandleFunc("GET /api/v1/tenant/servicenow/events", s.handleServiceNowEvents)
 
 	// Assurance console summary — powers the source-owned portal frontpage
@@ -224,34 +224,34 @@ func (s *Server) Routes() http.Handler {
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
-	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
-	mux.HandleFunc("POST /api/v1/servicenow/change-gate", s.handleServiceNowChangeGate)
+	mux.HandleFunc("POST /api/v1/servicenow/change-check", withMutationRole(auth.RoleWriter, s.handleServiceNowChangeCheck))
+	mux.HandleFunc("POST /api/v1/servicenow/change-gate", withMutationRole(auth.RoleWriter, s.handleServiceNowChangeGate))
 
 	// Change<->Control linkage (#227): record that a ServiceNow change implemented
 	// a Fides control via a specific attestation, and reference it back on the
 	// change_request.
-	mux.HandleFunc("POST /api/v1/servicenow/link-control", s.handleServiceNowLinkControl)
+	mux.HandleFunc("POST /api/v1/servicenow/link-control", withMutationRole(auth.RoleAdmin, s.handleServiceNowLinkControl))
 
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
 	mux.HandleFunc("POST /api/v1/webhooks/{provider}", s.handleInboundWebhook)
 	// Feature-flag change governance: record a flag change as a flag.changed
 	// attestation on a trail (epic #286 / #287).
-	mux.HandleFunc("POST /api/v1/flags/changed", s.handleRecordFlagChange)
+	mux.HandleFunc("POST /api/v1/flags/changed", withMutationRole(auth.RoleWriter, s.handleRecordFlagChange))
 	// Provider webhook adapters (Unleash/Flagsmith) -> flag.changed (#290).
-	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", s.handleFlagWebhook)
+	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", withMutationRole(auth.RoleWriter, s.handleFlagWebhook))
 	// Flag-change history for auditors + the /admin console (#291).
 	mux.HandleFunc("GET /api/v1/flags/history", s.handleFlagHistory)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
-	mux.HandleFunc("POST /api/v1/servicenow/incident", s.handleServiceNowCreateIncident)
+	mux.HandleFunc("POST /api/v1/servicenow/incident", withMutationRole(auth.RoleWriter, s.handleServiceNowCreateIncident))
 	mux.HandleFunc("GET /api/v1/servicenow/cmdb", s.handleServiceNowSearchCMDB)
 
 	// Deployment provenance anchoring: on change close / deploy, attach the
 	// signed deployment attestation (image digest, commit, build log ref,
 	// runtime snapshot ref) to the relevant CMDB CI.
-	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
+	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", withMutationRole(auth.RoleWriter, s.handleServiceNowAnchorDeployment))
 
 	// Now Assist grounding: authoritative control-coverage + evidence for a change.
 	mux.HandleFunc("GET /api/v1/servicenow/grounding", s.handleServiceNowGrounding)
@@ -264,7 +264,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)
 	mux.HandleFunc("POST /api/v1/servicenow/mcp/lookup", s.handleSNMCPLookup)
 	mux.HandleFunc("POST /api/v1/servicenow/mcp/tools", s.handleSNMCPTools)
-	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", s.handleSNMCPCall)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", withMutationRole(auth.RoleAdmin, s.handleSNMCPCall))
 
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
@@ -272,13 +272,13 @@ func (s *Server) Routes() http.Handler {
 
 	// Environment MCP Connections API
 	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
-	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
+	mux.HandleFunc("POST /api/v1/environments/mcp", withMutationRole(auth.RoleAdmin, s.handleSaveEnvironmentMCPServer))
 	mux.HandleFunc("POST /api/v1/environments/mcp/query", s.handleQueryEnvironmentMCPServer)
-	mux.HandleFunc("POST /api/v1/environments/mcp/verify", s.handleVerifyEnvironmentCompliance)
+	mux.HandleFunc("POST /api/v1/environments/mcp/verify", withMutationRole(auth.RoleWriter, s.handleVerifyEnvironmentCompliance))
 
 	// Tenant Settings & SSO APIs
 	mux.HandleFunc("GET /api/v1/tenant/settings", s.handleGetTenantSettings)
-	mux.HandleFunc("POST /api/v1/tenant/settings", s.handleSaveTenantSettings)
+	mux.HandleFunc("POST /api/v1/tenant/settings", withMutationRole(auth.RoleAdmin, s.handleSaveTenantSettings))
 	mux.HandleFunc("GET /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/callback", s.handleAuthCallback)
 	mux.HandleFunc("POST /api/v1/auth/local-login", s.handleLocalLogin)
@@ -296,7 +296,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/tenant/service-accounts/{id}/keys/{keyId}", s.handleRevokeServiceAccountKey)
 	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/delegation", s.handleSetServiceAccountDelegation)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
-	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
+	mux.HandleFunc("POST /api/v1/tenant/group-mappings", withMutationRole(auth.RoleAdmin, s.handleSaveGroupMapping))
 
 	// Swagger API Docs
 	mux.HandleFunc("GET /api/v1/swagger.json", s.handleSwaggerJSON)

@@ -185,6 +185,27 @@ func principalOrg(r *http.Request) (uuid.UUID, bool) {
 	return p.OrgID, true
 }
 
+func requireMutationRole(w http.ResponseWriter, r *http.Request, role string) bool {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if p.Role == role || (role == auth.RoleWriter && p.Role == auth.RoleAdmin) {
+		return true
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+func withMutationRole(role string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if requireMutationRole(w, r, role) {
+			next(w, r)
+		}
+	}
+}
+
 // securityHeaders adds baseline hardening headers to every response.
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

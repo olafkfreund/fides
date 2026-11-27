@@ -178,6 +178,9 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "valid trail_id is required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	if req.ChangeNumber == "" && req.CI == "" {
 		http.Error(w, "change_number or ci is required", http.StatusBadRequest)
 		return
@@ -223,16 +226,14 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	compliant := found && rulesOK
 
 	// Record the attestation on the trail (with tamper-evidence chain).
-	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	_, err = s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-		uuid.New(), trailID, "servicenow-change-check", "servicenow-change", string(payloadJSON), compliant, contentHash, prevHash)
-	if err != nil {
+	if err := s.appendAttestation(r.Context(), &models.Attestation{
+		ID:          uuid.New(),
+		TrailID:     trailID,
+		Name:        "servicenow-change-check",
+		TypeName:    "servicenow-change",
+		Payload:     string(payloadJSON),
+		IsCompliant: compliant,
+	}, nil); err != nil {
 		internalError(w, err)
 		return
 	}

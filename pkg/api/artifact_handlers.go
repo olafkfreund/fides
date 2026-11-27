@@ -35,13 +35,14 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	var err error
-
 	var trailID *uuid.UUID
 	if req.TrailID != "" {
 		tID, err := uuid.Parse(req.TrailID)
 		if err != nil {
 			http.Error(w, "invalid trail_id", http.StatusBadRequest)
+			return
+		}
+		if !s.requireTrailInOrg(w, r, tID) {
 			return
 		}
 		trailID = &tID
@@ -59,11 +60,31 @@ func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
 
 	query := `INSERT INTO artifacts (sha256, org_id, trail_id, name, type, tags, created_at)
 	          VALUES ($1, $2, $3, $4, $5, $6, $7)
-	          ON CONFLICT (sha256) DO UPDATE SET trail_id = EXCLUDED.trail_id`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
+	          ON CONFLICT (sha256) DO NOTHING`
+	q := s.q(r.Context())
+	result, err := q.ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
+	}
+	if count, err := result.RowsAffected(); err != nil {
+		internalError(w, err)
+		return
+	} else if count == 0 {
+		result, err := q.ExecContext(r.Context(), `UPDATE artifacts SET trail_id = $1 WHERE sha256 = $2 AND org_id = $3`, artifact.TrailID, artifact.SHA256, artifact.OrgID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if count == 0 {
+			http.Error(w, "artifact could not be registered", http.StatusConflict)
+			return
+		}
 	}
 
 	// Keep a queryable CMDB image CI per digest so the change gate can anchor a
