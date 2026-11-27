@@ -25,7 +25,7 @@ import (
 func TestMCPComplianceIntegration(t *testing.T) {
 	if os.Getenv("FIDES_MCP_TEST_PROCESS") == "1" {
 		main()
-		return
+		os.Exit(0)
 	}
 
 	dsn := os.Getenv("FIDES_TEST_DB_DSN")
@@ -66,6 +66,8 @@ func TestMCPComplianceIntegration(t *testing.T) {
 	routes := api.NewServer(pool, nil, nil).Routes()
 
 	query := url.Values{"sha256": {digest}}.Encode()
+	errorDigest := "sha256:" + uuid.NewString()
+	errorQuery := url.Values{"sha256": {errorDigest}}.Encode()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/compliance?"+query+"&policy=&policy=prod", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rejected := httptest.NewRecorder()
@@ -84,6 +86,10 @@ func TestMCPComplianceIntegration(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/compliance":
+			if r.Method == http.MethodGet && r.URL.RawQuery == errorQuery {
+				http.Error(w, "fixture service unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			if r.Method != http.MethodGet || r.URL.RawQuery != query {
 				t.Errorf("compliance request: %s %s, want GET with %s", r.Method, r.URL, query)
 			}
@@ -121,6 +127,7 @@ func TestMCPComplianceIntegration(t *testing.T) {
 	send(2, "tools/call", check)
 	send(3, "tools/call", map[string]any{"name": "report_attestation", "arguments": report})
 	send(4, "tools/call", check)
+	send(5, "tools/call", map[string]any{"name": "check_compliance", "arguments": map[string]string{"artifact_sha256": errorDigest}})
 
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMCPComplianceIntegration$")
 	cmd.Env = append(os.Environ(), "FIDES_MCP_TEST_PROCESS=1", "FIDES_SERVER_URL="+server.URL)
@@ -190,5 +197,14 @@ func TestMCPComplianceIntegration(t *testing.T) {
 		if verdict[want.field] != want.value {
 			t.Errorf("tool call %d: %s = %v, want %t", want.id, want.field, verdict[want.field], want.value)
 		}
+	}
+	var failure ToolCallResult
+	read(5, &failure)
+	if !failure.IsError || len(failure.Content) != 1 ||
+		!strings.Contains(failure.Content[0].Text, "503") || !strings.Contains(failure.Content[0].Text, "fixture service unavailable") {
+		t.Fatalf("HTTP error was not returned as an MCP tool error: %+v", failure)
+	}
+	if err := decoder.Decode(&json.RawMessage{}); err != io.EOF {
+		t.Fatalf("unexpected output after the last reply: %v", err)
 	}
 }

@@ -231,9 +231,12 @@ func TestDeliveryLeaseAndLostAcknowledgementIntegration(t *testing.T) {
 		}
 		return nil
 	}}
-	d := NewDispatcher(pool, sink)
+	sibling := &recordingSink{name: "lease-sibling", failFirst: 1}
+	d := NewDispatcher(pool, sink, sibling)
+	siblingWorker := NewDispatcher(pool, sibling)
+	siblingWorker.BaseBackoff = time.Minute
 	names := []string{sink.Name()}
-	if _, err := pool.ExecContext(ctx, scheduleSQL, pq.Array(names), 1); err != nil {
+	if _, err := pool.ExecContext(ctx, scheduleSQL, pq.Array([]string{sink.Name(), sibling.Name()}), 1); err != nil {
 		t.Fatal(err)
 	}
 	old, name, token, send, err := d.claim(ctx, names)
@@ -250,15 +253,20 @@ func TestDeliveryLeaseAndLostAcknowledgementIntegration(t *testing.T) {
 		send  bool
 		err   error
 	}
+	ready := make(chan struct{})
 	start := make(chan struct{})
 	results := make(chan claimResult, 2)
 	for range 2 {
 		worker := NewDispatcher(pool, sink)
 		go func() {
+			ready <- struct{}{}
 			<-start
 			event, _, token, send, err := worker.claim(ctx, names)
 			results <- claimResult{event, token, send, err}
 		}()
+	}
+	for range 2 {
+		<-ready
 	}
 	close(start)
 	var winner claimResult
@@ -278,6 +286,22 @@ func TestDeliveryLeaseAndLostAcknowledgementIntegration(t *testing.T) {
 	if wins != 1 || !winner.send || currentToken == token || current.DeliveryID != old.DeliveryID {
 		t.Fatalf("reclaim: winners=%d attempt=%d send=%v", wins, current.Attempts, winner.send)
 	}
+	var leaseUntil time.Time
+	if err := pool.QueryRowContext(ctx, `SELECT next_attempt_at FROM integration_event_deliveries
+		WHERE event_id = $1 AND sink = $2`, old.ID, name).Scan(&leaseUntil); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := siblingWorker.DispatchBatch(ctx); n != 1 || err != nil {
+		t.Fatalf("sibling first attempt: %d, %v", n, err)
+	}
+	var siblingBackedOff bool
+	if err := pool.QueryRowContext(ctx, `SELECT status = 'pending' AND attempts = 1
+		AND lease_token IS NULL AND last_error IS NOT NULL AND next_attempt_at > now()
+		FROM integration_event_deliveries WHERE event_id = $1 AND sink = $2`,
+		old.ID, sibling.Name()).Scan(&siblingBackedOff); err != nil || !siblingBackedOff {
+		t.Fatalf("sibling backed off after first attempt: %v, %v", siblingBackedOff, err)
+	}
+
 	if err := d.recordResult(ctx, old, name, token, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +310,28 @@ func TestDeliveryLeaseAndLostAcknowledgementIntegration(t *testing.T) {
 	}
 	if status, _ := statusOf(t, pool, org); status != StatusPending {
 		t.Fatalf("stale result changed parent to %s", status)
+	}
+	if _, err := pool.ExecContext(ctx, `UPDATE integration_event_deliveries SET next_attempt_at = now()
+		WHERE event_id = $1 AND sink = $2`, old.ID, sibling.Name()); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := d.DispatchBatch(ctx); n != 1 || err != nil {
+		t.Fatalf("sibling retry while reclaimed lease is active: %d, %v", n, err)
+	}
+	var winnerOwnsLease, siblingDelivered bool
+	if err := pool.QueryRowContext(ctx, `SELECT
+		EXISTS (SELECT 1 FROM integration_event_deliveries WHERE event_id = $1 AND sink = $2
+			AND status = 'pending' AND attempts = 2 AND lease_token = $3 AND next_attempt_at = $4
+			AND last_error IS NULL),
+		EXISTS (SELECT 1 FROM integration_event_deliveries WHERE event_id = $1 AND sink = $5
+			AND status = 'delivered' AND attempts = 2 AND lease_token IS NULL AND last_error IS NULL)`,
+		old.ID, name, currentToken, leaseUntil, sibling.Name()).Scan(&winnerOwnsLease, &siblingDelivered); err != nil ||
+		!winnerOwnsLease || !siblingDelivered || sibling.count() != 1 {
+		t.Fatalf("after stale results and sibling retry: winner owns unchanged lease=%v sibling delivered=%v sibling successes=%d err=%v",
+			winnerOwnsLease, siblingDelivered, sibling.count(), err)
+	}
+	if status, attempts := statusOf(t, pool, org); status != StatusPending || attempts != 2 {
+		t.Fatalf("event after sibling retry: %s/%d", status, attempts)
 	}
 	if err := sink.Deliver(ctx, current); err != nil {
 		t.Fatal(err)
