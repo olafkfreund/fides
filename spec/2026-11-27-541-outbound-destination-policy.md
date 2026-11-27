@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 541
 intent: intent/2026-11-27-541-outbound-destination-policy.md
 ---
