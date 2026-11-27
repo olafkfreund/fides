@@ -188,6 +188,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
 	mux.HandleFunc("POST /api/v1/environments", withMutationRole(auth.RoleAdmin, s.handleCreateEnvironment))
+	mux.HandleFunc("GET /api/v1/environments/{id}", s.handleGetEnvironment)
+	mux.HandleFunc("PATCH /api/v1/environments/{id}", withMutationRole(auth.RoleAdmin, s.handleUpdateEnvironment))
 	mux.HandleFunc("POST /api/v1/environments/{id}/archive", s.handleArchiveEnvironment)
 	mux.HandleFunc("POST /api/v1/environments/{id}/unarchive", s.handleUnarchiveEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)

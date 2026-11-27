@@ -40,6 +40,23 @@ resource "fides_control" "vuln_scan" {
   controls are archived, never hard-deleted, preserving history.
 - **Import**: `terraform import fides_control.vuln_scan SOC2-CC7.1` (by key).
 
+### `fides_environment`
+
+```hcl
+resource "fides_environment" "checkout" {
+  name        = "checkout-production"
+  type        = "cloud-run"
+  description = "Checkout production"
+}
+```
+
+The resource manages the Fides environment, with snapshot collection configured
+separately through the CLI. Supported runtime types include `cloud-run`,
+`azure-apps`, and `s3`. Renaming preserves the environment UUID and snapshot
+history. Destroy archives the environment. To manage that environment again,
+unarchive it, then import by UUID with
+`terraform import fides_environment.checkout <uuid>`.
+
 ## Build & local install
 
 ```bash
@@ -47,5 +64,5 @@ go build -o terraform-provider-fides
 # then place it under ~/.terraform.d/plugins/... or use a dev_overrides block.
 ```
 
-Additional resources (flows, environments, policies, service accounts) follow
+Additional resources (flows, policies, service accounts) follow
 the same client/resource pattern in `internal/provider/`.
