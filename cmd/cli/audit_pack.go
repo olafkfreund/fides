@@ -61,12 +61,12 @@ func downloadSignedAudit(config CLIConfig, trail, dest string) error {
 	if err != nil {
 		return fmt.Errorf("stage ZIP: %w", err)
 	}
-	defer os.Remove(zipTemp)
+	defer func() { _ = os.Remove(zipTemp) }()
 	sigTemp, err := stageAuditFile(dest, bytes.NewReader(sig), auditpack.MaxSignatureBytes)
 	if err != nil {
 		return fmt.Errorf("stage signature: %w", err)
 	}
-	defer os.Remove(sigTemp)
+	defer func() { _ = os.Remove(sigTemp) }()
 
 	// Link publishes each completed file without replacing an existing file
 	// or following a destination symlink. Publish the ZIP only after its sig.

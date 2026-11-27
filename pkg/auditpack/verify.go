@@ -309,7 +309,11 @@ func uniqueJSONFields(d *json.Decoder) error {
 			if err != nil {
 				return err
 			}
-			name := strings.ToLower(key.(string))
+			name, ok := key.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			name = strings.ToLower(name)
 			if seen[name] {
 				return fmt.Errorf("duplicate JSON field %q", key)
 			}

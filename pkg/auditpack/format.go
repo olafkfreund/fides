@@ -75,7 +75,10 @@ func Sign(key ed25519.PrivateKey, digest []byte) ([]byte, error) {
 	if len(key) != ed25519.PrivateKeySize || len(digest) != sha256.Size {
 		return nil, errors.New("audit pack requires an Ed25519 private key and a SHA-256 digest")
 	}
-	public := key.Public().(ed25519.PublicKey)
+	public, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("audit pack requires an Ed25519 public key")
+	}
 	return json.Marshal(detachedSignature{Version, keyID(public), ed25519.Sign(key, signatureMessage(digest))})
 }
 
@@ -200,7 +203,7 @@ func validName(name string) bool {
 			return false
 		}
 		for _, c := range part {
-			if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-') {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '.' && c != '_' && c != '-' {
 				return false
 			}
 		}
