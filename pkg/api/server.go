@@ -463,9 +463,13 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, name, COALESCE(description, '') AS description, created_at
-	          FROM organizations WHERE id = $1 ORDER BY name`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, name, COALESCE(description, '') AS description, created_at /* page keys */
+	          FROM organizations WHERE id = $1`
+	rows, err := s.queryPage(r, page, query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -487,8 +491,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type createFlowReq struct {
@@ -590,8 +593,13 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, org_id, name, COALESCE(description, '') AS description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, org_id, name, COALESCE(description, '') AS description, tags, created_at, updated_at /* page keys */
+		FROM flows WHERE org_id = $1 AND strpos(lower(name), lower($2)) > 0`
+	rows, err := s.queryPage(r, page, query, orgID, r.URL.Query().Get("name"))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -615,8 +623,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type createTrailReq struct {
@@ -794,13 +801,16 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Joining trail name for simple UI rendering
-	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '')
-	          FROM artifacts a
-	          LEFT JOIN trails t ON a.trail_id = t.id
-	          WHERE a.org_id = $1
-	          ORDER BY a.created_at DESC`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, timeKey("a.created_at"), textKey("a.sha256"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page, `
+		SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '') /* page keys */
+		FROM artifacts a
+		LEFT JOIN trails t ON a.trail_id = t.id
+		                  AND EXISTS (SELECT 1 FROM flows f WHERE f.id = t.flow_id AND f.org_id = $1)
+		WHERE a.org_id = $1`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -816,6 +826,8 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	list := []*ArtifactView{}
+	var digests []string
+	byDigest := map[string]*ArtifactView{}
 	for rows.Next() {
 		var av ArtifactView
 		var tagsBytes []byte
@@ -824,72 +836,95 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
-
-		// Fetch actual SBOM from database attestations if present
-		var payloadBytes []byte
-		var isCompliant bool
-		querySBOM := `SELECT payload, is_compliant FROM attestations WHERE artifact_sha256 = $1 AND (name = 'sbom' OR type_name = 'sbom' OR type_name = 'sbom-scan') LIMIT 1`
-		err = s.q(r.Context()).QueryRowContext(r.Context(), querySBOM, av.SHA256).Scan(&payloadBytes, &isCompliant)
-		if err == nil {
-			if isCompliant {
-				av.SBOMStatus = "Compliant"
-			} else {
-				av.SBOMStatus = "Non-Compliant"
-			}
-
-			// Try to unmarshal payload as a list of packages
-			var packages []interface{}
-			if errUnmarshal := json.Unmarshal(payloadBytes, &packages); errUnmarshal == nil {
-				av.SBOM = packages
-			} else {
-				// If not a list, maybe it's an object with "packages" or "components" key
-				var obj map[string]interface{}
-				if errUnmarshalObj := json.Unmarshal(payloadBytes, &obj); errUnmarshalObj == nil {
-					if pkgs, ok := obj["packages"]; ok {
-						if pkgsList, ok := pkgs.([]interface{}); ok {
-							av.SBOM = pkgsList
-						}
-					} else if comps, ok := obj["components"]; ok {
-						if compsList, ok := comps.([]interface{}); ok {
-							av.SBOM = compsList
-						}
-					} else {
-						// Otherwise, just wrap the object in a slice
-						av.SBOM = []interface{}{obj}
-					}
-				} else {
-					av.SBOM = []interface{}{}
-				}
-			}
-		} else {
-			av.SBOMStatus = "Pending"
-			av.SBOM = []interface{}{}
-		}
+		av.SBOMStatus = "Pending"
+		av.SBOM = []any{}
 		list = append(list, &av)
+		digests = append(digests, av.SHA256)
+		byDigest[av.SHA256] = &av
 	}
-	// A failed iteration must not read as a short result.
 	if err := rows.Err(); err != nil {
 		internalError(w, err)
 		return
 	}
+	if err := rows.Close(); err != nil {
+		internalError(w, err)
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	if len(digests) == 0 {
+		page.write(w, list)
+		return
+	}
+
+	summaries, err := s.q(r.Context()).QueryContext(r.Context(), `
+		SELECT DISTINCT ON (at.artifact_sha256) at.artifact_sha256, at.payload, at.is_compliant
+		FROM attestations at
+		JOIN trails tr ON tr.id = at.trail_id
+		JOIN flows f ON f.id = tr.flow_id
+		WHERE at.artifact_sha256 = ANY($1) AND f.org_id = $2
+		  AND (at.name = 'sbom' OR at.type_name IN ('sbom', 'sbom-scan'))
+		ORDER BY at.artifact_sha256, at.created_at DESC NULLS LAST, at.id DESC`, pq.Array(digests), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer summaries.Close()
+	for summaries.Next() {
+		var digest string
+		var payload []byte
+		var compliant bool
+		if err := summaries.Scan(&digest, &payload, &compliant); err != nil {
+			internalError(w, err)
+			return
+		}
+		av := byDigest[digest]
+		av.SBOMStatus = "Non-Compliant"
+		if compliant {
+			av.SBOMStatus = "Compliant"
+		}
+		av.SBOM = artifactSBOMPackages(payload)
+	}
+	if err := summaries.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
+	page.write(w, list)
 }
 
-// handleCheckCompliance answers whether an artifact passed its controls.
-//
-// Scoped to the caller's organization because the answer names the artifact and
-// reports its compliance posture, and an image digest is not a secret — it is in
-// every manifest and registry listing. Unscoped, anyone with an account could
-// ask whether another organization's build passed, for any digest they knew.
+func artifactSBOMPackages(payload []byte) []any {
+	var packages []any
+	if err := json.Unmarshal(payload, &packages); err == nil {
+		return packages
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return []any{}
+	}
+	if value, ok := obj["packages"]; ok {
+		packages, _ := value.([]any)
+		return packages
+	}
+	if value, ok := obj["components"]; ok {
+		packages, _ := value.([]any)
+		return packages
+	}
+	return []any{obj}
+}
+
 func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	sha := r.URL.Query().Get("sha256")
+	query := r.URL.Query()
+	for _, selector := range query["policy"] {
+		if selector != "" {
+			http.Error(w, "policy selector is unsupported", http.StatusBadRequest)
+			return
+		}
+	}
+	sha := query.Get("sha256")
 	if sha == "" {
 		http.Error(w, "missing sha256 query param", http.StatusBadRequest)
 		return
@@ -956,8 +991,12 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, name, COALESCE(description, '') AS description, rules FROM policies WHERE org_id = $1`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, name, COALESCE(description, '') AS description, rules /* page keys */ FROM policies WHERE org_id = $1`
+	rows, err := s.queryPage(r, page, query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -988,8 +1027,7 @@ func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type savePolicyReq struct {
@@ -1034,14 +1072,17 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Scope to the caller's tenant via attestation -> trail -> flow -> org.
-	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
+	page, ok := newListPage(w, r, orgID, timeKey("la.created_at"), uuidKey("la.id"), true)
+	if !ok {
+		return
+	}
+	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at /* page keys */
 	          FROM llm_assessments la
 	          JOIN attestations att ON la.attestation_id = att.id
 	          JOIN trails tr ON att.trail_id = tr.id
 	          JOIN flows f ON tr.flow_id = f.id
-	          WHERE f.org_id = $1
-	          ORDER BY la.created_at DESC`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	          WHERE f.org_id = $1`
+	rows, err := s.queryPage(r, page, query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -1073,8 +1114,7 @@ func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type saveTenantSettingsReq struct {
@@ -1609,7 +1649,11 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 	case flowName != "":
 		answer = fmt.Sprintf("I've created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
 	case lower == "list flows" || lower == "show flows":
-		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows WHERE org_id = $1", orgID)
+		rows, err := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows WHERE org_id = $1", orgID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
 		defer rows.Close()
 		answer = "Here are the currently configured compliance flows in Fides:\n\n"
 		for rows.Next() {
@@ -1630,7 +1674,11 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 		          JOIN trails t ON att.trail_id = t.id
 		          JOIN flows f ON t.flow_id = f.id
 		          WHERE att.is_compliant = false AND f.org_id = $1`
-		rows, _ := s.q(ctx).QueryContext(ctx, query, orgID)
+		rows, err := s.q(ctx).QueryContext(ctx, query, orgID)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
 		defer rows.Close()
 		answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
 		found := false

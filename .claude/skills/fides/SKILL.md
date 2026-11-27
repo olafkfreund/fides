@@ -62,7 +62,7 @@ These commands **exit non-zero to fail a CI step** — rely on them, don't parse
 
 | Command | Non-zero means |
 |---|---|
-| `fides assert --sha256 <hex> --policy <name>` | exit **1** — artifact non-compliant |
+| `fides assert --sha256 <hex>` | exit **2** — artifact non-compliant |
 | `fides policy check --env <id> --trail <id>` | exit **2** — an applicable env policy is unsatisfied |
 | `fides allowlist check --env <id> --sha <hex>` | exit **2** — digest not approved for the env |
 | `fides change-gate --trail <id>` | exit **2** — verdict is HOLD |
@@ -92,7 +92,7 @@ fides attest sbom     --artifact-sha "$DIGEST" --file sbom.json                 
 **Gate a deploy (pick the strictest that applies):**
 
 ```bash
-fides assert       --sha256 $DIGEST --policy production-release-rules   # policy gate
+fides assert       --sha256 $DIGEST   # policy gate
 fides policy check --env $ENV --trail $TRAIL                            # env policy gate
 fides change-gate  --trail $TRAIL                                       # verdict + risk (needs SoD approval)
 ```

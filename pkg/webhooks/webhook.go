@@ -72,7 +72,7 @@ type envelope struct {
 
 // Deliver sends the event to every configured target. A failure for any target
 // returns an error so the dispatcher retries; receivers MUST dedupe on the
-// X-Fides-Event-Id header (delivery is at-least-once).
+// X-Fides-Delivery-Id or X-Fides-Event-Id header.
 func (s *Sink) Deliver(ctx context.Context, ev events.Event) error {
 	targets, err := s.loader.Targets(ctx, ev.OrgID, ev.Type)
 	if err != nil {
@@ -115,6 +115,9 @@ func (s *Sink) post(ctx context.Context, t Target, ev events.Event, ts string, b
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "fides-webhooks/1")
 	req.Header.Set("X-Fides-Event-Id", ev.ID.String())
+	if ev.DeliveryID != "" {
+		req.Header.Set("X-Fides-Delivery-Id", ev.DeliveryID)
+	}
 	req.Header.Set("X-Fides-Event-Type", ev.Type)
 	req.Header.Set("X-Fides-Timestamp", ts)
 	req.Header.Set("X-Fides-Signature", Sign(t.Secret, ts, body))

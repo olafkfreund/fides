@@ -179,7 +179,7 @@ func printUsage() {
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
 	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa/sbom report, or ingest GitHub/GitLab")
 	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
-	fmt.Println("  assert           Evaluate policy gate compliance for an artifact")
+	fmt.Println("  assert           Check compliance by artifact digest (--sha256)")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check|anchor-deployment)")
@@ -455,9 +455,14 @@ func handleAttest(config CLIConfig, args []string) {
 func handleAssert(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("assert", flag.ExitOnError)
 	sha := cmd.String("sha256", "", "Artifact SHA256 digest")
-	policyName := cmd.String("policy", "", "Policy name to evaluate against")
+	policyName := cmd.String("policy", "", "Unsupported policy selector (omit this flag)")
 
 	cmd.Parse(args)
+
+	if *policyName != "" {
+		fmt.Println("Error: --policy is unsupported for assert. Use --sha256 to check artifact compliance.")
+		os.Exit(exitcode.Error)
+	}
 
 	if *sha == "" {
 		fmt.Println("Error: --sha256 is required")
@@ -467,7 +472,6 @@ func handleAssert(config CLIConfig, args []string) {
 
 	q := neturl.Values{}
 	q.Set("sha256", *sha)
-	q.Set("policy", *policyName)
 	reqURL := fmt.Sprintf("%s/api/v1/compliance?%s", config.ServerURL, q.Encode())
 	req, err := http.NewRequest("GET", reqURL, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
@@ -486,13 +490,27 @@ func handleAssert(config CLIConfig, args []string) {
 	}
 	defer resp.Body.Close()
 
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Printf("Failed to parse response: %v\n", err)
-		os.Exit(1)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		fmt.Printf("Server check failed: HTTP %d\n", resp.StatusCode)
+		os.Exit(exitcode.Error)
 	}
 
-	compliant, _ := result["compliant"].(bool)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Failed to read response: %v\n", err)
+		os.Exit(exitcode.Error)
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Printf("Failed to parse response: %v\n", err)
+		os.Exit(exitcode.Error)
+	}
+
+	compliant, ok := result["compliant"].(bool)
+	if !ok {
+		fmt.Println("Failed to parse response: expected a boolean compliant field")
+		os.Exit(exitcode.Error)
+	}
 	violations, _ := result["violations"].([]interface{})
 
 	if !compliant {
@@ -766,7 +784,7 @@ func handleTraining(config CLIConfig, args []string) {
 			"person": *person, "course": *course, "completed_at": *date, "notes": *notes,
 		}, "Training recorded")
 	case "list":
-		body, err := getRequest(config, "/api/v1/training")
+		body, err := getList(config, "/api/v1/training")
 		fail(err, "list training")
 		fmt.Println(body)
 	default:
@@ -798,7 +816,7 @@ func handleService(config CLIConfig, args []string) {
 			"service": *name, "owner": *owner, "on_call": *onCall, "audit_contact": *audit, "tier": *tier,
 		}, "Service saved")
 	case "list":
-		body, err := getRequest(config, "/api/v1/services")
+		body, err := getList(config, "/api/v1/services")
 		fail(err, "list services")
 		fmt.Println(body)
 	default:
@@ -832,7 +850,7 @@ func handleException(config CLIConfig, args []string) {
 			"expires_in_days": *days, "expires_at": *expires,
 		}, "Exception recorded")
 	case "list":
-		body, err := getRequest(config, "/api/v1/exceptions")
+		body, err := getList(config, "/api/v1/exceptions")
 		fail(err, "list exceptions")
 		fmt.Println(body)
 	case "revoke":
@@ -869,7 +887,7 @@ func handleEnvCreate(config CLIConfig, args []string) {
 
 // handleEnvList: fides env list — the org's environments.
 func handleEnvList(config CLIConfig, _ []string) {
-	body, err := getRequest(config, "/api/v1/environments")
+	body, err := getList(config, "/api/v1/environments")
 	fail(err, "list environments")
 	fmt.Println(body)
 }

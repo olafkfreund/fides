@@ -50,10 +50,14 @@ func (s *Server) handleListLogicalEnv(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT le.id, le.name, COALESCE(le.description,''), count(m.environment_id)
+	page, ok := newListPage(w, r, orgID, textKey("le.name"), uuidKey("le.id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT le.id, le.name, COALESCE(le.description,''), count(m.environment_id) /* page keys */
 		 FROM logical_environments le LEFT JOIN logical_environment_members m ON m.logical_id = le.id
-		 WHERE le.org_id = $1 GROUP BY le.id ORDER BY le.name`, orgID)
+		 WHERE le.org_id = $1 /* page seek */ GROUP BY le.id`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -75,7 +79,7 @@ func (s *Server) handleListLogicalEnv(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 func (s *Server) handleAddLogicalMember(w http.ResponseWriter, r *http.Request) {

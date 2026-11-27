@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"fides/internal/pagination"
 	"fides/pkg/cliprogress"
 	"fides/pkg/evidence"
 	"fides/pkg/exitcode"
@@ -133,7 +134,10 @@ func handleFlagChange(config CLIConfig, args []string) {
 		cmd := flag.NewFlagSet("flag list", flag.ExitOnError)
 		limit := cmd.Int("limit", 100, "max flag changes to list")
 		cmd.Parse(args[1:])
-		body, err := getRequest(config, fmt.Sprintf("/api/v1/flags/history?limit=%d", *limit))
+		if *limit < 1 || *limit > 1000 {
+			*limit = 100
+		}
+		body, err := getListUpTo(config, fmt.Sprintf("/api/v1/flags/history?limit=%d", min(*limit, 500)), *limit)
 		fail(err, "list flag changes")
 		fmt.Println(body)
 		return
@@ -201,23 +205,42 @@ func handleVEX(config CLIConfig, args []string) {
 
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
-	req, err := http.NewRequest("GET", config.ServerURL+path, nil) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
+	body, _, err := getPage(httpClient, config.Token, config.ServerURL+path) //nolint:bodyclose // getPage closes the body before returning.
+	return string(body), err
+}
+
+func getList(config CLIConfig, path string) (string, error) {
+	return getListUpTo(config, path, 0)
+}
+
+func getListUpTo(config CLIConfig, path string, limit int) (string, error) {
+	body, err := pagination.ReadList(httpClient, config.ServerURL+path, limit, func(client *http.Client, url string) ([]byte, *http.Response, error) {
+		return getPage(client, config.Token, url)
+	})
+	return string(body), err
+}
+
+func getPage(client *http.Client, token, url string) ([]byte, *http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
-	if config.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+config.Token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := httpClient.Do(req) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
+	resp, err := client.Do(req) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("server returned error code: %d, body: %s", resp.StatusCode, string(b))
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
 	}
-	return string(b), nil
+	if resp.StatusCode >= 400 {
+		return nil, nil, fmt.Errorf("server returned error code: %d, body: %s", resp.StatusCode, string(b))
+	}
+	return b, resp, nil
 }
 
 // fides servicenow config|get|change-check|link-control
@@ -453,7 +476,7 @@ func handleServiceAccount(config CLIConfig, args []string) {
 		}
 		post(config, "/api/v1/tenant/service-accounts", map[string]any{"name": *name, "role": *role}, "")
 	case "list":
-		body, err := getRequest(config, "/api/v1/tenant/service-accounts")
+		body, err := getList(config, "/api/v1/tenant/service-accounts")
 		fail(err, "list service accounts")
 		fmt.Println(body)
 	case "issue-key":
@@ -605,7 +628,7 @@ func handleControl(config CLIConfig, args []string) {
 		if *all {
 			p += "?include_archived=true"
 		}
-		body, err := getRequest(config, p)
+		body, err := getList(config, p)
 		fail(err, "list controls")
 		fmt.Println(body)
 	case "coverage":
@@ -625,7 +648,7 @@ func handleControl(config CLIConfig, args []string) {
 		fail(err, "control timeline")
 		fmt.Println(body)
 	case "frameworks":
-		body, err := getRequest(config, "/api/v1/frameworks")
+		body, err := getList(config, "/api/v1/frameworks")
 		fail(err, "list frameworks")
 		fmt.Println(body)
 	case "catalog":
@@ -679,7 +702,7 @@ func handleControl(config CLIConfig, args []string) {
 		}
 		keys := []string{}
 		if *allControls {
-			raw, err := getRequest(config, "/api/v1/controls")
+			raw, err := getList(config, "/api/v1/controls")
 			fail(err, "list controls")
 			var ctrls []struct {
 				Key string `json:"key"`
@@ -751,7 +774,7 @@ func handleFlow(config CLIConfig, args []string) {
 	}
 	switch args[0] {
 	case "list":
-		body, err := getRequest(config, "/api/v1/flows")
+		body, err := getList(config, "/api/v1/flows")
 		fail(err, "list flows")
 		fmt.Println(body)
 	case "trails", "artifacts":
@@ -762,7 +785,7 @@ func handleFlow(config CLIConfig, args []string) {
 			fmt.Println("Error: --flow is required")
 			os.Exit(1)
 		}
-		body, err := getRequest(config, "/api/v1/flows/"+*flow+"/"+args[0])
+		body, err := getList(config, "/api/v1/flows/"+*flow+"/"+args[0])
 		fail(err, "list flow "+args[0])
 		fmt.Println(body)
 	default:
@@ -791,7 +814,7 @@ func handleLogicalEnv(config CLIConfig, args []string) {
 		}
 		post(config, "/api/v1/logical-environments", map[string]any{"name": *name, "description": *desc}, "")
 	case "list":
-		body, err := getRequest(config, "/api/v1/logical-environments")
+		body, err := getList(config, "/api/v1/logical-environments")
 		fail(err, "list logical environments")
 		fmt.Println(body)
 	case "add-member":
@@ -890,7 +913,7 @@ func handlePolicy(config CLIConfig, args []string) {
 			"if_tag": *ifTag, "if_value": *ifValue,
 		}, "Policy saved")
 	case "list":
-		body, err := getRequest(config, base+"/policies")
+		body, err := getList(config, base+"/policies")
 		fail(err, "list policies")
 		fmt.Println(body)
 	case "check":
@@ -983,7 +1006,7 @@ func handleSearch(config CLIConfig, args []string) {
 		fmt.Println("Usage: fides search <artifacts|attestations|components>")
 		os.Exit(1)
 	}
-	body, err := getRequest(config, path+"?"+q.Encode())
+	body, err := getList(config, path+"?"+q.Encode())
 	fail(err, "search")
 	fmt.Println(body)
 }
@@ -1126,7 +1149,7 @@ func handleAllowlist(config CLIConfig, args []string) {
 		}
 		post(config, base, map[string]any{"artifact_sha256": *sha, "reason": *reason}, "Artifact approved for the environment")
 	case "list":
-		body, err := getRequest(config, base)
+		body, err := getList(config, base)
 		fail(err, "list allowlist")
 		fmt.Println(body)
 	case "check":
@@ -1223,7 +1246,7 @@ func handleRemediation(config CLIConfig, args []string) {
 		if enc := q.Encode(); enc != "" {
 			path += "?" + enc
 		}
-		body, err := getRequest(config, path)
+		body, err := getList(config, path)
 		fail(err, "list remediation actions")
 		fmt.Println(body)
 	case "get":

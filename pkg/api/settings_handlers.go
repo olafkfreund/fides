@@ -11,6 +11,7 @@ import (
 
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
+	"fides/pkg/db"
 	"fides/pkg/models"
 )
 
@@ -131,7 +132,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 	}
 	var err error
 
-	tx, err := s.DB.BeginTx(r.Context(), nil)
+	tx, err := db.BeginTx(r.Context(), s.DB, nil)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -252,7 +253,11 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), "SELECT id, name, email, role, groups, created_at FROM users WHERE org_id = $1 ORDER BY name", orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page, "SELECT id, name, email, role, groups, created_at /* page keys */ FROM users WHERE org_id = $1", orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -277,8 +282,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 // handleSetUserPassword lets an Admin set/reset a user's local-login password.
@@ -366,7 +370,11 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), "SELECT id, external_group, role, created_at FROM sso_group_mappings WHERE org_id = $1 ORDER BY external_group", orgID)
+	page, ok := newListPage(w, r, orgID, textKey("external_group"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page, "SELECT id, external_group, role, created_at /* page keys */ FROM sso_group_mappings WHERE org_id = $1", orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -389,8 +397,7 @@ func (s *Server) handleListGroupMappings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 func (s *Server) handleSaveGroupMapping(w http.ResponseWriter, r *http.Request) {
@@ -427,9 +434,13 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT id, org_id, name, url, secret_path, event_types, enabled, created_at, updated_at
-		 FROM tenant_webhooks WHERE org_id = $1 ORDER BY name`, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT id, org_id, name, url, secret_path, event_types, enabled, created_at, updated_at /* page keys */
+		 FROM tenant_webhooks WHERE org_id = $1`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -452,8 +463,7 @@ func (s *Server) handleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 func (s *Server) handleSaveWebhook(w http.ResponseWriter, r *http.Request) {
@@ -492,9 +502,13 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT id, org_id, provider, host, api_base, token_path, COALESCE(inbound_secret_path, ''), enabled, created_at, updated_at
-		 FROM tenant_git_providers WHERE org_id = $1 ORDER BY host`, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("host"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT id, org_id, provider, host, api_base, token_path, COALESCE(inbound_secret_path, ''), enabled, created_at, updated_at /* page keys */
+		 FROM tenant_git_providers WHERE org_id = $1`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -515,8 +529,7 @@ func (s *Server) handleListGitProviders(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 func (s *Server) handleSaveGitProvider(w http.ResponseWriter, r *http.Request) {

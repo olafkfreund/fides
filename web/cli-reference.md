@@ -29,11 +29,17 @@ non-compliance — previously `1`.)
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab SLSA attestations for an artifact (records under type `slsa-provenance`) |
 | `fides attest authorship --trail <id> [--commit <ref>] [--reviewer <name>]` | Record a `code.authorship` attestation from the commit's git trailers (human vs AI-agent author, reviewer). AI-authored changes without a human reviewer are non-compliant, so a control requiring `code.authorship` holds the change gate |
-| `fides assert --sha256 <hex> --policy <name>` | Policy gate for an artifact |
+| `fides assert --sha256 <hex>` | Check recorded control verdicts by artifact digest |
 | `fides verify-image --sha256 <hex> --signer <identity> [--issuer <oidc-issuer>] [--key <pubkey.pem>] [--image <repo> \| --bundle <path>] [--trail <id>]` | Verify a container image's cosign signature — keyless (OIDC identity+issuer) or key-based (`--key`) — and optionally record a `cosign-verification` attestation (deploy gate; exits 2 on failure). `--image ghcr.io/org/name` resolves the signature straight from the registry; `--bundle` uses a pre-fetched one (offline/air-gapped) |
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken); also reports the external RFC3161 anchor status (`external_anchor`) if the trail was anchored |
 | `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (proves the head existed at a point in time, independently of the Fides DB). TSA URL from `--tsa` or the server's `FIDES_TSA_URL`; a `--tsa` value must match `FIDES_TSA_URL` or one of `FIDES_TSA_URLS` |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
+
+`fides assert` exits `0` for a compliant verdict, `2` for a non-compliant verdict,
+and `1` for a missing digest, unsupported selector, transport, HTTP, or response error. Omit `--policy`
+because named policy selection is unsupported. A non-empty `--policy` exits
+`1`. The underlying `GET /api/v1/compliance` route takes `sha256` and returns
+HTTP `400` for a non-empty `policy` query parameter.
 
 ## Runtime snapshots
 

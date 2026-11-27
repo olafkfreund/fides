@@ -22,21 +22,18 @@ func (s *Server) handleSearchArtifacts(w http.ResponseWriter, r *http.Request) {
 	commit := r.URL.Query().Get("commit")
 	name := r.URL.Query().Get("name")
 
-	// a.trail_id is selected because resolving a digest to the trail it was
-	// built on is the one thing a deploy gate needs and this endpoint could not
-	// answer. Without it a caller had to fall back to GET /api/v1/artifacts,
-	// which takes no filter, has no LIMIT, and runs a per-row SBOM query
-	// embedding the payload — so the whole organisation's SBOMs came back to
-	// learn one 36-byte id. The join was already here; only the column was
-	// missing.
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT a.sha256, a.name, a.type, a.created_at, COALESCE(t.git_commit, ''), a.trail_id
+	// Return the trail ID so deploy gates can resolve provenance from this search.
+	page, ok := newListPage(w, r, orgID, timeKey("a.created_at"), textKey("a.sha256"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT a.sha256, a.name, a.type, a.created_at, COALESCE(t.git_commit, ''), a.trail_id /* page keys */
 		 FROM artifacts a LEFT JOIN trails t ON t.id = a.trail_id
 		 WHERE a.org_id = $1
 		   AND ($2 = '' OR a.sha256 LIKE $2 || '%')
 		   AND ($3 = '' OR t.git_commit = $3)
-		   AND ($4 = '' OR a.name ILIKE '%' || $4 || '%')
-		 ORDER BY a.created_at DESC LIMIT 100`, orgID, sha, commit, name)
+		   AND ($4 = '' OR a.name ILIKE '%' || $4 || '%')`, orgID, sha, commit, name)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -65,7 +62,7 @@ func (s *Server) handleSearchArtifacts(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 // handleSearchAttestations filters attestations by type, trail, or compliance.
@@ -87,15 +84,19 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 		trail = t
 	}
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT at.id, at.name, at.type_name, at.is_compliant, at.created_at, at.trail_id
+	page, ok := newListPage(w, r, orgID, timeKey("at.created_at"), uuidKey("at.id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT at.id, at.name, at.type_name, at.is_compliant, at.created_at, at.trail_id /* page keys */
 		 FROM attestations at JOIN trails tr ON tr.id = at.trail_id JOIN flows f ON f.id = tr.flow_id
 		 WHERE f.org_id = $1
 		   AND ($2 = '' OR at.type_name = $2)
 		   AND ($3 = '' OR at.trail_id = NULLIF($3, '')::uuid)
 		   AND ($4 = '' OR at.is_compliant = ($4 = 'true'))
 		   AND ($5 = '' OR at.artifact_sha256 = $5)
-		 ORDER BY at.created_at DESC LIMIT 100`, orgID, typeName, trail, compliant, sha)
+		   AND strpos(lower(at.name), lower($6)) > 0`, orgID, typeName, trail, compliant, sha, r.URL.Query().Get("name"))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -118,7 +119,7 @@ func (s *Server) handleSearchAttestations(w http.ResponseWriter, r *http.Request
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 // handleSearchComponents filters SBOM components by purl, artifact SHA256, or
@@ -134,14 +135,17 @@ func (s *Server) handleSearchComponents(w http.ResponseWriter, r *http.Request) 
 	artifact := r.URL.Query().Get("artifact")
 	name := r.URL.Query().Get("name")
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT sc.id, sc.artifact_sha256, a.name, a.type, sc.name, sc.version, sc.purl, sc.licenses, sc.created_at
+	page, ok := newListPage(w, r, orgID, timeKey("sc.created_at"), uuidKey("sc.id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT sc.id, sc.artifact_sha256, a.name, a.type, sc.name, sc.version, sc.purl, sc.licenses, sc.created_at /* page keys */
 		 FROM sbom_components sc JOIN artifacts a ON a.sha256 = sc.artifact_sha256
 		 WHERE sc.org_id = $1
 		   AND ($2 = '' OR sc.purl = $2)
 		   AND ($3 = '' OR sc.artifact_sha256 = $3)
-		   AND ($4 = '' OR sc.name ILIKE '%' || $4 || '%')
-		 ORDER BY sc.created_at DESC LIMIT 200`, orgID, purl, artifact, name)
+		   AND ($4 = '' OR sc.name ILIKE '%' || $4 || '%')`, orgID, purl, artifact, name)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -167,7 +171,7 @@ func (s *Server) handleSearchComponents(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 // handleGetAttestation returns a single attestation with its full evidence

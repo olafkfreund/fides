@@ -201,9 +201,13 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT approved_by, approver_kind, COALESCE(reason, ''), COALESCE(NULLIF(role, ''), 'approver'), COALESCE(delegated_by, ''), created_at
-		 FROM trail_approvals WHERE trail_id = $1 AND org_id = $2 ORDER BY created_at`, trailID, orgID)
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT approved_by, approver_kind, COALESCE(reason, ''), COALESCE(NULLIF(role, ''), 'approver'), COALESCE(delegated_by, ''), created_at /* page keys */
+		 FROM trail_approvals WHERE trail_id = $1 AND org_id = $2`, trailID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -228,5 +232,5 @@ func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }

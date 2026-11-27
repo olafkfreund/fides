@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiList, apiPost } from "@/lib/api";
 
 type Exception = {
   id: string;
@@ -29,7 +29,7 @@ export default function Exceptions() {
   const [by, setBy] = useState("");
 
   const load = () =>
-    apiGet<Exception[]>("/api/v1/exceptions")
+    apiList<Exception>("/api/v1/exceptions")
       .then((x) => setItems(x ?? []))
       .catch((e) => setErr(String((e as Error).message || e)));
   useEffect(() => {

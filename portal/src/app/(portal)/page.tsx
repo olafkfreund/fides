@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Package, ShieldCheck, CheckCircle2, Zap } from "lucide-react";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiList } from "@/lib/api";
 import { Panel, SectionLabel, Donut, StatTile } from "@/components/dash";
 
 // Live snapshot from the console summary endpoint (counts + recent checks).
@@ -94,10 +94,15 @@ export default function Overview() {
     };
 
     // Secondary panels change slowly — a plain poll is plenty.
+    let envsPending = false;
     const pollAux = () => {
-      apiGet<Env[]>("/api/v1/environments").then((e) => !stop && setEnvs(e || [])).catch(() => {});
+      if (!envsPending) {
+        envsPending = true;
+        apiList<Env>("/api/v1/environments")
+          .then((e) => !stop && setEnvs(e)).catch(() => {}).finally(() => { envsPending = false; });
+      }
       apiGet<Coverage>("/api/v1/controls/coverage").then((c) => !stop && setCov(c)).catch(() => {});
-      apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => !stop && setEvents(e || [])).catch(() => {});
+      apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events?limit=50").then((e) => !stop && setEvents(e || [])).catch(() => {});
     };
     pollAux();
     const auxId = setInterval(pollAux, 10000);

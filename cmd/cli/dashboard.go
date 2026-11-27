@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
 	"sort"
 	"strings"
 
+	"fides/internal/pagination"
 	"fides/pkg/cliout"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,6 +82,7 @@ type policiesMsg struct {
 	err      error
 }
 type artifactsMsg struct {
+	more      bool
 	artifacts []artView
 	err       error
 }
@@ -113,6 +116,7 @@ type dashModel struct {
 	policiesErr    error
 	policiesLoaded bool
 
+	artifactsMore   bool
 	artifacts       []artView
 	artifactsErr    error
 	artifactsLoaded bool
@@ -138,7 +142,7 @@ func (m dashModel) Init() tea.Cmd {
 // typed message. One slow/failed endpoint never blocks the others or the UI.
 
 func (m dashModel) fetchFlows() tea.Msg {
-	body, err := getRequest(m.config, "/api/v1/flows")
+	body, err := getList(m.config, "/api/v1/flows")
 	if err != nil {
 		return flowsMsg{err: err}
 	}
@@ -148,7 +152,7 @@ func (m dashModel) fetchFlows() tea.Msg {
 }
 
 func (m dashModel) fetchPolicies() tea.Msg {
-	body, err := getRequest(m.config, "/api/v1/policies")
+	body, err := getList(m.config, "/api/v1/policies")
 	if err != nil {
 		return policiesMsg{err: err}
 	}
@@ -158,17 +162,18 @@ func (m dashModel) fetchPolicies() tea.Msg {
 }
 
 func (m dashModel) fetchArtifacts() tea.Msg {
-	body, err := getRequest(m.config, "/api/v1/artifacts")
+	body, response, err := getPage(httpClient, m.config.Token, fmt.Sprintf("%s/api/v1/artifacts?limit=%d", m.config.ServerURL, dashboardListLimit)) //nolint:bodyclose // getPage closes the body before returning.
 	if err != nil {
 		return artifactsMsg{err: err}
 	}
 	var a []artView
 	err = json.Unmarshal([]byte(body), &a)
-	return artifactsMsg{artifacts: a, err: err}
+	next, linkErr := pagination.Next(response.Request.URL, response.Header)
+	return artifactsMsg{artifacts: a, more: next != nil, err: errors.Join(err, linkErr)}
 }
 
 func (m dashModel) fetchEnvs() tea.Msg {
-	body, err := getRequest(m.config, "/api/v1/environments")
+	body, err := getList(m.config, "/api/v1/environments")
 	if err != nil {
 		return envsMsg{err: err}
 	}
@@ -230,7 +235,7 @@ func (m dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case policiesMsg:
 		m.policyList, m.policies, m.policiesErr, m.policiesLoaded = msg.policies, len(msg.policies), msg.err, true
 	case artifactsMsg:
-		m.artifacts, m.artifactsErr, m.artifactsLoaded = msg.artifacts, msg.err, true
+		m.artifacts, m.artifactsMore, m.artifactsErr, m.artifactsLoaded = msg.artifacts, msg.more, msg.err, true
 	case envsMsg:
 		m.envs, m.envsErr, m.envsLoaded = msg.envs, msg.err, true
 	case coverageMsg:
@@ -537,6 +542,8 @@ func intBar(label string, val, max, barW int) string {
 	return fmt.Sprintf("%-12s %s%s %3d", truncate(label, 12), fill, empty, val)
 }
 
+const dashboardListLimit = 12
+
 // listPanel is the shared box/title/loading/error/empty scaffold for simple
 // bounded-list tabs. rows(limit) returns at most `limit` rendered lines; a
 // "… and N more" note is appended when total exceeds what was shown.
@@ -550,7 +557,6 @@ func (m dashModel) listPanel(title string, loaded bool, loadErr error, emptyMsg 
 		Padding(0, 1).Width(w - 2)
 	head := lipgloss.NewStyle().Foreground(colTitle).Bold(true).Render(title)
 
-	const limit = 12
 	var lines []string
 	switch {
 	case loadErr != nil:
@@ -560,7 +566,7 @@ func (m dashModel) listPanel(title string, loaded bool, loadErr error, emptyMsg 
 	case total == 0:
 		lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render(emptyMsg))
 	default:
-		lines = rows(limit)
+		lines = rows(dashboardListLimit)
 		if more := moreLine(total, len(lines)); more != "" {
 			lines = append(lines, lipgloss.NewStyle().Foreground(colDim).Render(more))
 		}
@@ -596,7 +602,11 @@ func (m dashModel) policiesPanel() string {
 }
 
 func (m dashModel) artifactsPanel() string {
-	return m.listPanel("Artifacts (newest first)", m.artifactsLoaded, m.artifactsErr, "no artifacts recorded", len(m.artifacts),
+	title := "Artifacts (newest first)"
+	if m.artifactsMore {
+		title = "Artifacts (newest first, more available)"
+	}
+	return m.listPanel(title, m.artifactsLoaded, m.artifactsErr, "no artifacts recorded", len(m.artifacts),
 		func(limit int) []string {
 			var lines []string
 			for i, a := range m.artifacts {
@@ -695,17 +705,17 @@ func runDashboard(config CLIConfig, _ []string) {
 
 func dashboardSnapshot(config CLIConfig) {
 	snap := map[string]any{}
-	if b, err := getRequest(config, "/api/v1/flows"); err == nil {
+	if b, err := getList(config, "/api/v1/flows"); err == nil {
 		var a []json.RawMessage
 		_ = json.Unmarshal([]byte(b), &a)
 		snap["flows"] = len(a)
 	}
-	if b, err := getRequest(config, "/api/v1/environments"); err == nil {
+	if b, err := getList(config, "/api/v1/environments"); err == nil {
 		var e []envView
 		_ = json.Unmarshal([]byte(b), &e)
 		snap["environments"] = len(e)
 	}
-	if b, err := getRequest(config, "/api/v1/policies"); err == nil {
+	if b, err := getList(config, "/api/v1/policies"); err == nil {
 		var a []json.RawMessage
 		_ = json.Unmarshal([]byte(b), &a)
 		snap["policies"] = len(a)

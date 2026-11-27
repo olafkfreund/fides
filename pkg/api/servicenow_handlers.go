@@ -219,7 +219,7 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 	var rules pq.StringArray
 	_ = s.q(r.Context()).QueryRowContext(r.Context(),
 		`SELECT jq_rules FROM attestation_types WHERE name = 'servicenow-change' AND org_id = $1 LIMIT 1`, orgID).Scan(&rules)
-	rulesOK, failed, _ := s.PolicyEngine.EvaluateAttestation(string(payloadJSON), []string(rules))
+	rulesOK, failed, _ := s.PolicyEngine.EvaluateAttestation(r.Context(), string(payloadJSON), []string(rules))
 	compliant := found && rulesOK
 
 	// Record the attestation on the trail (with tamper-evidence chain).

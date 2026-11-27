@@ -77,21 +77,19 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Archived environments are hidden unless asked for. Retiring one is meant
-	// to get it out of the way; leaving it listed would only move the clutter
-	// from the coverage number to the page.
-	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description, archived
-	             FROM environments WHERE org_id = $1 AND NOT archived`
-	if r.URL.Query().Get("include_archived") == "true" {
-		queryEnv = `SELECT id, name, type, COALESCE(description, '') AS description, archived
-		            FROM environments WHERE org_id = $1`
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), queryEnv, orgID)
+	includeArchived := r.URL.Query().Get("include_archived") == "true"
+	rows, err := s.queryPage(r, page, `
+		SELECT id, name, type, COALESCE(description, ''), archived /* page keys */
+		FROM environments WHERE org_id = $1 AND ($2 OR NOT archived)
+		  AND strpos(lower(name), lower($3)) > 0`, orgID, includeArchived, r.URL.Query().Get("name"))
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	defer rows.Close()
 
 	// Complete detailed Environment view model mapping to what frontend app.js expects
 	type RuntimeArtifact struct {
@@ -113,15 +111,13 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ShadowChanges []string          `json:"shadowChanges"`
 	}
 
-	// Collect all base environments FIRST. Under RLS, s.q(ctx) is a single
-	// pinned connection, so we must drain this cursor before running any
-	// sub-query — otherwise the nested query disrupts the outer cursor and only
-	// the first row is returned.
+	defer rows.Close()
 	list := []*EnvironmentView{}
+	byID := map[string]*EnvironmentView{}
+	var ids []string
 	for rows.Next() {
 		var ev EnvironmentView
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description, &ev.Archived); err != nil {
-			rows.Close()
 			internalError(w, err)
 			return
 		}
@@ -130,80 +126,99 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ev.Drifts = []string{}
 		ev.ShadowChanges = []string{}
 		list = append(list, &ev)
+		ids = append(ids, ev.ID)
+		byID[ev.ID] = &ev
 	}
-	// A failed iteration must not read as a short result.
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		internalError(w, err)
 		return
 	}
-	rows.Close()
+	// Finish the base page before enriching it on the request's pinned connection.
+	if err := rows.Close(); err != nil {
+		internalError(w, err)
+		return
+	}
+	if len(ids) == 0 {
+		page.write(w, list)
+		return
+	}
 
-	// Enrich each environment now that the outer cursor is closed.
-	for _, ev := range list {
-		var latestSnapID string
-		var snapTime time.Time
-		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-		if err := s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime); err != nil {
-			continue
-		}
-		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-
-		// Read all running artifacts into memory before the per-artifact queries.
-		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-		            FROM snapshot_artifacts sa
-		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-		            WHERE sa.snapshot_id = $1`
-		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-		if err != nil {
-			defer saRows.Close()
-			continue
-		}
-		var running []RuntimeArtifact
-		for saRows.Next() {
-			var ra RuntimeArtifact
-			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-				running = append(running, ra)
-			}
-		}
-		// A failed iteration must not read as a short result.
-		if err := saRows.Err(); err != nil {
+	// Match allowlists by the exact reported runtime digest, as snapshot
+	// ingestion does, and only check historical approvals for current shadows.
+	runtimeRows, err := s.q(r.Context()).QueryContext(r.Context(), `
+		WITH latest AS (
+			SELECT DISTINCT ON (environment_id) environment_id, id, created_at
+			FROM environment_snapshots
+			WHERE environment_id = ANY($1)
+			ORDER BY environment_id, created_at DESC NULLS LAST, id DESC
+		), running AS (
+			SELECT l.environment_id, sa.id, sa.service_name, sa.runtime_digest, a.name, a.trail_id,
+			       (a.sha256 IS NOT NULL) AS registered, (al.id IS NOT NULL) AS approved
+			FROM latest l
+			JOIN snapshot_artifacts sa ON sa.snapshot_id = l.id
+			LEFT JOIN artifacts a ON a.sha256 = sa.artifact_sha256 AND a.org_id = $2
+			LEFT JOIN environment_allowlist al ON al.environment_id = l.environment_id
+			                                  AND al.artifact_sha256 = sa.runtime_digest
+		), prior_approval AS (
+			SELECT DISTINCT r.environment_id, r.service_name
+			FROM running r
+			JOIN environment_snapshots s ON s.environment_id = r.environment_id
+			JOIN snapshot_artifacts sa ON sa.snapshot_id = s.id AND sa.service_name = r.service_name
+			JOIN environment_allowlist al ON al.environment_id = s.environment_id
+			                             AND al.artifact_sha256 = sa.runtime_digest
+			WHERE NOT r.registered AND NOT r.approved AND r.service_name <> ''
+		), trail_results AS (
+			SELECT at.trail_id, bool_or(NOT at.is_compliant) AS failing
+			FROM (SELECT DISTINCT trail_id FROM running WHERE trail_id IS NOT NULL) rt
+			JOIN trails tr ON tr.id = rt.trail_id
+			JOIN flows f ON f.id = tr.flow_id AND f.org_id = $2
+			JOIN attestations at ON at.trail_id = tr.id
+			GROUP BY at.trail_id
+		)
+		SELECT l.environment_id, l.created_at, r.service_name, r.runtime_digest, r.registered,
+		       COALESCE(r.name, ''), r.approved, (p.service_name IS NOT NULL), COALESCE(t.failing, false)
+		FROM latest l
+		LEFT JOIN running r ON r.environment_id = l.environment_id
+		LEFT JOIN prior_approval p ON p.environment_id = r.environment_id AND p.service_name = r.service_name
+		LEFT JOIN trail_results t ON t.trail_id = r.trail_id
+		ORDER BY r.service_name, r.id`, pq.Array(ids), orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer runtimeRows.Close()
+	for runtimeRows.Next() {
+		var envID string
+		var snapshot sql.NullTime
+		var service, digest sql.NullString
+		var registered, approved sql.NullBool
+		var priorApproval, failing bool
+		var artifact RuntimeArtifact
+		if err := runtimeRows.Scan(&envID, &snapshot, &service, &digest, &registered, &artifact.Name, &approved, &priorApproval, &failing); err != nil {
 			internalError(w, err)
 			return
 		}
-		saRows.Close()
-
-		for _, ra := range running {
-			ev.Running = append(ev.Running, ra)
-			if !ra.Registered {
-				ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-				continue
-			}
-			var trailID sql.NullString
-			// No row is the ordinary case -- the artifact is simply not
-			// registered. A real error is not, and swallowing it here silently
-			// under-reports drift, which is the one direction a compliance view
-			// must not fail in.
-			if err := s.q(r.Context()).QueryRowContext(r.Context(),
-				"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				internalError(w, err)
-				return
-			}
-			if trailID.Valid {
-				var compliantCount, totalCount int
-				if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					internalError(w, err)
-					return
-				}
-				if totalCount > 0 && compliantCount < totalCount {
-					ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-				}
-			}
+		ev := byID[envID]
+		if snapshot.Valid {
+			ev.LastSnapshot = snapshot.Time.Format("2006-01-02 15:04:05")
+		}
+		if !service.Valid {
+			continue
+		}
+		artifact.Service, artifact.SHA256, artifact.Registered = service.String, digest.String, registered.Bool
+		ev.Running = append(ev.Running, artifact)
+		if !artifact.Registered && !approved.Bool {
+			ev.ShadowChanges = append(ev.ShadowChanges, shadowMessage(artifact.Service, artifact.SHA256, priorApproval))
+		}
+		if failing {
+			ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", artifact.Service, artifact.SHA256))
 		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	if err := runtimeRows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
+	page.write(w, list)
 }
 
 func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Request) {
@@ -370,6 +385,11 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	envIDStr := r.URL.Query().Get("environment_id")
 	if envIDStr == "" {
 		http.Error(w, "missing environment_id query param", http.StatusBadRequest)
@@ -385,9 +405,13 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 		return
 	}
 
-	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at 
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at /* page keys */
 	          FROM environment_mcp_servers WHERE environment_id = $1`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, envID)
+	rows, err := s.queryPage(r, page, query, envID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -421,8 +445,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
@@ -595,7 +618,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	}
 
 	// Evaluate rules deterministically using PolicyEngine
-	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
+	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(r.Context(), output, req.Rules)
 	if err != nil {
 		internalError(w, err)
 		return
