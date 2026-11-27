@@ -7,6 +7,17 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## Attestation evidence commitments
+
+Apply migration `0034_attestation_evidence_commitments.sql` before starting
+the new server if auto-migration is disabled. Upgrade every reader that verifies
+the ledger before setting `FIDES_LEDGER_EVIDENCE_V2=true` on writers.
+
+New version 2 entries bind attachment identities, SHA-256 digests, artifact
+and signer metadata, and the policy definition used for the attestation.
+Earlier hashes and timestamps retain their original format. Keep compatible
+readers available once version 2 has been written.
+
 ## Offline evidence recording
 
 Apply migration `0030_recording_operations.sql` before starting the new server

@@ -86,7 +86,7 @@ func (s *Server) handleVerifyBranchProtection(w http.ResponseWriter, r *http.Req
 		TypeName:    "branch-protection",
 		Payload:     string(payload),
 		IsCompliant: compliant,
-	}, nil); err != nil {
+	}, nil, attestationEvidence{}); err != nil {
 		internalError(w, err)
 		return
 	}

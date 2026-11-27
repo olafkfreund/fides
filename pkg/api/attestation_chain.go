@@ -16,12 +16,29 @@ import (
 	"fides/pkg/models"
 )
 
+type attachmentCommitment struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	Size int64     `json:"size"`
+	Hash string    `json:"sha256"`
+}
+
+type attestationEvidence struct {
+	ArtifactSHA256      *string                `json:"artifact_sha256"`
+	SignedBy            *string                `json:"signed_by"`
+	Signature           *string                `json:"signature"`
+	SignatureAlgorithm  *string                `json:"signature_algorithm"`
+	ManifestationReason *string                `json:"manifestation_reason"`
+	Policy              *attestationPolicy     `json:"policy"`
+	Attachments         []attachmentCommitment `json:"attachments"`
+}
+
 // appendAttestation serializes chain appends for a trail. Ordinary ingestion
 // supplies ingestOrg to store its signing fields and optionally enqueue its event.
-func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation, ingestOrg *uuid.UUID) error {
+func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation, ingestOrg *uuid.UUID, inputs attestationEvidence) error {
 	if q, ok := db.QuerierFromContext(ctx); ok {
 		if tx, ok := q.(*sql.Tx); ok {
-			return insertAttestation(ctx, tx, att, ingestOrg)
+			return insertAttestation(ctx, tx, att, ingestOrg, inputs)
 		}
 	}
 	tx, err := db.BeginTx(ctx, s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -29,13 +46,13 @@ func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation,
 		return err
 	}
 	defer tx.Rollback()
-	if err := insertAttestation(ctx, tx, att, ingestOrg); err != nil {
+	if err := insertAttestation(ctx, tx, att, ingestOrg, inputs); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation, ingestOrg *uuid.UUID) error {
+func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation, ingestOrg *uuid.UUID, inputs attestationEvidence) error {
 	if att.ValidationErrors == nil {
 		att.ValidationErrors = []models.AttestationValidationError{}
 	}
@@ -43,8 +60,13 @@ func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation,
 	if err != nil {
 		return err
 	}
-	canonical := ledger.CanonicalJSON(att.Payload)
-
+	inputs.ArtifactSHA256 = att.ArtifactSHA256
+	if ingestOrg != nil {
+		inputs.SignedBy = &att.SignedBy
+		inputs.Signature = &att.Signature
+		inputs.SignatureAlgorithm = &att.SignatureAlgorithm
+		inputs.ManifestationReason = &att.ManifestationReason
+	}
 	// Read the head in a separate statement so it sees the last lock holder's commit.
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('attestation-chain:' || $1::text, 0))`, att.TrailID.String()); err != nil {
 		return err
@@ -59,24 +81,42 @@ func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation,
 		return err
 	}
 
-	contentHash := ledger.ContentHash(att.TrailID.String(), att.Name, att.TypeName, canonical, att.IsCompliant, prevHash)
-	ordinary := ingestOrg != nil
+	version := 1
+	var evidence any
+	contentHash := ledger.ContentHash(att.TrailID.String(), att.Name, att.TypeName,
+		ledger.CanonicalJSON(att.Payload), att.IsCompliant, prevHash)
+	// Enable new writes once every active ledger reader supports version 2.
+	if os.Getenv("FIDES_LEDGER_EVIDENCE_V2") == "true" {
+		if inputs.Attachments == nil {
+			inputs.Attachments = []attachmentCommitment{}
+		}
+		rawEvidence, err := json.Marshal(inputs)
+		if err != nil {
+			return err
+		}
+		canonical := ledger.CanonicalJSONV2(string(rawEvidence))
+		contentHash = ledger.ContentHashV2(att.TrailID.String(), att.Name, att.TypeName, att.Payload, att.IsCompliant, prevHash, canonical)
+		if contentHash == "" {
+			return errors.New("could not hash attestation evidence inputs")
+		}
+		version, evidence = 2, canonical
+	}
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant,
-		 signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at, validation_errors)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7,
-		 CASE WHEN $8 THEN $9::varchar END, CASE WHEN $8 THEN $10::text END,
-		 CASE WHEN $8 THEN $11::varchar END, CASE WHEN $8 THEN $12::text END, $13, $14,
-		 GREATEST(clock_timestamp(), $15::timestamptz + interval '1 microsecond'), $16)
+		 signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at,
+		 validation_errors, hash_version, evidence_inputs)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+		 GREATEST(clock_timestamp(), $14::timestamptz + interval '1 microsecond'), $15, $16, $17)
 		 RETURNING created_at`,
 		att.ID, att.TrailID, att.ArtifactSHA256, att.Name, att.TypeName, att.Payload, att.IsCompliant,
-		ordinary, att.SignedBy, att.Signature, att.SignatureAlgorithm, att.ManifestationReason, contentHash, prevHash, prevTime, string(reasons)).
+		inputs.SignedBy, inputs.Signature, inputs.SignatureAlgorithm, inputs.ManifestationReason,
+		contentHash, prevHash, prevTime, string(reasons), version, evidence).
 		Scan(&att.CreatedAt)
 	if err != nil {
 		return err
 	}
 
-	if ordinary && os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+	if ingestOrg != nil && os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
 		if err := events.Enqueue(ctx, tx, *ingestOrg, "compliance.evaluated", map[string]any{
 			"trail_id": att.TrailID.String(),
 			// Status messages use the display name. Control matching uses the type.
@@ -88,6 +128,74 @@ func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation,
 		}
 	}
 	return nil
+}
+
+type trailChainEntry struct {
+	ledger.Entry
+	rawPayload      string
+	createdAt       sql.NullTime
+	evidenceMatches bool
+}
+
+// Read attachment and attestation metadata from the same database snapshot.
+// The policy definition is historical and verified by the hash itself.
+func (s *Server) readTrailChain(ctx context.Context, trailID uuid.UUID) ([]trailChainEntry, error) {
+	rows, err := s.q(ctx).QueryContext(ctx,
+		`SELECT a.name, a.type_name, a.payload::text, a.is_compliant,
+		        COALESCE(a.content_hash, ''), COALESCE(a.prev_hash, ''), a.created_at,
+		        a.hash_version, COALESCE(a.evidence_inputs::text, ''),
+		        CASE WHEN a.hash_version = 2 THEN COALESCE(a.evidence_inputs = jsonb_build_object(
+		            'artifact_sha256', a.artifact_sha256, 'signed_by', a.signed_by, 'signature', a.signature,
+		            'signature_algorithm', a.signature_algorithm, 'manifestation_reason', a.manifestation_reason,
+		            'policy', a.evidence_inputs -> 'policy',
+		            'attachments', COALESCE((
+		                SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.file_name, 'size', e.file_size,
+		                                                 'sha256', e.file_hash) ORDER BY e.id)
+		                FROM evidence_attachments e WHERE e.attestation_id = a.id
+		            ), '[]'::jsonb)
+		        ), false) ELSE a.evidence_inputs IS NULL END
+		 FROM attestations a WHERE a.trail_id = $1 ORDER BY a.created_at, a.id`, trailID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []trailChainEntry
+	for rows.Next() {
+		e := trailChainEntry{Entry: ledger.Entry{TrailID: trailID.String()}}
+		if err := rows.Scan(&e.Name, &e.TypeName, &e.rawPayload, &e.IsCompliant, &e.ContentHash, &e.PrevHash,
+			&e.createdAt, &e.Version, &e.Evidence, &e.evidenceMatches); err != nil {
+			return nil, err
+		}
+		e.Payload = e.rawPayload
+		if e.Version == 2 {
+			e.Evidence = ledger.CanonicalJSONV2(e.Evidence)
+		} else {
+			e.Payload = ledger.CanonicalJSON(e.rawPayload)
+		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+func verifyTrailEntries(entries []trailChainEntry) ledger.Verdict {
+	chain := make([]ledger.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.evidenceMatches {
+			break
+		}
+		chain = append(chain, entry.Entry)
+	}
+	verdict := ledger.Verify(chain)
+	if verdict.Valid && len(chain) < len(entries) {
+		verdict.Valid = false
+		verdict.BrokenAt = len(chain)
+		verdict.Reason = "evidence inputs do not match stored attestation and attachments"
+	}
+	if !verdict.Valid {
+		verdict.Count = len(entries)
+	}
+	return verdict
 }
 
 // handleVerifyTrailChain verifies a trail's attestation hash chain, detecting any
@@ -105,34 +213,12 @@ func (s *Server) handleVerifyTrailChain(w http.ResponseWriter, r *http.Request) 
 	if !s.requireTrailInOrg(w, r, trailID) {
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT name, type_name, payload::text, is_compliant, COALESCE(content_hash, ''), COALESCE(prev_hash, '')
-		 FROM attestations WHERE trail_id = $1 ORDER BY created_at, id`, trailID)
+	entries, err := s.readTrailChain(r.Context(), trailID)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	defer rows.Close()
-
-	var entries []ledger.Entry
-	for rows.Next() {
-		var e ledger.Entry
-		var payload string
-		if err := rows.Scan(&e.Name, &e.TypeName, &payload, &e.IsCompliant, &e.ContentHash, &e.PrevHash); err != nil {
-			internalError(w, err)
-			return
-		}
-		e.TrailID = trailID.String()
-		e.Payload = ledger.CanonicalJSON(payload)
-		entries = append(entries, e)
-	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		internalError(w, err)
-		return
-	}
-
-	verdict := ledger.Verify(entries)
+	verdict := verifyTrailEntries(entries)
 
 	// The current chain head is the last entry's content_hash; compare it against
 	// any external RFC3161 anchor to prove the head existed at a point in time.

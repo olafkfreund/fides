@@ -233,7 +233,7 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 		Payload:          string(payloadJSON),
 		IsCompliant:      compliant,
 		ValidationErrors: check.reasons,
-	}, nil); err != nil {
+	}, nil, attestationEvidence{Policy: check.policy}); err != nil {
 		internalError(w, err)
 		return
 	}

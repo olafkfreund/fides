@@ -1,10 +1,19 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"database/sql"
+	"encoding/asn1"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/digitorus/timestamp"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 
@@ -52,6 +62,103 @@ func TestAttestationChainIntegration(t *testing.T) {
 	}
 }
 
+func TestMixedAttestationChainAnchorIntegration(t *testing.T) {
+	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "")
+	f := newRouteAuthFixture(t)
+	t.Setenv("FIDES_TSA_ROOTS", "")
+	org, trail := f.own["org"], f.own["trail"]
+	post := func(name, payload string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"trail_id":%q,"name":%q,"type_name":"fixture","payload":%q}`, trail, name, payload)
+		expectRecording(t, postRecording(f.handler, "/api/v1/attestations", "", "application/json",
+			strings.NewReader(body), f.sessions[auth.RoleWriter]), http.StatusCreated)
+	}
+	post("old", "{}")
+	oldHash := ledger.ContentHash(trail, "old", "fixture", "{}", true, "")
+	token := offlineChainAnchor(t, oldHash)
+	mustExec(t, f.pool, `INSERT INTO trail_anchors (org_id,trail_id,chain_head_hash,tsa_url,timestamp_token)
+		VALUES ($1,$2,$3,'https://fixture.invalid',$4)`, org, trail, oldHash, token)
+
+	verify := func() chainVerifyResp {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/trails/"+trail+"/verify-chain", nil)
+		f.sessions[auth.RoleAdmin](req)
+		rec := httptest.NewRecorder()
+		f.handler.ServeHTTP(rec, req)
+		var got chainVerifyResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); rec.Code != http.StatusOK || err != nil {
+			t.Fatalf("verify-chain HTTP %d: %s, %v", rec.Code, rec.Body.String(), err)
+		}
+		return got
+	}
+	checkAnchor := func(got chainVerifyResp, evidenceCount int, headMatches bool) {
+		t.Helper()
+		if !got.Valid || got.Count != 1+evidenceCount || got.LegacyCount != 1 || got.UnhashedCount != 1 ||
+			got.EvidenceCount != evidenceCount || got.ExternalAnchor == nil || !got.ExternalAnchor.Anchored ||
+			got.ExternalAnchor.HeadMatches != headMatches || got.ExternalAnchor.Error != "" || got.ExternalAnchor.Timestamp.IsZero() {
+			t.Fatalf("verify-chain = %+v, anchor = %+v", got.Verdict, got.ExternalAnchor)
+		}
+	}
+	checkAnchor(verify(), 0, true)
+	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "true")
+	post("new", `{"exact":9007199254740993,"exponent":2e6}`)
+	checkAnchor(verify(), 1, false)
+
+	var preserved []byte
+	if err := f.pool.QueryRow(`SELECT timestamp_token FROM trail_anchors WHERE trail_id=$1 AND chain_head_hash=$2`,
+		trail, oldHash).Scan(&preserved); err != nil || !bytes.Equal(preserved, token) {
+		t.Fatalf("historical proof changed: %v", err)
+	}
+	var previous string
+	if err := f.pool.QueryRow(`SELECT prev_hash FROM attestations WHERE trail_id=$1 AND name='new' AND hash_version=2`,
+		trail).Scan(&previous); err != nil || previous != oldHash {
+		t.Fatalf("v2 append linked to %q, want %q, err = %v", previous, oldHash, err)
+	}
+
+	mustExec(t, f.pool, `UPDATE attestations SET payload='{"exact":9007199254740992,"exponent":2000000}'
+		WHERE trail_id=$1 AND name='new'`, trail)
+	if got := verify(); got.Valid || got.BrokenAt != 2 {
+		t.Fatalf("changed exact payload number verified: %+v", got.Verdict)
+	}
+	mustExec(t, f.pool, `UPDATE attestations SET payload='{"exact":9007199254740993,"exponent":2000000}',
+		evidence_inputs=NULL WHERE trail_id=$1 AND name='new'`, trail)
+	if got := verify(); got.Valid || got.BrokenAt != 2 || got.LegacyCount != 1 || got.UnhashedCount != 1 {
+		t.Fatalf("v2 entry with missing evidence verified: %+v", got.Verdict)
+	}
+}
+
+func offlineChainAnchor(t *testing.T, head string) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Local chain fixture"},
+		NotBefore: now.Add(-time.Hour), NotAfter: now.Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(head))
+	ts := timestamp.Timestamp{
+		HashAlgorithm: crypto.SHA256, HashedMessage: digest[:], Time: now,
+		Policy: asn1.ObjectIdentifier{1, 2, 3, 4, 1}, AddTSACertificate: true,
+	}
+	token, err := ts.CreateResponseWithOpts(cert, key, crypto.SHA256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return token
+}
+
 func attestationChainFixture(t *testing.T) (*sql.DB, uuid.UUID, uuid.UUID) {
 	t.Helper()
 	dsn := os.Getenv("FIDES_TEST_DB_DSN")
@@ -83,6 +190,7 @@ func attestationChainFixture(t *testing.T) (*sql.DB, uuid.UUID, uuid.UUID) {
 
 func TestConcurrentAttestationAppendsIntegration(t *testing.T) {
 	pool, org, trail := attestationChainFixture(t)
+	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "true")
 	t.Setenv("FIDES_RLS_ENABLED", "false")
 	t.Setenv("FIDES_EVENTS_ENABLED", "false")
 

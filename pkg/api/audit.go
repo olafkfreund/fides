@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"fides/pkg/ledger"
 )
 
 // handleTrailAuditPackage streams a ZIP audit package for a trail: metadata,
@@ -50,37 +48,27 @@ func (s *Server) handleTrailAuditPackage(w http.ResponseWriter, r *http.Request)
 	artifacts := s.collectRows(r, `SELECT sha256, name, type, created_at FROM artifacts WHERE trail_id = $1 ORDER BY created_at`, trailID,
 		[]string{"sha256", "name", "type", "created_at"})
 
-	// Attestations (+ chain entries for the verdict).
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT name, type_name, payload::text, is_compliant, COALESCE(content_hash,''), COALESCE(prev_hash,''), created_at
-		 FROM attestations WHERE trail_id = $1 ORDER BY created_at, id`, trailID)
+	entries, err := s.readTrailChain(r.Context(), trailID)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	defer rows.Close()
 	var attestations []map[string]any
-	var entries []ledger.Entry
-	for rows.Next() {
-		var an, at, payload, ch, ph string
-		var compliant bool
-		var ts time.Time
-		if err := rows.Scan(&an, &at, &payload, &compliant, &ch, &ph, &ts); err != nil {
-			rows.Close()
-			internalError(w, err)
-			return
+	for _, entry := range entries {
+		attestation := map[string]any{
+			"name": entry.Name, "type_name": entry.TypeName, "payload": json.RawMessage(entry.rawPayload),
+			"is_compliant": entry.IsCompliant, "content_hash": entry.ContentHash, "prev_hash": entry.PrevHash,
+			"created_at": entry.createdAt.Time.UTC().Format(time.RFC3339),
 		}
-		attestations = append(attestations, map[string]any{"name": an, "type_name": at, "payload": json.RawMessage(payload), "is_compliant": compliant, "content_hash": ch, "prev_hash": ph, "created_at": ts.UTC().Format(time.RFC3339)})
-		entries = append(entries, ledger.Entry{TrailID: trailID.String(), Name: an, TypeName: at, Payload: ledger.CanonicalJSON(payload), IsCompliant: compliant, ContentHash: ch, PrevHash: ph})
+		if entry.Version == 2 {
+			attestation["hash_version"] = entry.Version
+			if entry.Evidence != "" {
+				attestation["evidence_inputs"] = json.RawMessage(entry.Evidence)
+			}
+		}
+		attestations = append(attestations, attestation)
 	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		internalError(w, err)
-		return
-	}
-	rows.Close()
-	verdict := ledger.Verify(entries)
+	verdict := verifyTrailEntries(entries)
 
 	// Build the ZIP.
 	var buf bytes.Buffer

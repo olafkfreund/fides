@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -14,6 +15,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -123,6 +125,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	}
 
 	type attachmentDigest struct {
+		id   uuid.UUID
 		Name string
 		Size int64
 		Hash string
@@ -147,7 +150,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		readers = append(readers, file)
-		digests = append(digests, attachmentDigest{header.Filename, size, hex.EncodeToString(hash.Sum(nil))})
+		digests = append(digests, attachmentDigest{Name: header.Filename, Size: size, Hash: hex.EncodeToString(hash.Sum(nil))})
 	}
 	op, r := s.beginRecording(w, r, struct {
 		Request     reportAttestationReq
@@ -184,6 +187,19 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	}
 
 	orgID := callerOrg
+	// Even unkeyed reports must evaluate policy in the append transaction.
+	// Their optional indexes still run after commit, as before.
+	ingestRequest := r
+	standaloneAppend := op.tx == nil
+	if standaloneAppend {
+		tx, err := db.BeginTx(r.Context(), s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		op.tx = tx
+		r = r.WithContext(db.WithQuerier(r.Context(), tx))
+	}
 	check, err := s.evaluateAttestationTypeCompliance(r.Context(), orgID, req.TypeName, req.Payload)
 	if err != nil {
 		internalError(w, err)
@@ -222,9 +238,27 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		ManifestationReason: req.ManifestationReason,
 	}
 
-	if err := s.appendAttestation(r.Context(), attestation, &orgID); err != nil {
+	attachments := make([]attachmentCommitment, 0, len(digests))
+	for i, digest := range digests {
+		id := uuid.New()
+		digests[i].id = id
+		attachments = append(attachments, attachmentCommitment{ID: id, Name: digest.Name, Size: digest.Size, Hash: digest.Hash})
+	}
+	slices.SortFunc(attachments, func(a, b attachmentCommitment) int { return bytes.Compare(a.ID[:], b.ID[:]) })
+	if err := s.appendAttestation(r.Context(), attestation, &orgID, attestationEvidence{
+		Policy: check.policy, Attachments: attachments,
+	}); err != nil {
 		internalError(w, err)
 		return
+	}
+
+	if standaloneAppend {
+		if err := op.tx.Commit(); err != nil {
+			internalError(w, err)
+			return
+		}
+		op.tx = nil
+		r = ingestRequest
 	}
 
 	// Index the findings alongside the evidence when this request owns a transaction.
@@ -273,7 +307,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 		const query = `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-		if _, err := s.q(r.Context()).ExecContext(r.Context(), query, uuid.New(), attestation.ID, digest.Name,
+		if _, err := s.q(r.Context()).ExecContext(r.Context(), query, digest.id, attestation.ID, digest.Name,
 			digest.Size, digest.Hash, path, contentType, time.Now()); err != nil {
 			internalError(w, err)
 			return
