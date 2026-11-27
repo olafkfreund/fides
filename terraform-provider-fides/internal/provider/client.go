@@ -19,6 +19,16 @@ type Client struct {
 	http     *http.Client
 }
 
+type apiError struct {
+	method, path string
+	status       int
+	body         string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("fides API %s %s -> %d: %s", e.method, e.path, e.status, e.body)
+}
+
 func NewClient(endpoint, token string) *Client {
 	return &Client{Endpoint: endpoint, Token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -27,13 +37,6 @@ func NewClient(endpoint, token string) *Client {
 func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, error) {
 	return c.doContext(context.Background(), method, endpoint, body)
 }
-
-type apiError struct {
-	status  int
-	message string
-}
-
-func (e *apiError) Error() string { return e.message }
 
 func (c *Client) doContext(ctx context.Context, method, endpoint string, body any) ([]byte, http.Header, error) {
 	var rdr io.Reader
@@ -64,10 +67,7 @@ func (c *Client) doContext(ctx context.Context, method, endpoint string, body an
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, &apiError{
-			status:  resp.StatusCode,
-			message: fmt.Sprintf("fides API %s %s -> %d: %s", method, req.URL.Path, resp.StatusCode, out),
-		}
+		return nil, nil, &apiError{method: method, path: req.URL.Path, status: resp.StatusCode, body: string(out)}
 	}
 	return out, resp.Header, nil
 }

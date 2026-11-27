@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 
 	"fides/pkg/events"
 	"fides/pkg/models"
@@ -97,20 +94,20 @@ func (s *Server) writeFlagChange(ctx context.Context, orgID, flowID uuid.UUID, r
 		"actor": req.Actor, "source": req.Source, "targeting": req.Targeting,
 	})
 
-	// Compliance is policy-driven: JQ rules registered for the flag.changed type
-	// govern the change; a non-compliant flag.changed fails the change gate (#288).
-	compliant, err := s.evaluateAttestationTypeCompliance(ctx, orgID, FlagChangedAttestationType, string(payload))
+	// A non-compliant flag.changed fails the change gate (#288).
+	check, err := s.evaluateAttestationTypeCompliance(ctx, orgID, FlagChangedAttestationType, string(payload))
 	if err != nil {
 		return uuid.UUID{}, uuid.UUID{}, err
 	}
 	attID := uuid.New()
 	if err := s.appendAttestation(ctx, &models.Attestation{
-		ID:          attID,
-		TrailID:     trailID,
-		Name:        FlagChangedAttestationType,
-		TypeName:    FlagChangedAttestationType,
-		Payload:     string(payload),
-		IsCompliant: compliant,
+		ID:               attID,
+		TrailID:          trailID,
+		Name:             FlagChangedAttestationType,
+		TypeName:         FlagChangedAttestationType,
+		Payload:          string(payload),
+		IsCompliant:      check.compliant,
+		ValidationErrors: check.reasons,
 	}, nil); err != nil {
 		return uuid.UUID{}, uuid.UUID{}, err
 	}
@@ -151,30 +148,4 @@ func (s *Server) resolveFlagFlow(ctx context.Context, orgID uuid.UUID, flowID st
 		 ON CONFLICT (org_id, name) DO UPDATE SET name = EXCLUDED.name
 		 RETURNING id`, uuid.New(), orgID, flagFlowName).Scan(&id)
 	return id, err
-}
-
-// evaluateAttestationTypeCompliance evaluates the JQ rules (if any) registered
-// for an attestation type against a payload, returning whether it is compliant.
-// A type with no registered rules defaults to compliant. This mirrors the
-// compliance evaluation the generic attestation-record path performs, so
-// flag.changed (and any other well-known type recorded outside that path) can be
-// governed by per-org JQ policy rules.
-func (s *Server) evaluateAttestationTypeCompliance(ctx context.Context, orgID uuid.UUID, typeName, payload string) (bool, error) {
-	var rules []string
-	err := s.q(ctx).QueryRowContext(ctx,
-		`SELECT jq_rules FROM attestation_types WHERE org_id = $1 AND name = $2 LIMIT 1`, orgID, typeName).Scan(pq.Array(&rules))
-	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if len(rules) == 0 {
-		return true, nil
-	}
-	ok, _, err := s.PolicyEngine.EvaluateAttestation(ctx, payload, rules)
-	if err != nil {
-		return false, err
-	}
-	return ok, nil
 }

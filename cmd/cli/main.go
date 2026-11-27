@@ -38,6 +38,8 @@ func main() {
 		handleArtifact(config, os.Args[2:])
 	case "attest":
 		handleAttest(config, os.Args[2:])
+	case "attestation-type":
+		handleAttestationType(config, os.Args[2:])
 	case "assert":
 		handleAssert(config, os.Args[2:])
 	case "verify-image":
@@ -159,6 +161,7 @@ func printUsage() {
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
 	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa/sbom report, or ingest GitHub/GitLab")
 	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
+	fmt.Println("  attestation-type Manage type definitions (create|list|get|update|delete)")
 	fmt.Println("  assert           Check compliance by artifact digest (--sha256)")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
 	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda|cloud-run|azure-apps|s3) and send to Fides")

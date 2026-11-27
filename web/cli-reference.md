@@ -25,6 +25,10 @@ non-compliance — previously `1`.)
 | `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>] [--committed-at <RFC3339>]` | Begin a build trail (`--committer` records commit-metadata identity for segregation-of-duties; `--committed-at`, or auto-derived from `--commit` via git, records the commit timestamp for true code-to-prod DORA lead time) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
+| `fides attestation-type create --name <n> [--schema <file.json>]` | Register a custom attestation type with an optional Draft 2020-12 JSON Schema |
+| `fides attestation-type list` | List the organization's attestation types |
+| `fides attestation-type get\|delete --id <id>` | Inspect or delete an attestation type |
+| `fides attestation-type update --id <id> [--schema <file.json>\|--clear-schema]` | Update an attestation type, replace its schema, or remove its schema |
 | `fides attest junit\|snyk\|trivy\|slsa --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation (SLSA in-toto provenance records under type `slsa-provenance`) |
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab SLSA attestations for an artifact (records under type `slsa-provenance`) |

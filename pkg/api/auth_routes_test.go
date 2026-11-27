@@ -66,6 +66,8 @@ var mutationRoutes = []mutationRoute{
 	{"POST /api/v1/remediation/{id}/apply", "apply", `{}`, adminOnly, 200, "remediation_actions", true},
 	{"POST /api/v1/artifacts", "", `{"sha256":"$sha","trail_id":"$trail","name":"fixture-image","type":"docker"}`, writerOnly, 201, "artifacts", true},
 	{"POST /api/v1/attestation-types", "", `{"name":"fixture","schema":"{}","jq_rules":[]}`, adminOnly, 201, "attestation_types", false},
+	{"PATCH /api/v1/attestation-types/{id}", "attestationType", `{"schema":null}`, adminOnly, 200, "attestation_types", true},
+	{"DELETE /api/v1/attestation-types/{id}", "attestationType", "", adminOnly, 204, "attestation_types", true},
 	{"POST /api/v1/attestations", "", `{"trail_id":"$trail","name":"fixture evidence","type_name":"fixture","payload":"{}"}`, writerOnly, 201, "attestations", true},
 	{"POST /api/v1/snapshots", "", `{"environment_id":"$env","artifacts":[]}`, writerOnly, 201, "environment_snapshots", true},
 	{"POST /api/v1/environments", "", `{"name":"created-environment","type":"k8s"}`, adminOnly, 201, "environments", false},
