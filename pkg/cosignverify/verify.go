@@ -36,6 +36,35 @@ type Verdict struct {
 	Issuer   string `json:"issuer,omitempty"`
 	LogIndex *int64 `json:"log_index,omitempty"`
 	Reason   string `json:"reason,omitempty"` // set when Verified == false
+	Proof    *Proof `json:"proof,omitempty"`  // absent on failed or historical evidence
+}
+
+// Proof preserves the verification inputs of a successful image verification.
+// Bundle and Registry are mutually exclusive. Byte slices encode as base64
+// in evidence JSON so the original bytes survive storage and export.
+type Proof struct {
+	Bundle   []byte         `json:"bundle,omitempty"`
+	Registry *RegistryProof `json:"registry,omitempty"`
+}
+
+// RegistryProof preserves the signed layer payload and the original cosign
+// annotation values used to verify it.
+type RegistryProof struct {
+	Payload     []byte `json:"payload"`
+	Signature   string `json:"signature"`
+	Certificate string `json:"certificate"`
+	RekorBundle string `json:"rekor_bundle"`
+}
+
+// OfflineOptions supplies the auditor's expected image digest and local trust.
+// For a keyless proof, set TrustedRootPath, Signer, and Issuer. For a keyed
+// proof, set KeyPath to the pinned PEM public key.
+type OfflineOptions struct {
+	Digest          string // SHA-256 hex, without the "sha256:" prefix
+	TrustedRootPath string // local Sigstore trusted-root JSON
+	Signer          string
+	Issuer          string
+	KeyPath         string
 }
 
 // Options configures a single image verification request.

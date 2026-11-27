@@ -79,6 +79,7 @@ type discoveredSignature struct {
 	// image digest -- is what the signature covers, so it is what the
 	// verification policy must assert.
 	PayloadDigest []byte
+	Proof         *RegistryProof
 }
 
 // discoverSignature fetches <repo>:sha256-<digest>.sig and converts cosign's
@@ -133,10 +134,19 @@ func buildFromLayer(layer v1.Layer, desc v1.Descriptor, wantDigest string) (*dis
 	if err != nil {
 		return nil, err
 	}
+	proof := &RegistryProof{
+		Payload:     payload,
+		Signature:   desc.Annotations[annSignature],
+		Certificate: desc.Annotations[annCertificate],
+		RekorBundle: desc.Annotations[annBundle],
+	}
+	return proof.bind(wantDigest)
+}
 
+func (p *RegistryProof) bind(wantDigest string) (*discoveredSignature, error) {
 	// --- Binding: this payload must name the image we were asked about.
 	var ss simpleSigning
-	if err := json.Unmarshal(payload, &ss); err != nil {
+	if err := json.Unmarshal(p.Payload, &ss); err != nil {
 		return nil, fmt.Errorf("parse simplesigning payload: %w", err)
 	}
 	got := strings.TrimPrefix(ss.Critical.Image.DockerManifestDigest, "sha256:")
@@ -145,19 +155,16 @@ func buildFromLayer(layer v1.Layer, desc v1.Descriptor, wantDigest string) (*dis
 		return nil, fmt.Errorf("signature payload is for digest %q, not %q", got, want)
 	}
 
-	sigB64 := desc.Annotations[annSignature]
-	certPEM := desc.Annotations[annCertificate]
-	bundleJSON := desc.Annotations[annBundle]
-	if sigB64 == "" || certPEM == "" || bundleJSON == "" {
+	if p.Signature == "" || p.Certificate == "" || p.RekorBundle == "" {
 		return nil, errors.New("signature layer is missing cosign annotations")
 	}
-	sigRaw, err := base64.StdEncoding.DecodeString(sigB64)
+	sigRaw, err := base64.StdEncoding.DecodeString(p.Signature)
 	if err != nil {
 		return nil, fmt.Errorf("decode signature: %w", err)
 	}
 
 	var rb rekorBundle
-	if err := json.Unmarshal([]byte(bundleJSON), &rb); err != nil {
+	if err := json.Unmarshal([]byte(p.RekorBundle), &rb); err != nil {
 		return nil, fmt.Errorf("parse rekor bundle annotation: %w", err)
 	}
 	body, err := base64.StdEncoding.DecodeString(rb.Payload.Body)
@@ -173,7 +180,7 @@ func buildFromLayer(layer v1.Layer, desc v1.Descriptor, wantDigest string) (*dis
 		return nil, fmt.Errorf("decode log id: %w", err)
 	}
 
-	sum := sha256.Sum256(payload)
+	sum := sha256.Sum256(p.Payload)
 
 	pb := &protobundle.Bundle{
 		// v0.1 deliberately. Cosign's legacy annotation carries only an
@@ -184,7 +191,7 @@ func buildFromLayer(layer v1.Layer, desc v1.Descriptor, wantDigest string) (*dis
 		MediaType: "application/vnd.dev.sigstore.bundle+json;version=0.1",
 		VerificationMaterial: &protobundle.VerificationMaterial{
 			Content: &protobundle.VerificationMaterial_Certificate{
-				Certificate: &protocommon.X509Certificate{RawBytes: pemToDER(certPEM)},
+				Certificate: &protocommon.X509Certificate{RawBytes: pemToDER(p.Certificate)},
 			},
 			TlogEntries: []*prototlog.TransparencyLogEntry{{
 				LogIndex:       rb.Payload.LogIndex,
@@ -212,7 +219,7 @@ func buildFromLayer(layer v1.Layer, desc v1.Descriptor, wantDigest string) (*dis
 	if err != nil {
 		return nil, fmt.Errorf("build sigstore bundle: %w", err)
 	}
-	return &discoveredSignature{Bundle: b, PayloadDigest: sum[:]}, nil
+	return &discoveredSignature{Bundle: b, PayloadDigest: sum[:], Proof: p}, nil
 }
 
 // maxPayloadBytes caps the simplesigning blob. It is a small JSON document;
