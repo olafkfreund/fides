@@ -17,6 +17,7 @@ import (
 
 	"fides/pkg/auth"
 	"fides/pkg/db"
+	"fides/pkg/ledger"
 	"fides/pkg/models"
 	"fides/pkg/storage"
 
@@ -177,6 +178,7 @@ func (s *interruptedRecordingStorage) Upload(ctx context.Context, bucket, key st
 }
 
 func TestRecordingAttachmentsIntegration(t *testing.T) {
+	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "true")
 	f := newRouteAuthFixture(t)
 	t.Setenv("FIDES_EVENTS_ENABLED", "true")
 	const bucket = "synthetic-recording"
@@ -187,8 +189,12 @@ func TestRecordingAttachmentsIntegration(t *testing.T) {
 	}
 	store := &interruptedRecordingStorage{StorageBackend: local, fail: 2}
 	f.server.Storage = store
-	mustExec(t, f.pool, `INSERT INTO attestation_types (org_id,name,schema)
-		VALUES ($1, 'synthetic-review', '{"properties":{"approved":{"type":"boolean"}}}')`, f.own["org"])
+	mustExec(t, f.pool, `INSERT INTO artifacts (sha256,org_id,trail_id,name,type)
+		VALUES ($1,$2,$3,'recording-fixture','file')`, f.own["sha"], f.own["org"], f.own["trail"])
+	policyID := uuid.New()
+	mustExec(t, f.pool, `INSERT INTO attestation_types (id,org_id,name,schema,jq_rules)
+		VALUES ($1, $2, 'synthetic-review', '{"properties":{"approved":{"type":"boolean"}}}', ARRAY['.approved == true'])`,
+		policyID, f.own["org"])
 
 	key := uuid.NewString()
 	post := func(second string) *httptest.ResponseRecorder {
@@ -196,7 +202,7 @@ func TestRecordingAttachmentsIntegration(t *testing.T) {
 		var body bytes.Buffer
 		form := multipart.NewWriter(&body)
 		for name, value := range map[string]string{
-			"trail_id": f.own["trail"], "name": "synthetic-review", "type_name": "synthetic-review",
+			"trail_id": f.own["trail"], "artifact_sha256": f.own["sha"], "name": "synthetic-review", "type_name": "synthetic-review",
 			"payload": `{"approved":"yes"}`, "signed_by": "synthetic-signer", "signature": "synthetic-signature",
 			"signature_algorithm": "synthetic-algorithm", "manifestation_reason": "synthetic-approval",
 		} {
@@ -255,9 +261,18 @@ func TestRecordingAttachmentsIntegration(t *testing.T) {
 		AND signed_by = 'synthetic-signer' AND signature = 'synthetic-signature'
 		AND signature_algorithm = 'synthetic-algorithm' AND manifestation_reason = 'synthetic-approval'
 		AND jsonb_array_length(validation_errors) = 1`, att.ID)
+	assertRecordingCount(t, f, 1, `SELECT count(*) FROM attestations WHERE id = $1
+		AND hash_version = 2 AND evidence_inputs->>'artifact_sha256' = $2
+		AND evidence_inputs->'policy'->>'id' = $3
+		AND evidence_inputs->'policy'->'jq_rules' = '[".approved == true"]'
+		AND (evidence_inputs->'policy'->>'schema')::jsonb = '{"properties":{"approved":{"type":"boolean"}}}'
+		AND jsonb_array_length(evidence_inputs->'attachments') = 2`, att.ID, f.own["sha"], policyID)
+
 	ctx := auth.WithPrincipal(t.Context(), &auth.Principal{OrgID: uuid.MustParse(f.own["org"])})
-	if verdict := verifyChain(t, f.server, ctx, uuid.MustParse(f.own["trail"])); !verdict.Valid || verdict.Count != 1 {
-		t.Fatalf("invalid chain: %+v", verdict)
+	trail := uuid.MustParse(f.own["trail"])
+	mustExec(t, f.pool, `UPDATE attestation_types SET schema='{}', jq_rules=ARRAY['false'] WHERE id=$1`, policyID)
+	if verdict := verifyChain(t, f.server, ctx, trail); !verdict.Valid || verdict.EvidenceCount != 1 || verdict.LegacyCount != 0 {
+		t.Fatalf("policy edits must leave the recorded chain valid: %+v", verdict)
 	}
 	for i, want := range []string{"first attachment", second} {
 		obj, err := local.Download(t.Context(), bucket, store.keys[i])
@@ -269,8 +284,54 @@ func TestRecordingAttachmentsIntegration(t *testing.T) {
 		if err != nil || string(body) != want {
 			t.Fatalf("attachment %d = %q, want %q, err = %v", i, body, want, err)
 		}
-		assertRecordingCount(t, f, 1, `SELECT count(*) FROM evidence_attachments WHERE attestation_id = $1
-			AND file_name = 'same-name.txt' AND file_size = $2 AND file_hash = $3 AND storage_path = $4`,
+		assertRecordingCount(t, f, 1, `SELECT count(*) FROM evidence_attachments e
+			JOIN attestations a ON a.id = e.attestation_id
+			CROSS JOIN LATERAL jsonb_array_elements(a.evidence_inputs->'attachments') item
+			WHERE a.id = $1 AND e.file_name = 'same-name.txt' AND e.file_size = $2 AND e.file_hash = $3 AND e.storage_path = $4
+			AND item->>'id' = e.id::text AND item->>'name' = e.file_name
+			AND (item->>'size')::bigint = $2 AND item->>'sha256' = $3`,
 			att.ID, len(want), fmt.Sprintf("%x", sha256.Sum256([]byte(want))), "local://"+bucket+"/"+store.keys[i])
+	}
+
+	for _, tc := range []struct {
+		name, mutate, restore string
+	}{
+		{"artifact", `UPDATE attestations SET artifact_sha256=NULL WHERE id=$1`,
+			`UPDATE attestations SET artifact_sha256=evidence_inputs->>'artifact_sha256' WHERE id=$1`},
+		{"signature", `UPDATE attestations SET signature='edited' WHERE id=$1`,
+			`UPDATE attestations SET signature=evidence_inputs->>'signature' WHERE id=$1`},
+		{"policy snapshot", `UPDATE attestations SET evidence_inputs=jsonb_set(evidence_inputs,'{policy,schema}','"{}"') WHERE id=$1`,
+			`UPDATE attestations SET evidence_inputs=jsonb_set(evidence_inputs,'{policy,schema}',
+				to_jsonb(('{"properties":{"approved":{"type":"boolean"}}}'::jsonb)::text)) WHERE id=$1`},
+		{"digest", `UPDATE evidence_attachments SET file_hash=repeat('0',64) WHERE attestation_id=$1`,
+			`UPDATE evidence_attachments e SET file_hash=item->>'sha256' FROM attestations a,
+			jsonb_array_elements(a.evidence_inputs->'attachments') item WHERE a.id=$1 AND e.id::text=item->>'id'`},
+		{"size", `UPDATE evidence_attachments SET file_size=file_size+1 WHERE attestation_id=$1`,
+			`UPDATE evidence_attachments SET file_size=file_size-1 WHERE attestation_id=$1`},
+		{"added attachment", `INSERT INTO evidence_attachments (attestation_id,file_name,file_size,file_hash,storage_path,content_type)
+			VALUES ($1, 'extra', 0, repeat('0',64), 'fixture', 'application/octet-stream')`,
+			`DELETE FROM evidence_attachments WHERE attestation_id=$1 AND file_name='extra'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mustExec(t, f.pool, tc.mutate, att.ID)
+			defer mustExec(t, f.pool, tc.restore, att.ID)
+			if verdict := verifyChain(t, f.server, ctx, trail); verdict.Valid || verdict.BrokenAt != 1 || verdict.EvidenceCount != 0 {
+				t.Fatalf("changed %s verified: %+v", tc.name, verdict)
+			}
+		})
+	}
+	if verdict := verifyChain(t, f.server, ctx, trail); !verdict.Valid {
+		t.Fatalf("restored inputs failed verification: %+v", verdict)
+	}
+	mustExec(t, f.pool, `DELETE FROM evidence_attachments WHERE attestation_id=$1`, att.ID)
+	if verdict := verifyChain(t, f.server, ctx, trail); verdict.Valid || verdict.BrokenAt != 1 {
+		t.Fatalf("deleted attachments verified: %+v", verdict)
+	}
+	bundle, err := f.server.computeEvidenceBundle(ctx, trail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verdict := bundle["chain"].(ledger.Verdict); verdict.Valid {
+		t.Fatalf("bundle verified with deleted attachments: %+v", verdict)
 	}
 }

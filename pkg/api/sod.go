@@ -199,7 +199,7 @@ func (s *Server) recordSegregationOfDutiesAttestation(ctx context.Context, orgID
 		TypeName:    SegregationOfDutiesAttestationType,
 		Payload:     string(payload),
 		IsCompliant: result.Compliant,
-	}, nil); err != nil {
+	}, nil, attestationEvidence{}); err != nil {
 		return sodAttestation{}, err
 	}
 

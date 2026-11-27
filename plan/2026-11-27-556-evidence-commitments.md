@@ -32,6 +32,14 @@ Run Go build, vet, race tests, lint, security scanners, and PostgreSQL 15
 integration against the completed revision. Confirm historical evidence still
 verifies under its original rules.
 
+## Rollout
+
+Deploy readers that support both versions before setting
+`FIDES_LEDGER_EVIDENCE_V2=true` on writers. Before enabling it, normal writes
+continue to use the historical version. Mixed chains report the count of each
+format and verify each entry with its original algorithm. Once version 2 has
+been written, keep a reader that supports it available during recovery.
+
 ## Rollback
 
 Preserve observed evidence, stored hashes, and proof bytes. Use a compatible

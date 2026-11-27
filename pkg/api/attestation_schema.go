@@ -289,25 +289,42 @@ func (s *Server) checkAttestationSchema(w http.ResponseWriter, r *http.Request, 
 	return true
 }
 
+type attestationPolicy struct {
+	ID           uuid.UUID `json:"id"`
+	Schema       *string   `json:"schema"`
+	SchemaSHA256 *string   `json:"oversize_schema_sha256,omitempty"`
+	Rules        []string  `json:"jq_rules"`
+}
+
 type attestationTypeCheck struct {
+	policy      *attestationPolicy
 	compliant   bool
 	reasons     []models.AttestationValidationError
 	failedRules []string
 }
 
 func (s *Server) evaluateAttestationTypeCompliance(ctx context.Context, orgID uuid.UUID, typeName, payload string) (attestationTypeCheck, error) {
-	var rules []string
+	var policy attestationPolicy
 	var schema sql.NullString
 	err := s.q(ctx).QueryRowContext(ctx,
-		`SELECT CASE WHEN octet_length(schema::text) > $3 THEN 'null' ELSE schema::text END, jq_rules
-		 FROM attestation_types WHERE org_id = $1 AND name = $2`, orgID, typeName, maxAttestationSchemaBytes).Scan(&schema, pq.Array(&rules))
+		`SELECT id, CASE WHEN octet_length(schema::text) > $3 THEN NULL ELSE schema::text END, jq_rules,
+		        CASE WHEN octet_length(schema::text) > $3 THEN encode(sha256(convert_to(schema::text, 'UTF8')), 'hex') END
+		 FROM attestation_types WHERE org_id = $1 AND name = $2`, orgID, typeName, maxAttestationSchemaBytes).
+		Scan(&policy.ID, &policy.Schema, pq.Array(&policy.Rules), &policy.SchemaSHA256)
 	if errors.Is(err, sql.ErrNoRows) {
 		return attestationTypeCheck{compliant: true}, nil
 	}
 	if err != nil {
 		return attestationTypeCheck{}, err
 	}
-	return s.checkAttestationType(ctx, schema, payload, rules)
+	if policy.Schema != nil {
+		schema = sql.NullString{String: *policy.Schema, Valid: true}
+	} else if policy.SchemaSHA256 != nil {
+		schema = sql.NullString{String: "null", Valid: true}
+	}
+	check, err := s.checkAttestationType(ctx, schema, payload, policy.Rules)
+	check.policy = &policy
+	return check, err
 }
 
 func (s *Server) checkAttestationType(ctx context.Context, schema sql.NullString, payload string, rules []string) (attestationTypeCheck, error) {

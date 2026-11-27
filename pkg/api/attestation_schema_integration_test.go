@@ -16,11 +16,13 @@ import (
 
 func applyAttestationValidationMigration(t *testing.T, pool *sql.DB) {
 	t.Helper()
-	migration, err := os.ReadFile("../../pkg/db/migrations/0029_attestation_validation_errors.sql")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"0029_attestation_validation_errors.sql", "0034_attestation_evidence_commitments.sql"} {
+		migration, err := os.ReadFile("../../pkg/db/migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustExec(t, pool, string(migration))
 	}
-	mustExec(t, pool, string(migration))
 }
 
 func TestAttestationSchemaLifecycleIntegration(t *testing.T) {
