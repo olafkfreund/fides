@@ -10,6 +10,7 @@ import (
 type CLIConfig struct {
 	ServerURL string
 	Token     string
+	FailOpen  bool
 }
 
 func main() {
@@ -32,12 +33,16 @@ func main() {
 	}
 
 	switch command {
+	case "replay":
+		handleReplay(config, os.Args[2:])
 	case "trail":
 		handleTrail(config, os.Args[2:])
 	case "artifact":
 		handleArtifact(config, os.Args[2:])
 	case "attest":
 		handleAttest(config, os.Args[2:])
+	case "attestation-type":
+		handleAttestationType(config, os.Args[2:])
 	case "assert":
 		handleAssert(config, os.Args[2:])
 	case "verify-image":
@@ -159,9 +164,11 @@ func printUsage() {
 	fmt.Println("  artifact report  Record a build artifact fingerprint (SHA256)")
 	fmt.Println("  attest           Report custom evidence, a junit/snyk/trivy/slsa/sbom report, or ingest GitHub/GitLab")
 	fmt.Println("                   native provenance (fides attest junit --file ... | fides attest fetch --provider github ...)")
+	fmt.Println("  attestation-type Manage type definitions (create|list|get|update|delete)")
+	fmt.Println("  replay           Submit queued evidence using its original Fides endpoint and credential")
 	fmt.Println("  assert           Check compliance by artifact digest (--sha256)")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
-	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
+	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda|cloud-run|azure-apps|s3) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check|anchor-deployment)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")
@@ -197,4 +204,6 @@ func printUsage() {
 	fmt.Println("Environment Variables:")
 	fmt.Println("  FIDES_SERVER_URL  URL of the Fides server (default: http://localhost:8080)")
 	fmt.Println("  FIDES_API_TOKEN   Authentication token for the Fides server")
+	fmt.Println("  FIDES_FAIL_OPEN   Enable --fail-open for eligible recording commands")
+	fmt.Println("  FIDES_SPOOL_DIR   Private recording queue directory (default: fides/recordings under the user config directory)")
 }

@@ -25,6 +25,10 @@ non-compliance — previously `1`.)
 | `fides trail start --flow <id> --trail <name> [--repository --commit --branch --message --committer <email>] [--committed-at <RFC3339>]` | Begin a build trail (`--committer` records commit-metadata identity for segregation-of-duties; `--committed-at`, or auto-derived from `--commit` via git, records the commit timestamp for true code-to-prod DORA lead time) |
 | `fides artifact report --org <id> --trail <id> --sha256 <hex>\|--file <path> --name <n> --type docker` | Register an artifact |
 | `fides attest --trail <id> --name <n> --type <t> --payload <json\|file> [--attachments a,b] [--encrypt]` | Generic attestation |
+| `fides attestation-type create --name <n> [--schema <file.json>]` | Register a custom attestation type with an optional Draft 2020-12 JSON Schema |
+| `fides attestation-type list` | List the organization's attestation types |
+| `fides attestation-type get\|delete --id <id>` | Inspect or delete an attestation type |
+| `fides attestation-type update --id <id> [--schema <file.json>\|--clear-schema]` | Update an attestation type, replace its schema, or remove its schema |
 | `fides attest junit\|snyk\|trivy\|slsa --trail <id> --file <report> [--name --artifact-sha]` | Parse a report into an attestation (SLSA in-toto provenance records under type `slsa-provenance`) |
 | `fides attest sbom --file <bom.json> --artifact-sha <hex> [--trail <id> --name]` | Ingest a CycloneDX/SPDX SBOM (auto-detected); persists a component per package, linked to the artifact (`--trail` optional — resolved from the artifact) |
 | `fides attest fetch --trail <id> --artifact-sha <hex> [--provider github\|gitlab] [--repo <owner/repo>]` | Ingest platform-native GitHub/GitLab SLSA attestations for an artifact (records under type `slsa-provenance`) |
@@ -41,6 +45,33 @@ because named policy selection is unsupported. A non-empty `--policy` exits
 `1`. The underlying `GET /api/v1/compliance` route takes `sha256` and returns
 HTTP `400` for a non-empty `policy` query parameter.
 
+### Record evidence during a server outage
+
+Set `FIDES_FAIL_OPEN=true` or use `--fail-open` on a supported recording
+command. Supported commands include `trail start`, `artifact report`, direct
+and file-based `attest` commands, `attest authorship`, and `model register`,
+`model attest`, and `model inference-log`. A temporary connection failure or
+HTTP `502`, `503`, or `504` can trigger queuing. An authentication or request
+error remains a failure. The command only returns success after it durably
+saves the request and attachment bytes and prints a warning to stderr.
+
+Run `fides replay` with the same Fides server URL and credential after service
+returns. The queue stores a credential fingerprint. Drain the queue before
+rotating the credential. Replay confirms the record before removing it from
+the queue. Pass the `offline:<UUID>` from `trail start --quiet` to other
+supported recording commands. Replay submits the trail first and resolves the
+reference to the server UUID.
+
+The queue defaults to `fides/recordings` under the user's config directory.
+Set `FIDES_SPOOL_DIR` to an absolute directory owned by the CLI user with
+mode `0700`. Keep it on a persistent, private volume if CI uses disposable
+runners. The queue can contain sensitive evidence. Retain it until replay
+succeeds. Use a server version that supports idempotent recording before
+enabling fail-open.
+
+Gate commands such as `assert` and `change-gate` still fail when they cannot
+obtain a verdict.
+
 ## Runtime snapshots
 
 | Command | Purpose |
@@ -49,15 +80,16 @@ HTTP `400` for a non-empty `policy` query parameter.
 | `fides snapshot k8s --env <id> [--namespace <ns>]` | Kubernetes (via kubectl) |
 | `fides snapshot ecs --env <id> --cluster <name>` | AWS ECS (via aws CLI) |
 | `fides snapshot lambda --env <id>` | AWS Lambda (via aws CLI) |
+| `fides snapshot cloud-run --env <id> --service <name> --region <region> [--project <project>]` | Cloud Run serving revisions (via gcloud) |
+| `fides snapshot azure-apps --env <id> --resource-group <group> --app <name>` | Azure App Service or Functions app (via Azure CLI) |
+| `fides snapshot s3 --env <id> --bucket <name> [--prefix <prefix>]` | S3 object content manifest (via AWS SDK) |
 
-### What a snapshot will and will not report
+### Runtime evidence and incomplete reads
 
-A snapshot artifact is an **observation of what is running**. When the runtime
-cannot tell Fides the digest, the container is skipped with a warning on stderr
-rather than reported with a substitute value. A digest that is not the running
-image's can never equal a CI-registered artifact or an allowlist entry, so it
-becomes a shadow change no correct action can clear — an environment pinned at
-non-compliant for a reason its operator cannot fix.
+Snapshot digests identify the runtime artifacts or object contents the
+collector can verify. Docker, Kubernetes, ECS, and Lambda skip individual
+entries whose digest cannot be verified. Cloud Run, Azure App Service, and
+S3 fail the command if collection is incomplete.
 
 Two AWS cases where that happens, both outside Fides' control:
 

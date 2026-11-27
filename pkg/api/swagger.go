@@ -475,7 +475,22 @@ const SwaggerJSON = `{
         },
         "responses": {
           "201": {
-            "description": "Attested"
+            "description": "Attestation recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "validation_errors"
+                  ],
+                  "properties": {
+                    "validation_errors": {
+                      "$ref": "#/components/schemas/AttestationValidationErrors"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -529,6 +544,77 @@ const SwaggerJSON = `{
             "$ref": "#/components/parameters/CollectionName"
           }
         ]
+      },
+      "post": {
+        "summary": "Create or re-register an environment",
+        "description": "Requires Admin. By default, an existing name is updated and unarchived.",
+        "parameters": [
+          {
+            "name": "create_only",
+            "in": "query",
+            "description": "Require a new name, including when the existing environment is archived.",
+            "schema": { "type": "boolean", "default": false }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  { "$ref": "#/components/schemas/EnvironmentFields" },
+                  { "required": ["name", "type"] }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Insufficient role" },
+          "409": { "description": "Environment name already exists" }
+        }
+      }
+    },
+    "/environments/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "summary": "Get an environment by UUID",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment UUID" },
+          "401": { "description": "Authentication required" },
+          "404": { "description": "Environment not found in the authenticated organization" }
+        }
+      },
+      "patch": {
+        "summary": "Update an environment by UUID",
+        "description": "Requires Admin. Omitted fields retain their values. Updates preserve archive status and snapshot history.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EnvironmentFields" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment UUID or fields" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Insufficient role" },
+          "404": { "description": "Environment not found in the authenticated organization" },
+          "409": { "description": "Environment name already exists" }
+        }
       }
     },
     "/tenant/settings": {
@@ -756,21 +842,157 @@ const SwaggerJSON = `{
       }
     },
     "/attestation-types": {
+      "get": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "List tenant attestation types",
+        "responses": {
+          "200": {
+            "description": "A page of attestation types",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttestationType"
+                  }
+                }
+              }
+            },
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/NextPage"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidPage"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageLimit"
+          },
+          {
+            "$ref": "#/components/parameters/PageCursor"
+          }
+        ]
+      },
       "post": {
         "tags": [
           "Attestation Types"
         ],
-        "summary": "Create Attestation Type",
-        "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
+        "summary": "Create attestation type",
+        "description": "Admin only. The authenticated tenant owns the new type.",
         "responses": {
-          "200": {
-            "description": "Success"
+          "201": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid request or JSON Schema"
           },
           "401": {
             "description": "Authentication required"
           },
           "403": {
-            "description": "Insufficient role"
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Attestation type name already exists"
+          }
+        },
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AttestationType"
+        }
+      }
+    },
+    "/attestation-types/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Get attestation type",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "404": {
+            "description": "Attestation type not found"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Update attestation type",
+        "description": "Admin only. Omitted fields retain their existing values.",
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/AttestationType"
+          },
+          "400": {
+            "description": "Invalid request or JSON Schema"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Attestation type not found"
+          },
+          "409": {
+            "description": "Attestation type name already exists"
+          }
+        },
+        "requestBody": {
+          "$ref": "#/components/requestBodies/AttestationType"
+        }
+      },
+      "delete": {
+        "tags": [
+          "Attestation Types"
+        ],
+        "summary": "Delete attestation type",
+        "description": "Admin only.",
+        "responses": {
+          "204": {
+            "description": "Attestation type deleted"
+          },
+          "400": {
+            "description": "Invalid ID"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Attestation type not found"
           }
         }
       }
@@ -784,7 +1006,22 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "description": "Success"
+            "description": "Attestation details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "validation_errors"
+                  ],
+                  "properties": {
+                    "validation_errors": {
+                      "$ref": "#/components/schemas/AttestationValidationErrors"
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Authentication required"
@@ -2466,7 +2703,30 @@ const SwaggerJSON = `{
         "description": "Registered endpoint. Request and response schemas are not yet described here \u2014 see docs/cli-reference.md for the shapes this endpoint accepts.",
         "responses": {
           "200": {
-            "$ref": "#/components/responses/CollectionPage"
+            "description": "A page of attestation summaries",
+            "headers": {
+              "Link": {
+                "$ref": "#/components/headers/NextPage"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "validation_errors"
+                    ],
+                    "properties": {
+                      "validation_errors": {
+                        "$ref": "#/components/schemas/AttestationValidationErrors"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Authentication required"
@@ -3477,6 +3737,116 @@ const SwaggerJSON = `{
     }
   },
   "components": {
+    "schemas": {
+      "EnvironmentFields": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": {
+            "type": "string",
+            "description": "Runtime type. Common values include docker, k8s, ecs, lambda, cloud-run, azure-apps, s3 and server."
+          },
+          "description": { "type": "string" }
+        }
+      },
+      "AttestationType": {
+        "type": "object",
+        "required": [
+          "id",
+          "org_id",
+          "name",
+          "description",
+          "schema",
+          "jq_rules",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string",
+            "description": "JSON Schema encoded as a string. Empty when no schema is configured."
+          },
+          "jq_rules": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AttestationValidationErrors": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string",
+              "description": "JSON Pointer into the payload, when available."
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "requestBodies": {
+      "AttestationType": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "schema": {
+                  "type": "string",
+                  "nullable": true,
+                  "description": "Draft 2020-12 schema encoded as a JSON string. An empty string or null clears the schema."
+                },
+                "jq_rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "parameters": {
       "PageLimit": {
         "name": "limit",
@@ -3515,6 +3885,34 @@ const SwaggerJSON = `{
       }
     },
     "responses": {
+      "Environment": {
+        "description": "Environment metadata",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/EnvironmentFields" },
+                {
+                  "properties": {
+                    "id": { "type": "string", "format": "uuid" },
+                    "archived": { "type": "boolean", "description": "Included when reading or updating by UUID." }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "AttestationType": {
+        "description": "Tenant attestation type",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/AttestationType"
+            }
+          }
+        }
+      },
       "CollectionPage": {
         "description": "A page of collection items",
         "headers": {

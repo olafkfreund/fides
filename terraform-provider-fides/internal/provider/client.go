@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,12 +19,26 @@ type Client struct {
 	http     *http.Client
 }
 
+type apiError struct {
+	method, path string
+	status       int
+	body         string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("fides API %s %s -> %d: %s", e.method, e.path, e.status, e.body)
+}
+
 func NewClient(endpoint, token string) *Client {
 	return &Client{Endpoint: endpoint, Token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // do performs a request and returns the body and response headers.
 func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, error) {
+	return c.doContext(context.Background(), method, endpoint, body)
+}
+
+func (c *Client) doContext(ctx context.Context, method, endpoint string, body any) ([]byte, http.Header, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -32,7 +47,7 @@ func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, err
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, endpoint, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, rdr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -52,7 +67,7 @@ func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, err
 		return nil, nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, nil, fmt.Errorf("fides API %s %s -> %d: %s", method, req.URL.Path, resp.StatusCode, string(out))
+		return nil, nil, &apiError{method: method, path: req.URL.Path, status: resp.StatusCode, body: string(out)}
 	}
 	return out, resp.Header, nil
 }

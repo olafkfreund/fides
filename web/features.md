@@ -29,6 +29,19 @@ fides attest trivy  --trail $TRAIL --file ./reports/trivy.json
 The normalized payload (`{format, compliant, summary{counts}, findings}`) is
 jq-evaluable, e.g. an attestation type with rule `.summary.failed == 0`.
 
+For custom evidence, an administrator can attach a Draft 2020-12 JSON Schema
+to the attestation type.
+
+```bash
+fides attestation-type create --name release-check --schema ./release-check.schema.json
+```
+
+Fides evaluates the schema and any jq rules when it records the attestation.
+Schema failures make the attestation non-compliant and appear in the
+attestation's validation errors. The submitted payload is recorded separately.
+Use local references within the schema document and Go-compatible regular
+expressions in `pattern` and `patternProperties`.
+
 `fides attest sbom` auto-detects CycloneDX vs SPDX JSON and additionally
 persists a row per component (name, version, purl, licenses), linked to the
 artifact — so you can search across every SBOM ever attested:
@@ -116,12 +129,44 @@ report) for auditors.
 fides audit --trail $TRAIL --output trail-audit.zip
 ```
 
-## 8. More runtimes (ECS / Lambda)
+## 8. Cloud runtimes and S3
 
 ```bash
 fides snapshot ecs    --env $ENV --cluster my-ecs-cluster
 fides snapshot lambda --env $ENV
+fides snapshot cloud-run --env $ENV --service checkout --region europe-west2
+fides snapshot azure-apps --env $ENV --resource-group production --app checkout
+fides snapshot s3 --env $ENV --bucket release-artifacts --prefix checkout/
 ```
+
+Create the Fides environment with type `cloud-run`, `azure-apps`, or `s3`.
+The `fides_environment` Terraform resource accepts the same types and archives
+the environment on destroy, retaining its snapshots.
+
+- **Cloud Run** uses the active gcloud project unless you pass `--project`.
+  The identity needs permission to read services and revisions. The collector
+  records Cloud Run's resolved digest for each container in each traffic-serving
+  revision, including revisions reachable through a traffic tag. [Cloud Run revision API](https://docs.cloud.google.com/run/docs/reference/rest/v1/namespaces.revisions)
+- **Azure App Service and Functions** use the active Azure CLI subscription.
+  For a running Linux container app, the collector records the digest pinned
+  in the site's image configuration. For code apps, it reads the active Kudu
+  ZIP on `WEBSITE_RUN_FROM_PACKAGE=1` or reads an immutable `versionid` ZIP
+  configured at an Azure Blob HTTPS URL. Local packages require Kudu access
+  through Microsoft Entra. A remote blob needs public or SAS read access.
+  The collector rejects unsupported layouts and limits a package read to 1 GiB.
+  [Run from a package](https://learn.microsoft.com/azure/app-service/deploy-run-package) ·
+  [Kudu permissions](https://learn.microsoft.com/en-us/azure/app-service/resources-kudu)
+- **S3** uses the AWS SDK's configured region and credentials. Grant
+  `s3:ListBucket`, `s3:GetObject`, and `s3:GetObjectVersion` when objects are
+  versioned. Encrypted buckets may also require KMS access. Object bytes
+  stream into hashes for a manifest ordered by exact key.
+  An empty prefix result has a stable digest. The collector lists the prefix
+  again and rechecks object metadata, but mutable prefixes are not atomic.
+  Each run incurs listing, metadata, download, and possible data-transfer
+  charges.
+
+Each of these collectors has a five-minute collection deadline and fails
+the command on incomplete observation before sending a snapshot to Fides.
 
 ## 9. Logical environments
 
@@ -242,7 +287,8 @@ Desktop can query your compliance data **and read the docs** in-conversation.
 // .mcp.json
 { "mcpServers": { "fides": {
   "command": "/path/to/fides-mcp",
-  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<service-account key>" }
+  "args": ["--read-only"],
+  "env": { "FIDES_SERVER_URL": "https://fides.example.com", "FIDES_API_TOKEN": "<read-only service-account key>" }
 } } }
 ```
 

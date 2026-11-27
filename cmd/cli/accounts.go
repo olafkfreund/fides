@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -49,14 +50,31 @@ func handleServiceAccount(config CLIConfig, args []string) {
 		account := cmd.String("account", "", "service account UUID")
 		label := cmd.String("label", "", "key label")
 		expires := cmd.Int("expires-hours", 0, "key TTL in hours (0 = no expiry)")
+		readOnly := cmd.Bool("read-only", false, "restrict the key to audited read routes (Viewer accounts only)")
 		cmd.Parse(args[1:])
 		if *account == "" {
 			fmt.Println("Error: --account is required")
 			os.Exit(1)
 		}
+		payload := map[string]any{"label": *label, "expires_hours": *expires}
+		if *readOnly {
+			payload["read_only"] = true
+		}
+		path := "/api/v1/tenant/service-accounts/" + *account + "/keys"
+		body, err := postRequest(config, path, payload)
+		fail(err, "issue service-account key")
+		if *readOnly {
+			var issued struct {
+				ReadOnly bool   `json:"read_only"`
+				Prefix   string `json:"prefix"`
+			}
+			if err := json.Unmarshal([]byte(body), &issued); err != nil || !issued.ReadOnly {
+				fmt.Fprintf(os.Stderr, "Server did not confirm read-only scope. Check the server version and revoke the key (prefix %q) if issued.\n", issued.Prefix)
+				os.Exit(1)
+			}
+		}
 		fmt.Println("Save this key now — it is shown only once:")
-		post(config, "/api/v1/tenant/service-accounts/"+*account+"/keys",
-			map[string]any{"label": *label, "expires_hours": *expires}, "")
+		fmt.Println(body)
 	case "revoke-key":
 		cmd := flag.NewFlagSet("service-account revoke-key", flag.ExitOnError)
 		account := cmd.String("account", "", "service account UUID")

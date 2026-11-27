@@ -54,6 +54,7 @@ func printModelUsage() {
 // fides model register --flow <id> --version <v> [--repository --commit --branch --framework --risk-category --purpose --tags k=v,k2=v2]
 func handleModelRegister(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("model register", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	flowID := cmd.String("flow", "", "Flow UUID representing the model")
 	version := cmd.String("version", "", "Model version (trail name), e.g. v1.4.0 or a training-run ID")
 	repo := cmd.String("repository", "", "Training-code repository URL")
@@ -93,7 +94,7 @@ func handleModelRegister(config CLIConfig, args []string) {
 		os.Exit(1)
 	}
 
-	respBody, err := postRequest(config, "/api/v1/trails", payload)
+	respBody, err := recordJSON(config, trailRecord, payload, "")
 	if err != nil {
 		fmt.Printf("Failed to register model version: %v\n", err)
 		os.Exit(1)
@@ -104,6 +105,7 @@ func handleModelRegister(config CLIConfig, args []string) {
 // fides model attest --trail <id> --kind <training-data|evaluation|bias-audit|...> [--summary --findings --metadata --compliant --name --artifact-sha --attachments --encrypt]
 func handleModelAttest(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("model attest", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Model version (trail) UUID")
 	kind := cmd.String("kind", "", "Evidence kind, e.g. training-data, evaluation, bias-audit")
 	name := cmd.String("name", "", "Attestation name (defaults to --kind)")
@@ -163,12 +165,7 @@ func handleModelAttest(config CLIConfig, args []string) {
 		}
 	}
 
-	var files []string
-	if *attachments != "" {
-		files = strings.Split(*attachments, ",")
-	}
-
-	respBody, err := uploadMultipart(config, *trailID, *artSHA, attestationName, modelprovenance.AttestationType, rawPayload, files, isEncrypted)
+	respBody, err := uploadMultipart(config, *trailID, *artSHA, attestationName, modelprovenance.AttestationType, rawPayload, attachmentPaths(*attachments), isEncrypted)
 	if err != nil {
 		fmt.Printf("Failed to record model evidence: %v\n", err)
 		os.Exit(1)
@@ -179,6 +176,7 @@ func handleModelAttest(config CLIConfig, args []string) {
 // fides model inference-log --trail <id> --input-hash <sha256> --decision <string> [--output-hash --confidence --actor --metadata --name]
 func handleModelInferenceLog(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("model inference-log", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	trailID := cmd.String("trail", "", "Model version (trail) UUID")
 	inputHash := cmd.String("input-hash", "", "SHA256 of the inference input")
 	inputFile := cmd.String("input-file", "", "Path to a local file to hash as the inference input (alternative to --input-hash)")

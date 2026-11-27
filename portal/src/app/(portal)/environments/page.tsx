@@ -6,6 +6,7 @@ import { ApiError, apiList, apiPost } from "@/lib/api";
 import { usePagedList } from "@/lib/usePagedList";
 import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
+import { runtimeTypeLabel } from "@/lib/environment";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
 type Env = {
@@ -143,7 +144,7 @@ export default function Environments() {
 
   return (
     <div>
-      <PageHeader title="Environments" subtitle="Runtime compliance, verified automatically against your MCP-connected clusters." />
+      <PageHeader title="Environments" subtitle="Runtime snapshots and compliance checks." />
 
       <div className="flex flex-col gap-5">
         {/* Fleet overview — derived from the already-fetched envs */}
@@ -182,7 +183,7 @@ export default function Environments() {
                   <div className="flex items-start justify-between">
                     <div>
                       <span className="font-semibold">{e.name}</span>
-                      <span className="ml-2"><Chip tone="muted">{e.type}</Chip></span>
+                      <span className="ml-2"><Chip tone="muted">{runtimeTypeLabel(e.type)}</Chip></span>
                       {e.archived && <span className="ml-2"><Chip tone="muted">ARCHIVED</Chip></span>}
                       {e.description && <div className="mt-0.5 text-xs text-muted-foreground">{e.description}</div>}
                     </div>

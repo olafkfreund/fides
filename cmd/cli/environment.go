@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"fides/pkg/cliprogress"
 	"fides/pkg/exitcode"
@@ -18,7 +20,7 @@ import (
 func handleEnvCreate(config CLIConfig, args []string) {
 	cmd := flag.NewFlagSet("env create", flag.ExitOnError)
 	name := cmd.String("name", "", "environment name")
-	typ := cmd.String("type", "k8s", "runtime type: docker|k8s|ecs|lambda|server")
+	typ := cmd.String("type", "k8s", "runtime type: docker|k8s|ecs|lambda|cloud-run|azure-apps|s3|server")
 	desc := cmd.String("description", "", "description")
 	cmd.Parse(args)
 	if *name == "" {
@@ -190,17 +192,45 @@ func handleLogicalEnv(config CLIConfig, args []string) {
 }
 
 func handleSnapshot(config CLIConfig, args []string) {
-	if len(args) < 1 {
-		fmt.Println("Usage: fides snapshot docker --env <environment_id> [--container <name>]")
+	handleSnapshotWithCommand(config, args, runSnapshotCommand)
+}
+
+func snapshotUsage() {
+	fmt.Println("Usage: fides snapshot <docker|k8s|ecs|lambda|cloud-run|azure-apps|s3> --env <environment_id> [flags]")
+	fmt.Println("  cloud-run --service <name> --region <region> [--project <project>]")
+	fmt.Println("  azure-apps --resource-group <group> --app <name>")
+	fmt.Println("  s3 --bucket <bucket> [--prefix <prefix>]")
+}
+
+func handleSnapshotWithCommand(config CLIConfig, args []string, run snapshotCommand) {
+	if len(args) == 0 {
+		snapshotUsage()
 		os.Exit(1)
 	}
 
 	runtimeType := args[0]
+	if runtimeType == "-h" || runtimeType == "--help" {
+		snapshotUsage()
+		return
+	}
 	cmd := flag.NewFlagSet("snapshot", flag.ExitOnError)
 	envID := cmd.String("env", "", "Environment UUID")
 	containerName := cmd.String("container", "", "Target single container name (optional)")
 	namespace := cmd.String("namespace", "", "Target namespace to filter pods (optional)")
 	cluster := cmd.String("cluster", "", "ECS cluster name (required for 'ecs')")
+	var service, region, project, resourceGroup, app, bucket, prefix *string
+	switch runtimeType {
+	case "cloud-run":
+		service = cmd.String("service", "", "Cloud Run service name")
+		region = cmd.String("region", "", "Cloud Run region")
+		project = cmd.String("project", "", "Google Cloud project (defaults to the active gcloud project)")
+	case "azure-apps":
+		resourceGroup = cmd.String("resource-group", "", "Azure resource group")
+		app = cmd.String("app", "", "Azure app name")
+	case "s3":
+		bucket = cmd.String("bucket", "", "S3 bucket name")
+		prefix = cmd.String("prefix", "", "S3 key prefix (defaults to the whole bucket)")
+	}
 
 	cmd.Parse(args[1:])
 
@@ -214,6 +244,34 @@ func handleSnapshot(config CLIConfig, args []string) {
 	// TTY-only progress; silent when stderr is piped/redirected (e.g. CI).
 	p := cliprogress.New(os.Stderr, false)
 	p.StartStage("Snapshotting " + runtimeType + " runtime")
+
+	if runtimeType == "cloud-run" || runtimeType == "azure-apps" || runtimeType == "s3" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		var err error
+		switch runtimeType {
+		case "cloud-run":
+			reportedArtifacts, err = cloudRunSnapshotArtifacts(ctx, *service, *region, *project, run)
+		case "azure-apps":
+			reportedArtifacts, err = azureSnapshotArtifacts(ctx, *resourceGroup, *app, run)
+		case "s3":
+			var client s3SnapshotClient
+			client, err = newS3SnapshotClient(ctx)
+			if err == nil {
+				reportedArtifacts, err = s3SnapshotArtifacts(ctx, *bucket, *prefix, client)
+			}
+		}
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		if err == nil && len(reportedArtifacts) == 0 {
+			err = fmt.Errorf("no verified artifacts")
+		}
+		if err != nil {
+			p.CompleteStage("")
+			fail(err, "collect "+runtimeType+" snapshot")
+		}
+	}
 
 	if runtimeType == "docker" {
 		// Query the local Docker daemon for running containers and resolve each

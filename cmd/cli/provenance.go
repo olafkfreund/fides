@@ -24,6 +24,7 @@ func handleTrail(config CLIConfig, args []string) {
 	}
 
 	cmd := flag.NewFlagSet("trail start", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	flowID := cmd.String("flow", "", "Flow UUID")
 	trailName := cmd.String("trail", "", "Trail name (Git SHA, build number)")
 	repo := cmd.String("repository", "", "Git repository URL")
@@ -66,7 +67,7 @@ func handleTrail(config CLIConfig, args []string) {
 		payload["tags"] = map[string]string{"committer": *committer}
 	}
 
-	respBody, err := postRequest(config, "/api/v1/trails", payload)
+	respBody, err := recordJSON(config, trailRecord, payload, "")
 	if err != nil {
 		fmt.Printf("Failed to initialize trail: %v\n", err)
 		os.Exit(1)
@@ -90,6 +91,7 @@ func handleArtifact(config CLIConfig, args []string) {
 	}
 
 	cmd := flag.NewFlagSet("artifact report", flag.ExitOnError)
+	recordingFlag(cmd, &config)
 	// --org is optional and ignored server-side: the tenant is taken from the API
 	// token (the server never trusts a body org — H2/IDOR). Kept for compatibility.
 	orgID := cmd.String("org", "", "Org UUID (optional; ignored — org comes from the token)")
@@ -129,7 +131,7 @@ func handleArtifact(config CLIConfig, args []string) {
 		"created_at": time.Now(),
 	}
 
-	respBody, err := postRequest(config, "/api/v1/artifacts", payload)
+	respBody, err := recordJSON(config, artifactRecord, payload, *trailID)
 	if err != nil {
 		fmt.Printf("Failed to report artifact: %v\n", err)
 		os.Exit(1)

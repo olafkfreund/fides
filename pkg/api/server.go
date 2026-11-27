@@ -176,7 +176,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
 
 	// Attestation Type API
+	mux.HandleFunc("GET /api/v1/attestation-types", s.handleListAttestationTypes)
 	mux.HandleFunc("POST /api/v1/attestation-types", withMutationRole(auth.RoleAdmin, s.handleCreateAttestationType))
+	mux.HandleFunc("GET /api/v1/attestation-types/{id}", s.handleGetAttestationType)
+	mux.HandleFunc("PATCH /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handlePatchAttestationType))
+	mux.HandleFunc("DELETE /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handleDeleteAttestationType))
 
 	// Attestation API
 	mux.HandleFunc("POST /api/v1/attestations", withMutationRole(auth.RoleWriter, s.handleReportAttestation))
@@ -188,6 +192,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
 	mux.HandleFunc("POST /api/v1/environments", withMutationRole(auth.RoleAdmin, s.handleCreateEnvironment))
+	mux.HandleFunc("GET /api/v1/environments/{id}", s.handleGetEnvironment)
+	mux.HandleFunc("PATCH /api/v1/environments/{id}", withMutationRole(auth.RoleAdmin, s.handleUpdateEnvironment))
 	mux.HandleFunc("POST /api/v1/environments/{id}/archive", s.handleArchiveEnvironment)
 	mux.HandleFunc("POST /api/v1/environments/{id}/unarchive", s.handleUnarchiveEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
@@ -685,6 +691,12 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	op, r := s.beginRecording(w, r, req, false)
+	if op == nil {
+		return
+	}
+	defer op.rollback()
+
 	trail := &models.Trail{
 		ID:            uuid.New(),
 		FlowID:        flowID,
@@ -720,9 +732,7 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(trail)
+	op.created(w, r.Context(), trail)
 }
 
 // handleAdmissionValidate is the Kubernetes ValidatingAdmissionWebhook entry

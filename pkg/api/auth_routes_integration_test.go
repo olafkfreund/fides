@@ -150,7 +150,7 @@ func newRouteAuthFixture(t *testing.T) *routeAuthFixture {
 func seedMutationTenant(t *testing.T, pool *sql.DB, label string) map[string]string {
 	t.Helper()
 	ids := make(map[string]string)
-	for _, name := range []string{"org", "flow", "trail", "env", "control", "exception", "logical", "removeMember", "envPolicy", "policy", "user", "account", "key", "approve", "reject", "apply"} {
+	for _, name := range []string{"org", "flow", "trail", "env", "control", "exception", "logical", "removeMember", "envPolicy", "policy", "user", "account", "key", "approve", "reject", "apply", "attestationType"} {
 		ids[name] = uuid.NewString()
 	}
 	ids["sha"] = randSHA256()
@@ -167,6 +167,7 @@ func seedMutationTenant(t *testing.T, pool *sql.DB, label string) map[string]str
 	insert(`INSERT INTO flows (id,org_id,name) VALUES ($1,$2,'seed flow')`, "flow", "org")
 	insert(`INSERT INTO trails (id,flow_id,name,git_repository,git_commit) VALUES ($1,$2,'seed trail','https://git.example.invalid/fixture/project','0123456789abcdef')`, "trail", "flow")
 	insert(`INSERT INTO attestations (trail_id,name,type_name,payload) VALUES ($1,'seed evidence','fixture','{}')`, "trail")
+	insert(`INSERT INTO attestation_types (id,org_id,name,schema) VALUES ($1,$2,'seed type','{}')`, "attestationType", "org")
 	insert(`INSERT INTO environments (id,org_id,name,type) VALUES ($1,$2,'seed environment','k8s')`, "env", "org")
 	insert(`INSERT INTO environment_snapshots (environment_id,created_at) VALUES ($1,now()-interval '2 minutes'),($1,now()-interval '1 minute')`, "env")
 	// A real server row makes ownership denial distinguishable from a missing
