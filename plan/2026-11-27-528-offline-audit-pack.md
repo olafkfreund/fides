@@ -22,6 +22,23 @@ Line references are from the reviewed base. Refresh them after dependent changes
 2. **pkg/api/audit.go:85–124, pkg/crypto and pkg/vault** — Build the versioned manifest and bounded ZIP. Sign the SHA-256 digest of its exact bytes with a domain-separated detached signature including key ID. Source key material securely at runtime. Deliver the signature with the archive, documenting how it is saved as a sibling and how independently trusted keys are distributed and rotated.
 3. **cmd/cli/main.go:35–162, pkg/ledger/ledger.go:67, pkg/tsa/tsa.go:29 and pkg/cosignverify/sigstore.go:37** — Add `verify-pack` with no server dependency. Require explicit auditor trust, verify the exact archive and membership before traversing bounded entries, then validate digests, chain and all stored proof classes. Reject duplicate/unlisted/missing members and distinguish incomplete required historical proof from invalid evidence. Describe exit status and trust inputs in the auditor guide.
 
+## Prerequisite check
+
+The two Sol reviewers checked main at `2417d0c`. #526 records real
+attachment sizes and SHA-256 digests for new uploads. #540 serializes ledger
+appends, and trail anchors retain raw RFC 3161 timestamp tokens.
+
+The offline pack still depends on a versioned ledger commitment for
+attachment and signer inputs, retention of original signer proofs, and
+historical policy version capture. Older attachment records can lack the
+original digest. Retain their historical status even if the current object can
+be read. The approved export must verify stored size and digest on read.
+Preserve existing ledger hashes and anchors through prerequisite updates.
+
+The public issue names separate integrity work and gives no dependency IDs.
+Keep validation claims limited to the recorded evidence until those updates
+land. This check leaves the export and verifier implementation pending.
+
 ## Risks
 
 Identify the ledger and attachment prerequisites before implementation. Key rotation and verification of historical packs require retained trusted key IDs. Enforce archive bounds, reject duplicate or unlisted members, and document required proof classes and legacy limitations.
