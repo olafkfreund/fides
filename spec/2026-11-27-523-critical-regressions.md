@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 523
 intent: intent/2026-11-27-523-critical-regressions.md
 ---
