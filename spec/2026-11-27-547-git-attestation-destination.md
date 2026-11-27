@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 547
 intent: intent/2026-11-27-547-git-attestation-destination.md
 ---
