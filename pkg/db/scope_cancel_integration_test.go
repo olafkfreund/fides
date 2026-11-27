@@ -82,3 +82,79 @@ func TestIntegrationScopedConnPoisonedByCancel(t *testing.T) {
 		t.Fatalf("second query after cancel = %v, want sql.ErrConnDone (the production symptom)", second)
 	}
 }
+
+func TestIntegrationScopedConnCleanup(t *testing.T) {
+	pool, err := sql.Open("postgres", testDSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(1)
+
+	const org = "11111111-1111-1111-1111-111111111111"
+	for _, tc := range []struct {
+		name       string
+		resetFails bool
+	}{
+		{name: "canceled request"},
+		{name: "failed reset", resetFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			request, cancelRequest := context.WithCancel(ctx)
+			defer cancelRequest()
+			conn, release, err := ScopedConn(request, pool, org)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if release != nil {
+					release()
+				}
+			}()
+
+			scoped := WithQuerier(request, conn)
+			tx, err := BeginTx(scoped, pool, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback()
+			var pid int
+			var got string
+			if err := tx.QueryRowContext(request, "SELECT pg_backend_pid(), current_setting('app.current_org')").Scan(&pid, &got); err != nil || got != org {
+				t.Fatalf("transaction tenant = %q, error = %v", got, err)
+			}
+			if nested, err := BeginTx(WithQuerier(scoped, tx), pool, nil); err == nil {
+				nested.Rollback()
+				t.Fatal("nested transaction unexpectedly succeeded")
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.resetFails {
+				// An aborted SQL transaction rejects the reset while leaving the
+				// physical connection open for database/sql to discard.
+				if _, err := conn.ExecContext(request, "BEGIN"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := conn.ExecContext(request, "SELECT 1/0"); err == nil {
+					t.Fatal("expected transaction to abort")
+				}
+			}
+			cancelRequest()
+			release()
+			release = nil
+
+			var nextPID int
+			if err := pool.QueryRowContext(ctx, "SELECT pg_backend_pid(), COALESCE(current_setting('app.current_org', true), '')").Scan(&nextPID, &got); err != nil {
+				t.Fatal(err)
+			}
+			if got != "" || (nextPID != pid) != tc.resetFails {
+				t.Fatalf("after release: tenant = %q, backend changed = %t, want empty tenant and backend changed = %t", got, nextPID != pid, tc.resetFails)
+			}
+		})
+	}
+}

@@ -30,7 +30,7 @@ Scope cleanup after cancellation or a reset error must prevent reusing a connect
 
 Run `go test ./pkg/db ./pkg/api` with and without the CI PostgreSQL configuration as applicable. Repeat the bounded concurrency case and confirm settings, framework import and populated SBOM reads.
 
-Extend `pkg/api/snapshot_rls_integration_test.go` so the fixture checks real concurrent scoped snapshot writes.
+Use `pkg/api/rls_e2e_test.go` for concurrent scoped snapshot writes so the test reuses the restricted two-tenant HTTP fixture and preserves the separate #516 snapshot regression.
 
 For code changes, run `go build ./...`, `go vet ./...`, `go test ./...` and `gosec -severity medium -confidence high ./...`. With the repository CI PostgreSQL 15 fixture and `FIDES_TEST_DB_DSN` set, run `go test -p 1 ./pkg/db/ ./pkg/api/ ./pkg/events/ ./pkg/servicenow/ -run "Integration|EndToEnd" -v`. Confirm relevant cases ran and record the result.
 

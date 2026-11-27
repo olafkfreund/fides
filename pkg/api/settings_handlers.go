@@ -11,6 +11,7 @@ import (
 
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
+	"fides/pkg/db"
 	"fides/pkg/models"
 )
 
@@ -131,7 +132,7 @@ func (s *Server) handleSaveTenantSettings(w http.ResponseWriter, r *http.Request
 	}
 	var err error
 
-	tx, err := s.DB.BeginTx(r.Context(), nil)
+	tx, err := db.BeginTx(r.Context(), s.DB, nil)
 	if err != nil {
 		internalError(w, err)
 		return

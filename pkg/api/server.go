@@ -825,6 +825,18 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 		}
 		av.Tags = unmarshalJSONB(tagsBytes)
 
+		list = append(list, &av)
+	}
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
+	if err := rows.Close(); err != nil {
+		internalError(w, err)
+		return
+	}
+
+	for _, av := range list {
 		// Fetch actual SBOM from database attestations if present
 		var payloadBytes []byte
 		var isCompliant bool
@@ -865,12 +877,6 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 			av.SBOMStatus = "Pending"
 			av.SBOM = []interface{}{}
 		}
-		list = append(list, &av)
-	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		internalError(w, err)
-		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

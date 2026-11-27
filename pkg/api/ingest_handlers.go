@@ -455,20 +455,14 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := s.DB.BeginTx(r.Context(), nil)
+	tx, err := db.BeginTx(r.Context(), s.DB, nil)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
 
-	// Establish the tenant RLS session context on this transaction, mirroring
-	// handleImportFramework. handleReportSnapshot begins its transaction on the
-	// raw unscoped pool (s.DB), which has no app.current_org GUC set. Without
-	// this, the environment_snapshots RLS WITH CHECK (whose subquery reads
-	// environments under RLS) sees no visible environments and every insert is
-	// rejected with 42501. This is a harmless no-op when FIDES_RLS_ENABLED is
-	// false, since RLS enforcement itself is not configured on the tables then.
+	// Keep the tenant scope transaction-local even without request pinning.
 	if _, err := tx.ExecContext(r.Context(), "SELECT set_config('app.current_org', $1, true)", orgID.String()); err != nil {
 		internalError(w, err)
 		return
@@ -586,12 +580,12 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			internalError(w, err)
 			return
 		}
-		defer rows.Close()
 
 		for rows.Next() {
 			var attName string
 			var compliant bool
 			if err := rows.Scan(&attName, &compliant); err != nil {
+				_ = rows.Close()
 				internalError(w, err)
 				return
 			}
@@ -600,6 +594,7 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 				isCompliant = false
 			}
 		}
+		_ = rows.Close()
 		// A failed iteration must not read as a short result.
 		if err := rows.Err(); err != nil {
 			internalError(w, err)

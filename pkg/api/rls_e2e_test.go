@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
+	"fides/pkg/db"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -27,14 +28,6 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 	superDSN := os.Getenv("FIDES_TEST_DB_DSN")
 	if superDSN == "" {
 		t.Skip("set FIDES_TEST_DB_DSN to run the RLS E2E test")
-	}
-
-	readRepo := func(name string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		return string(b)
 	}
 
 	// --- Setup as superuser: schema, RLS, least-privilege app role, seed.
@@ -54,8 +47,12 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 			t.Fatalf("exec failed: %v\nSQL: %.100s", err, q)
 		}
 	}
-	mustExec(readRepo("schema.sql"))
-	mustExec(readRepo("schema-rls.sql"))
+	if err := db.Migrate(context.Background(), super); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := db.ApplyRLS(context.Background(), super); err != nil {
+		t.Fatalf("apply RLS: %v", err)
+	}
 	mustExec(`DO $$ BEGIN
 	            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fides_e2e_app') THEN
 	              CREATE ROLE fides_e2e_app LOGIN PASSWORD 'app';
@@ -78,6 +75,7 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 		t.Fatalf("open app pool: %v", err)
 	}
 	defer appPool.Close()
+	appPool.SetMaxOpenConns(2)
 	if err := appPool.Ping(); err != nil {
 		t.Fatalf("app ping: %v", err)
 	}
@@ -87,7 +85,7 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 	t.Setenv("FIDES_API_ORG_ID", uuid.NewString())
 
 	srv := NewServer(appPool, nil, nil)
-	tokenA, _ := srv.Sessions.Create(auth.Principal{OrgID: orgA, Role: auth.RoleViewer, Kind: "session"}, time.Hour, time.Now())
+	tokenA, _ := srv.Sessions.Create(auth.Principal{OrgID: orgA, Role: auth.RoleAdmin, Kind: "session"}, time.Hour, time.Now())
 	tokenB, _ := srv.Sessions.Create(auth.Principal{OrgID: orgB, Role: auth.RoleViewer, Kind: "session"}, time.Hour, time.Now())
 
 	ts := httptest.NewServer(srv.Routes())
@@ -122,6 +120,161 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 	}
 	if got := listFlowNames(tokenB); len(got) != 1 || got[0] != "flow-b" {
 		t.Fatalf("OrgB should see only flow-b via RLS, got %v", got)
+	}
+
+	t.Run("concurrent scoped snapshots", func(t *testing.T) {
+		var rlsActive bool
+		if err := appPool.QueryRow(`SELECT row_security_active('environment_snapshots')`).Scan(&rlsActive); err != nil || !rlsActive {
+			t.Fatalf("snapshot RLS active = %v, error = %v", rlsActive, err)
+		}
+		envs := [2]uuid.UUID{uuid.New(), uuid.New()}
+		var tokens [2]string
+		for i, org := range [2]uuid.UUID{orgA, orgB} {
+			mustExec(`INSERT INTO environments (id, org_id, name, type) VALUES ($1,$2,'prod-k8s','k8s')`, envs[i], org)
+			var err error
+			tokens[i], err = srv.Sessions.Create(auth.Principal{OrgID: org, Role: auth.RoleAdmin, Kind: "session"}, time.Hour, time.Now())
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		postSnapshot := func(token string, envID uuid.UUID, services ...string) (uuid.UUID, int, error) {
+			var body reportSnapshotReq
+			body.EnvironmentID = envID.String()
+			for _, service := range services {
+				body.Artifacts = append(body.Artifacts, struct {
+					SHA256      string `json:"sha256"`
+					ServiceName string `json:"service_name"`
+				}{SHA256: uuid.NewString(), ServiceName: service})
+			}
+			raw, err := json.Marshal(body)
+			if err != nil {
+				return uuid.Nil, 0, err
+			}
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, ts.URL+"/api/v1/snapshots", strings.NewReader(string(raw)))
+			if err != nil {
+				return uuid.Nil, 0, err
+			}
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				return uuid.Nil, 0, err
+			}
+			defer resp.Body.Close()
+			var reported snapshotReportResponse
+			if resp.StatusCode == http.StatusCreated {
+				err = json.NewDecoder(resp.Body).Decode(&reported)
+			}
+			return reported.SnapshotID, resp.StatusCode, err
+		}
+
+		var writes sync.WaitGroup
+		start := make(chan struct{})
+		for i := range 8 {
+			writes.Go(func() {
+				<-start
+				tenant := i % len(envs)
+				id, status, err := postSnapshot(tokens[tenant], envs[tenant], "test-service")
+				if err != nil || status != http.StatusCreated || id == uuid.Nil {
+					t.Errorf("snapshot %d: id = %s, status = %d, error = %v", i, id, status, err)
+					return
+				}
+				var env uuid.UUID
+				if err := super.QueryRowContext(ctx, `SELECT environment_id FROM environment_snapshots WHERE id = $1`, id).Scan(&env); err != nil || env != envs[tenant] {
+					t.Errorf("snapshot %s: stored environment = %s, want %s, error = %v", id, env, envs[tenant], err)
+				}
+			})
+		}
+		close(start)
+		writes.Wait()
+		if t.Failed() {
+			t.FailNow()
+		}
+
+		for _, tc := range []struct {
+			env      uuid.UUID
+			status   int
+			services []string
+		}{
+			{env: envs[1], status: http.StatusNotFound},
+			{env: envs[0], status: http.StatusInternalServerError, services: []string{"valid-service", strings.Repeat("x", 256)}},
+		} {
+			if _, status, err := postSnapshot(tokens[0], tc.env, tc.services...); err != nil || status != tc.status {
+				t.Fatalf("snapshot for %s: status = %d, want %d, error = %v", tc.env, status, tc.status, err)
+			}
+		}
+		for _, env := range envs {
+			var snapshots, artifacts int
+			err := super.QueryRowContext(ctx, `SELECT COUNT(DISTINCT s.id), COUNT(a.id)
+			FROM environment_snapshots s LEFT JOIN snapshot_artifacts a ON a.snapshot_id = s.id
+			WHERE s.environment_id = $1`, env).Scan(&snapshots, &artifacts)
+			if err != nil || snapshots != 4 || artifacts != 4 {
+				t.Fatalf("environment %s: snapshots = %d, artifacts = %d, want 4 each, error = %v", env, snapshots, artifacts, err)
+			}
+		}
+
+	})
+
+	shaA, shaB := uuid.NewString(), uuid.NewString()
+	mustExec(`INSERT INTO trails (flow_id, name)
+		SELECT id, 'test-build' FROM flows WHERE org_id IN ($1,$2)`, orgA, orgB)
+	mustExec(`INSERT INTO artifacts (sha256, org_id, trail_id, name, type)
+		SELECT CASE WHEN f.org_id = $1 THEN $3::text ELSE $4::text END, f.org_id, t.id, f.name, 'binary'
+		FROM trails t JOIN flows f ON f.id = t.flow_id WHERE f.org_id IN ($1,$2)`, orgA, orgB, shaA, shaB)
+	mustExec(`INSERT INTO attestations (trail_id, artifact_sha256, name, type_name, payload)
+		SELECT trail_id, sha256, 'sbom', 'sbom', jsonb_build_array(name) FROM artifacts WHERE sha256 IN ($1,$2)`, shaA, shaB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request := func(method, path, token, body string, want int) *http.Response {
+		t.Helper()
+		req, err := http.NewRequestWithContext(ctx, method, ts.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		if resp.StatusCode != want {
+			t.Fatalf("%s %s: status = %d, want %d", method, path, resp.StatusCode, want)
+		}
+		return resp
+	}
+
+	for _, tc := range []struct{ token, sha, packageName string }{
+		{tokenA, shaA, "flow-a"}, {tokenB, shaB, "flow-b"},
+	} {
+		resp := request(http.MethodGet, "/api/v1/artifacts", tc.token, "", http.StatusOK)
+		var artifacts []struct {
+			SHA    string   `json:"sha256"`
+			Status string   `json:"sbom_status"`
+			SBOM   []string `json:"sbom"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&artifacts); err != nil {
+			t.Fatal(err)
+		}
+		if len(artifacts) != 1 || artifacts[0].SHA != tc.sha || artifacts[0].Status != "Compliant" ||
+			len(artifacts[0].SBOM) != 1 || artifacts[0].SBOM[0] != tc.packageName {
+			t.Fatalf("unexpected tenant artifacts: %+v", artifacts)
+		}
+	}
+	request(http.MethodPost, "/api/v1/tenant/settings", tokenA, `{"storage":{"storage_driver":"s3"}}`, http.StatusOK)
+	request(http.MethodPost, "/api/v1/controls/import-framework", tokenA, `{"framework":"SOC2"}`, http.StatusCreated)
+	var driver string
+	if err := super.QueryRowContext(ctx, `SELECT storage_driver FROM tenant_storage_settings WHERE org_id = $1`, orgA).Scan(&driver); err != nil || driver != "s3" {
+		t.Fatalf("saved storage driver = %q, error = %v", driver, err)
+	}
+	var controls int
+	if err := super.QueryRowContext(ctx, `SELECT COUNT(*) FROM controls WHERE org_id = $1 AND framework = 'SOC2'`, orgA).Scan(&controls); err != nil || controls != len(frameworkCatalogs["SOC2"]) {
+		t.Fatalf("imported controls = %d, error = %v", controls, err)
 	}
 
 	// Regression: a service-account API key must authenticate under RLS. The

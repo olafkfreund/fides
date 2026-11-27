@@ -156,7 +156,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // serveAuthenticated attaches the principal to the request context and, when
 // RLS scoping is enabled (FIDES_RLS_ENABLED=true), pins a tenant-scoped DB
 // connection (app.current_org set to the principal's org) into the context so
-// handlers' s.q(ctx) calls are isolated by Postgres RLS. The connection is
+// queries and transactions share the same tenant scope. The connection is
 // released after the handler returns.
 func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
 	ctx := auth.WithPrincipal(r.Context(), p)
