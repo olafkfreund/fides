@@ -65,12 +65,16 @@ func (s *Server) handleListTraining(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	recs, err := s.trainingRecords(r, orgID)
+	page, ok := newListPage(w, r, orgID, timeKey("completed_at"), uuidKey("id"), true)
+	if !ok {
+		return
+	}
+	recs, err := s.trainingRecords(r, orgID, page)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, recs)
+	page.write(w, recs)
 }
 
 // trainingRecords is shared by the list endpoint and the audit pack.
@@ -79,11 +83,22 @@ func (s *Server) handleListTraining(w http.ResponseWriter, r *http.Request) {
 // one of its callers: a short read there produces an evidence bundle that is
 // missing training records with nothing to say so, which is indistinguishable
 // from an organisation that never did the training.
-func (s *Server) trainingRecords(r *http.Request, orgID uuid.UUID) ([]map[string]any, error) {
+func (s *Server) trainingRecords(r *http.Request, orgID uuid.UUID, page *listPage) ([]map[string]any, error) {
 	list := []map[string]any{}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT person, course, completed_at, COALESCE(notes, '')
-		 FROM training_records WHERE org_id = $1 ORDER BY completed_at DESC`, orgID)
+	const query = `SELECT person, course, completed_at, COALESCE(notes, '') /* page keys */
+	 FROM training_records WHERE org_id = $1`
+	var rows interface {
+		Close() error
+		Next() bool
+		Scan(...any) error
+		Err() error
+	}
+	var err error
+	if page == nil {
+		rows, err = s.q(r.Context()).QueryContext(r.Context(), query+" ORDER BY completed_at DESC, id DESC", orgID)
+	} else {
+		rows, err = s.queryPage(r, page, query, orgID)
+	}
 	if err != nil {
 		return nil, err
 	}

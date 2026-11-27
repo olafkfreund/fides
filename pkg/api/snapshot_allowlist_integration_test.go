@@ -111,6 +111,20 @@ func TestIntegrationSnapshotHonoursAllowlist(t *testing.T) {
 	if compliant, _ := out["compliant"].(bool); compliant {
 		t.Fatal("compliant = true with an unapproved digest running — the allowlist check suppressed too much")
 	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments?limit=1", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	var list []struct {
+		ShadowChanges []string `json:"shadowChanges"`
+	}
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list) != 1 {
+		t.Fatalf("list environments HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(list[0].ShadowChanges) != 1 || list[0].ShadowChanges[0] != shadows[0] {
+		t.Fatalf("list shadows %v differ from ingestion shadows %v", list[0].ShadowChanges, shadows)
+	}
 }
 
 // TestIntegrationSnapshotDistinguishesApprovedUpgrades covers #432: a routine

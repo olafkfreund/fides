@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"fides/internal/pagination"
 	"fides/pkg/version"
 )
 
@@ -415,7 +416,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 	switch params.Name {
 	case "list_flows":
 		url := fmt.Sprintf("%s/api/v1/flows", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching flows: %v", err)}}
@@ -425,7 +426,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 
 	case "list_environments":
 		url := fmt.Sprintf("%s/api/v1/environments", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching environments: %v", err)}}
@@ -479,7 +480,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 				q.Set(k, v)
 			}
 		}
-		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/artifacts?%s", serverURL, q.Encode()))
+		body, err := makeListRequest(fmt.Sprintf("%s/api/v1/search/artifacts?%s", serverURL, q.Encode()))
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
@@ -494,7 +495,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 				q.Set(k, v)
 			}
 		}
-		body, err := makeGetRequest(fmt.Sprintf("%s/api/v1/search/attestations?%s", serverURL, q.Encode()))
+		body, err := makeListRequest(fmt.Sprintf("%s/api/v1/search/attestations?%s", serverURL, q.Encode()))
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error: %v", err)}}
@@ -504,7 +505,7 @@ func handleToolCall(reqId interface{}, params ToolCallParams, serverURL string) 
 
 	case "list_policies":
 		url := fmt.Sprintf("%s/api/v1/policies", serverURL)
-		body, err := makeGetRequest(url)
+		body, err := makeListRequest(url)
 		if err != nil {
 			result.IsError = true
 			result.Content = []TextContent{{Type: "text", Text: fmt.Sprintf("Error fetching policies: %v", err)}}
@@ -699,27 +700,36 @@ func setAuthHeaders(req *http.Request) {
 // makeGetRequest calls the operator-configured Fides server (FIDES_SERVER_URL).
 // The URL is not user/attacker input, so the SSRF (G704) findings are suppressed.
 func makeGetRequest(url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- url is the configured Fides server, not user input
+	body, _, err := getPage(httpClient, url)
+	return body, err
+}
+
+func makeListRequest(url string) ([]byte, error) {
+	return pagination.ReadList(httpClient, url, 0, getPage)
+}
+
+func getPage(client *http.Client, url string) ([]byte, *http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	setAuthHeaders(req)
 
-	resp, err := httpClient.Do(req) // #nosec G704 -- url is the configured Fides server, not user input
+	resp, err := client.Do(req) // #nosec G704 -- configured server or a validated same-origin page URL
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
+		return nil, nil, fmt.Errorf("server returned status %d: %s", resp.StatusCode, string(body))
 	}
-	return body, nil
+	return body, resp, nil
 }
 
 func makePostRequest(url string, payload interface{}) ([]byte, error) {

@@ -153,11 +153,15 @@ func (s *Server) handleListServiceAccounts(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	page, ok := newListPage(w, r, orgID, timeKey("sa.created_at"), uuidKey("sa.id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
 		`SELECT sa.id, sa.name, sa.role, sa.enabled, sa.created_at,
-		        count(k.id) FILTER (WHERE k.revoked_at IS NULL) AS active_keys
+		        count(k.id) FILTER (WHERE k.revoked_at IS NULL) AS active_keys /* page keys */
 		 FROM service_accounts sa LEFT JOIN service_account_keys k ON k.service_account_id = sa.id
-		 WHERE sa.org_id = $1 GROUP BY sa.id ORDER BY sa.created_at`, orgID)
+		 WHERE sa.org_id = $1 /* page seek */ GROUP BY sa.id`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -181,8 +185,7 @@ func (s *Server) handleListServiceAccounts(w http.ResponseWriter, r *http.Reques
 		internalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	page.write(w, out)
 }
 
 // handleListServiceAccountKeys lists a service account's keys (metadata only).
@@ -197,10 +200,14 @@ func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Req
 		http.Error(w, "invalid service account id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT k.id, k.prefix, COALESCE(k.label,''), k.expires_at, k.revoked_at, k.last_used_at, k.created_at
+	page, ok := newListPage(w, r, orgID, timeKey("k.created_at"), uuidKey("k.id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT k.id, k.prefix, COALESCE(k.label,''), k.expires_at, k.revoked_at, k.last_used_at, k.created_at /* page keys */
 		 FROM service_account_keys k JOIN service_accounts sa ON sa.id = k.service_account_id
-		 WHERE sa.id = $1 AND sa.org_id = $2 ORDER BY k.created_at DESC`, saID, orgID)
+		 WHERE sa.id = $1 AND sa.org_id = $2`, saID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -223,8 +230,7 @@ func (s *Server) handleListServiceAccountKeys(w http.ResponseWriter, r *http.Req
 		internalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	page.write(w, out)
 }
 
 func (s *Server) handleIssueServiceAccountKey(w http.ResponseWriter, r *http.Request) {

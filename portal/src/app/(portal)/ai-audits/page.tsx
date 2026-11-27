@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Bot } from "lucide-react";
-import { apiGet } from "@/lib/api";
+
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Assessment = {
@@ -56,16 +58,13 @@ function parseAssessment(raw: string): { score?: number; sections: { label: stri
 }
 
 export default function AIAudits() {
-  const [list, setList] = useState<Assessment[]>([]);
-  const [sel, setSel] = useState<Assessment | null>(null);
-  const [err, setErr] = useState("");
+  const assessments = usePagedList<Assessment>();
+  const list = assessments.items;
+  const [selected, setSel] = useState<Assessment | null>(null);
+  const sel = selected ?? list[0];
 
-  useEffect(() => {
-    apiGet<Assessment[]>("/api/v1/ai-assessments").then((a) => {
-      setList(a || []);
-      if (a && a.length) setSel(a[0]);
-    }).catch((e) => setErr(String(e.message || e)));
-  }, []);
+  const { load } = assessments;
+  useEffect(() => { load("/api/v1/ai-assessments"); }, [load]);
 
   const parsed = sel ? parseAssessment(sel.assessmentRaw || "") : null;
   const score = parsed?.score ?? sel?.complianceScore;
@@ -88,7 +87,8 @@ export default function AIAudits() {
               </span>
               <span className={`shrink-0 font-mono tabular-nums text-xs font-semibold ${scoreColor(a.complianceScore)}`}>{a.complianceScore ?? "—"}</span>
             </button>
-          )) : <p className="p-3 text-sm text-muted-foreground">No AI assessments yet.</p>}
+          )) : <p className="p-3 text-sm text-muted-foreground">{assessments.loading ? "Loading…" : "No AI assessments yet."}</p>}
+          <LoadMore {...assessments} />
         </div>
 
         {/* Detail */}
@@ -129,7 +129,7 @@ export default function AIAudits() {
           ) : <p className="text-sm text-muted-foreground">Select a report.</p>}
         </Panel>
       </div>
-      {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
+      {assessments.error && <p className="mt-4 text-sm text-red-400">{assessments.error}</p>}
     </div>
   );
 }

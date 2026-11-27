@@ -784,7 +784,7 @@ func handleTraining(config CLIConfig, args []string) {
 			"person": *person, "course": *course, "completed_at": *date, "notes": *notes,
 		}, "Training recorded")
 	case "list":
-		body, err := getRequest(config, "/api/v1/training")
+		body, err := getList(config, "/api/v1/training")
 		fail(err, "list training")
 		fmt.Println(body)
 	default:
@@ -816,7 +816,7 @@ func handleService(config CLIConfig, args []string) {
 			"service": *name, "owner": *owner, "on_call": *onCall, "audit_contact": *audit, "tier": *tier,
 		}, "Service saved")
 	case "list":
-		body, err := getRequest(config, "/api/v1/services")
+		body, err := getList(config, "/api/v1/services")
 		fail(err, "list services")
 		fmt.Println(body)
 	default:
@@ -850,7 +850,7 @@ func handleException(config CLIConfig, args []string) {
 			"expires_in_days": *days, "expires_at": *expires,
 		}, "Exception recorded")
 	case "list":
-		body, err := getRequest(config, "/api/v1/exceptions")
+		body, err := getList(config, "/api/v1/exceptions")
 		fail(err, "list exceptions")
 		fmt.Println(body)
 	case "revoke":
@@ -887,7 +887,7 @@ func handleEnvCreate(config CLIConfig, args []string) {
 
 // handleEnvList: fides env list — the org's environments.
 func handleEnvList(config CLIConfig, _ []string) {
-	body, err := getRequest(config, "/api/v1/environments")
+	body, err := getList(config, "/api/v1/environments")
 	fail(err, "list environments")
 	fmt.Println(body)
 }

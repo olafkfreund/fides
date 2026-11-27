@@ -58,7 +58,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   const [authed, setAuthed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    apiGet("/api/v1/flows")
+    apiGet("/api/v1/flows?limit=1")
       .then(() => setAuthed(true))
       .catch((e) => {
         if (e instanceof ApiError && e.status === 401) router.replace("/login");

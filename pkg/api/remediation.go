@@ -189,7 +189,7 @@ func (row remediationRow) toJSON() map[string]any {
 
 const remediationSelect = `SELECT id, domain, status, environment_id, policy_id, COALESCE(reason,''), params,
 	proposed_by, COALESCE(approved_by,''), COALESCE(applied_by,''), COALESCE(rejected_by,''), COALESCE(result_detail,''),
-	created_at, updated_at FROM remediation_actions`
+	created_at, updated_at /* page keys */ FROM remediation_actions`
 
 func scanRemediationRow(scan func(dest ...any) error) (remediationRow, error) {
 	var row remediationRow
@@ -204,6 +204,10 @@ func (s *Server) handleListRemediation(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), true)
+	if !ok {
 		return
 	}
 	query := remediationSelect + ` WHERE org_id = $1`
@@ -221,9 +225,8 @@ func (s *Server) handleListRemediation(w http.ResponseWriter, r *http.Request) {
 		args = append(args, envID)
 		query += fmt.Sprintf(" AND environment_id = $%d", len(args))
 	}
-	query += " ORDER BY created_at DESC"
 
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, args...)
+	rows, err := s.queryPage(r, page, query, args...)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -243,7 +246,7 @@ func (s *Server) handleListRemediation(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 // handleGetRemediation fetches a single remediation action.

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, RefreshCw, Info, ChevronDown, ChevronRight, Loader2, Archive, ArchiveRestore } from "lucide-react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiList, apiPost } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip, Donut, DistBars } from "@/components/dash";
 
 type RuntimeArtifact = { service: string; sha256: string; registered: boolean; name: string };
@@ -22,8 +24,10 @@ const DEFAULT_RULES = ['.pods[].status == "Ready"', ".pods[].replicas == .pods[]
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 
 export default function Environments() {
-  const [envs, setEnvs] = useState<Env[]>([]);
-  const [sel, setSel] = useState("");
+  const environments = usePagedList<Env>();
+  const envs = environments.items;
+  const [selected, setSel] = useState("");
+  const sel = selected || envs[0]?.id || "";
   const [filter, setFilter] = useState("");
   const [conns, setConns] = useState<MCPConn[]>([]);
   const [checks, setChecks] = useState<Record<string, Check>>({});
@@ -40,12 +44,14 @@ export default function Environments() {
   const [showArchived, setShowArchived] = useState(false);
   const [busy, setBusy] = useState("");
 
-  const loadEnvs = () =>
-    apiGet<Env[]>(`/api/v1/environments${showArchived ? "?include_archived=true" : ""}`)
-      .then((e) => { setEnvs(e); if (e.length) setSel((cur) => cur || e[0].id); })
-      .catch((x) => setErr(String(x.message || x)));
-
-  useEffect(() => { loadEnvs(); }, [showArchived]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { load } = environments;
+  const filters = new URLSearchParams({ name: filter });
+  if (showArchived) filters.set("include_archived", "true");
+  const path = `/api/v1/environments?${filters}`;
+  useEffect(() => {
+    const timer = window.setTimeout(() => load(path), filter ? 200 : 0);
+    return () => window.clearTimeout(timer);
+  }, [load, path, filter]);
 
   // Archiving retires an environment from control coverage without deleting it:
   // snapshots, policies and allow-lists stay, and unarchiving puts it back.
@@ -54,7 +60,7 @@ export default function Environments() {
     try {
       await apiPost(`/api/v1/environments/${id}/${archived ? "archive" : "unarchive"}`, {});
       if (archived && sel === id) setSel("");
-      await loadEnvs();
+      await load(path);
     } catch (x) { setErr(String((x as Error).message || x)); }
     finally { setBusy(""); }
   };
@@ -76,13 +82,13 @@ export default function Environments() {
 
   const loadEnv = (id: string) => {
     setChecks({}); setServer("");
-    apiGet<MCPConn[]>(`/api/v1/environments/mcp?environment_id=${id}`).then((c) => {
+    apiList<MCPConn>(`/api/v1/environments/mcp?environment_id=${id}`).then((c) => {
       const list = c || [];
       setConns(list);
       if (list.length) setServer(list[0].name);
       runChecks(id, list);
     }).catch(() => setConns([]));
-    apiGet<Approval[]>(`/api/v1/environments/${id}/allowlist`).then((a) => setAllow(a || [])).catch(() => setAllow([]));
+    apiList<Approval>(`/api/v1/environments/${id}/allowlist`).then((a) => setAllow(a || [])).catch(() => setAllow([]));
   };
 
   useEffect(() => { if (sel) loadEnv(sel); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -114,7 +120,7 @@ export default function Environments() {
     setErr("");
     try {
       await apiPost(`/api/v1/environments/${sel}/allowlist`, { artifact_sha256: sha, reason });
-      setSha(""); setReason(""); setAllow(await apiGet<Approval[]>(`/api/v1/environments/${sel}/allowlist`));
+      setSha(""); setReason(""); setAllow(await apiList<Approval>(`/api/v1/environments/${sel}/allowlist`));
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
@@ -149,10 +155,10 @@ export default function Environments() {
             <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
             Show archived
           </label>
-          <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by name…" />
+          <input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={filter} onChange={(e) => { if (!selected && sel) setSel(sel); setFilter(e.target.value); }} placeholder="Filter by name…" />
         </div>}>
           <div className="flex flex-col gap-2">
-            {envs.filter((e) => e.name.toLowerCase().includes(filter.toLowerCase())).map((e) => {
+            {envs.map((e) => {
               const drifts = e.drifts?.length ?? 0, shadows = e.shadowChanges?.length ?? 0, running = e.running?.length ?? 0;
               const secure = drifts === 0 && shadows === 0;
               return (
@@ -188,8 +194,10 @@ export default function Environments() {
                 </div>
               );
             })}
-            {envs.length === 0 && <p className="text-sm text-muted-foreground">No environments.</p>}
+            {envs.length === 0 && <p className="text-sm text-muted-foreground">{environments.loading ? "Loading…" : "No environments."}</p>}
           </div>
+          <LoadMore {...environments} />
+          {environments.error && <p role="alert" className="mt-3 text-sm text-red-400">{environments.error}</p>}
         </Panel>
 
         {/* Automatic MCP compliance */}

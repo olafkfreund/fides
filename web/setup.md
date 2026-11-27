@@ -79,8 +79,20 @@ the setup script granted the needed privileges). Then log in at the portal with
 # app up + tenant-scoped read works
 curl -s -c cj -X POST https://<host>/api/v1/auth/local-login \
   -H 'content-type: application/json' -d '{"username":"admin","password":"<pw>"}'
-curl -s -b cj https://<host>/api/v1/flows        # returns only this org's flows
+curl -sS -D - -b cj https://<host>/api/v1/flows  # first page of this org's flows
 ```
+
+Paginated collection GETs still return a bare JSON array. The default is 100
+items per page and the maximum is 500 (set with `?limit=N`). If more items
+exist, the response includes a relative `Link` with `rel="next"`. Resolve that
+link against the current request URL and send the same credentials only to the
+same origin. Follow the link as supplied, including its filters and opaque
+cursor, until there is no next link.
+
+After upgrading, existing scripts that only read the JSON body receive the
+first page of bounded collections. Update callers that need every item to
+follow `Link` before switching to the new server. Browser clients on a separate
+origin also need their CORS configuration to expose the `Link` response header.
 
 RLS isolation is enforced at the database layer: with no `app.current_org` set a
 query returns **zero rows** (fail-closed), and cross-tenant writes raise a

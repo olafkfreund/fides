@@ -52,9 +52,13 @@ func (s *Server) handleListControls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeArchived := r.URL.Query().Get("include_archived") == "true"
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT id, key, name, COALESCE(description,''), COALESCE(framework,''), required_types, archived
-		 FROM controls WHERE org_id = $1 AND ($2 OR NOT archived) ORDER BY key`, orgID, includeArchived)
+	page, ok := newListPage(w, r, orgID, textKey("key"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT id, key, name, COALESCE(description,''), COALESCE(framework,''), required_types, archived /* page keys */
+		 FROM controls WHERE org_id = $1 AND ($2 OR NOT archived)`, orgID, includeArchived)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -78,7 +82,7 @@ func (s *Server) handleListControls(w http.ResponseWriter, r *http.Request) {
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
 
 func (s *Server) setControlArchived(w http.ResponseWriter, r *http.Request, archived bool) {

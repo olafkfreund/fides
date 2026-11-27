@@ -204,10 +204,14 @@ func (s *Server) handleListDeploymentAnchors(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "invalid trail id", http.StatusBadRequest)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
 		`SELECT id, ci_sys_id, COALESCE(ci_name, ''), COALESCE(change_number, ''), COALESCE(image_digest, ''),
-		        COALESCE(commit_sha, ''), COALESCE(build_log_ref, ''), COALESCE(runtime_snapshot_ref, ''), compliant, created_at
-		 FROM deployment_anchors WHERE trail_id = $1 AND org_id = $2 ORDER BY created_at DESC`, trailID, orgID)
+		        COALESCE(commit_sha, ''), COALESCE(build_log_ref, ''), COALESCE(runtime_snapshot_ref, ''), compliant, created_at /* page keys */
+		 FROM deployment_anchors WHERE trail_id = $1 AND org_id = $2`, trailID, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -234,5 +238,5 @@ func (s *Server) handleListDeploymentAnchors(w http.ResponseWriter, r *http.Requ
 		internalError(w, err)
 		return
 	}
-	writeJSON(w, out)
+	page.write(w, out)
 }
