@@ -19,7 +19,7 @@ var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 // getRequest performs an authenticated GET and returns the response body.
 func getRequest(config CLIConfig, path string) (string, error) {
-	body, _, err := getPage(httpClient, config.Token, config.ServerURL+path)
+	body, _, err := getPage(httpClient, config.Token, config.ServerURL+path) //nolint:bodyclose // getPage closes the body before returning.
 	return string(body), err
 }
 
