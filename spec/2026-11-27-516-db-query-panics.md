@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 516
 intent: intent/2026-11-27-516-db-query-panics.md
 ---
