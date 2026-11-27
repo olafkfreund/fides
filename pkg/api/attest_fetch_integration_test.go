@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -52,25 +53,49 @@ func TestAttestFetchIntegration(t *testing.T) {
 	applyAttestationValidationMigration(t, pool)
 
 	sha := randSHA256()
-	statement := []byte(`{"predicateType":"https://slsa.dev/provenance/v1",` +
-		`"subject":[{"name":"app","digest":{"sha256":"` + sha + `"}}],` +
-		`"predicate":{"runDetails":{"builder":{"id":"https://github.com/actions/runner"}}}}`)
-	bundle, _ := json.Marshal(map[string]any{
-		"dsseEnvelope": map[string]any{
-			"payload":     base64.StdEncoding.EncodeToString(statement),
-			"payloadType": "application/vnd.in-toto+json",
-		},
-	})
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeBundle := func(subject string, signed bool) []byte {
+		const payloadType = "application/vnd.in-toto+json"
+		statement := fmt.Sprintf(`{"predicateType":"https://slsa.dev/provenance/v1",
+			"subject":[{"name":"app","digest":{"sha256":%q}}],
+			"predicate":{"runDetails":{"builder":{"id":"https://github.com/actions/runner"}}}}`, subject)
+		envelope := map[string]any{"payload": base64.StdEncoding.EncodeToString([]byte(statement)), "payloadType": payloadType}
+		if signed {
+			pae := fmt.Sprintf("DSSEv1 %d %s %d %s", len(payloadType), payloadType, len(statement), statement)
+			envelope["signatures"] = []map[string][]byte{{"sig": ed25519.Sign(key, []byte(pae))}}
+		}
+		bundle, err := json.MarshalIndent(map[string]any{
+			"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+			"verificationMaterial": map[string]any{
+				"publicKey": map[string]string{"hint": "test-key"},
+			},
+			"dsseEnvelope": envelope,
+		}, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(bundle, '\n')
+	}
+	bundles := [][]byte{makeBundle(sha, true), makeBundle(randSHA256(), true), makeBundle(sha, false)}
 
 	mux := http.NewServeMux()
 	gh := httptest.NewServer(mux)
 	defer gh.Close()
 	mux.HandleFunc("/repos/acme/widgets/attestations/sha256:"+sha, func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, `{"attestations":[{"bundle_url":"%s/repos/acme/widgets/attestations/sha256:%s/bundle"}]}`, gh.URL, sha)
+		list := make([]map[string]string, 0, len(bundles))
+		for i := range bundles {
+			list = append(list, map[string]string{"bundle_url": fmt.Sprintf("%s/bundles/%d?signature=fixture", gh.URL, i)})
+		}
+		json.NewEncoder(w).Encode(map[string]any{"attestations": list})
 	})
-	mux.HandleFunc("/repos/acme/widgets/attestations/sha256:"+sha+"/bundle", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(bundle)
-	})
+	for i, bundle := range bundles {
+		mux.HandleFunc(fmt.Sprintf("/bundles/%d", i), func(w http.ResponseWriter, r *http.Request) {
+			w.Write(bundle)
+		})
+	}
 
 	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
 	mustExec(t, pool, `INSERT INTO organizations (id,name) VALUES ($1,$2)`, org, "o-"+org.String()[:8])
@@ -99,22 +124,46 @@ func TestAttestFetchIntegration(t *testing.T) {
 		t.Fatalf("HTTP %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var resp map[string]any
+	var resp struct {
+		Recorded     int                 `json:"recorded"`
+		Compliant    bool                `json:"compliant"`
+		Provider     string              `json:"provider"`
+		Attestations []attestFetchResult `json:"attestations"`
+	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["recorded"] != float64(1) || resp["compliant"] != true || resp["provider"] != "github" {
+	if resp.Recorded != len(bundles) || resp.Compliant || resp.Provider != "github" || len(resp.Attestations) != len(bundles) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 
-	var count int
-	if err := pool.QueryRow(
-		`SELECT count(*) FROM attestations WHERE trail_id=$1 AND type_name='slsa-provenance' AND artifact_sha256=$2 AND is_compliant=true`,
-		trail, sha).Scan(&count); err != nil {
-		t.Fatalf("count query: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 compliant provenance attestation, got %d", count)
+	for i, result := range resp.Attestations {
+		wantCompliant, wantProof := i != 1, i != 2
+		wantSource := fmt.Sprintf("%s/bundles/%d", gh.URL, i)
+		if result.Compliant != wantCompliant || result.ProofPresent != wantProof || result.CryptographicallyVerified || result.SourceURL != wantSource {
+			t.Fatalf("unexpected attestation result: %+v", result)
+		}
+		var raw []byte
+		if err := pool.QueryRow(`SELECT payload FROM attestations WHERE trail_id=$1 AND type_name='slsa-provenance'
+			AND artifact_sha256=$2 AND name=$3 AND is_compliant=$4`, trail, sha, fmt.Sprintf("github-provenance-%d", i+1), wantCompliant).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var payload providerProvenancePayload
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Format != "provenance" || payload.Compliant != wantCompliant || payload.Summary["digest_match"] != wantCompliant ||
+			payload.Provider != "github" || payload.Repository != "github.com/acme/widgets" || payload.SourceURL != wantSource {
+			t.Fatalf("unexpected persisted provenance: %+v", payload)
+		}
+		proof := payload.SignerProof
+		if wantProof {
+			if proof == nil || proof.Version != 1 || proof.Format != "sigstore-dsse-bundle" || proof.ArtifactSHA256 != sha || !bytes.Equal(proof.Bundle, bundles[i]) {
+				t.Fatalf("persisted signer proof changed or is missing: %+v", proof)
+			}
+		} else if proof != nil {
+			t.Fatal("unsigned provenance recorded a signer proof")
+		}
 	}
 }
 

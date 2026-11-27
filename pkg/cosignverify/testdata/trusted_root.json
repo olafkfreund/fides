@@ -1,0 +1,55 @@
+{
+  "mediaType": "application/vnd.dev.sigstore.trustedroot+json;version=0.1",
+  "tlogs": [
+    {
+      "baseUrl": "https://rekor.localhost",
+      "hashAlgorithm": "SHA2_256",
+      "publicKey": {
+        "rawBytes": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELd7a6Qm4ZOkmPhqf++8PnrJHS/IW5J5yVPvrP9znMuTqpRkMgIf8mBGrugJKOQ6Lc1g/RiMW3jQCXLz72ZSbyQ==",
+        "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+        "validFor": {
+          "start": "2026-11-27T21:31:28.441832003Z",
+          "end": "2026-11-27T23:31:28.441832123Z"
+        }
+      },
+      "logId": {
+        "keyId": "h4kaB1nDT1MqyVon558jFDPVzOuB05tpNdYTxJtGO1E="
+      }
+    }
+  ],
+  "certificateAuthorities": [
+    {
+      "subject": {
+        "organization": "sigstore.dev",
+        "commonName": "sigstore"
+      },
+      "uri": "https://fulcio.example.test",
+      "certChain": {
+        "certificates": [
+          {
+            "rawBytes": "MIIBhDCCASugAwIBAgIBATAKBggqhkjOPQQDAjAqMRUwEwYDVQQKEwxzaWdzdG9yZS5kZXYxETAPBgNVBAMTCHNpZ3N0b3JlMB4XDTI2MTEyNzE3MzEyOFoXDTI2MTEyODAzMzEyOFowKjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhzaWdzdG9yZTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABMlryglAo9VwwT5rpd5fiV6ZKWiqqLq1nk3knyAV4/qaC7NeaM5fKBDAgDUUSawJYJW2gAtmp0x5TnuZsz+/yIyjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBRthyr+Z1IzN/QgTSZ3V1SFICJfEzAKBggqhkjOPQQDAgNHADBEAiAw0aFcz9gpFViFNKlesYoB3M1axRTUnTk914RyTuF9xgIgBaU/Er398R+XRUZGvWYdjUYPgTD6TQr1psFeE5S2nhg="
+          }
+        ]
+      },
+      "validFor": {
+        "start": "2026-11-27T21:31:28Z"
+      }
+    }
+  ],
+  "ctlogs": [
+    {
+      "baseUrl": "https://ct.example.test",
+      "hashAlgorithm": "SHA2_256",
+      "publicKey": {
+        "rawBytes": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEf0d6zS5NGHKPVVsBz4vgjkMfU6a9IY3WsaV/anNGfRgzgegwbRU+EeenPTvb98PmVz4Td6T0N7fVXPaOMX0lxw==",
+        "keyDetails": "PKIX_ECDSA_P256_SHA_256",
+        "validFor": {
+          "start": "2026-11-27T21:31:28Z"
+        }
+      },
+      "logId": {
+        "keyId": "LUnN9EBDlPmv5XNbK8lW0RL5hxB8GD8Xvf7dHjlEhxc="
+      }
+    }
+  ]
+}

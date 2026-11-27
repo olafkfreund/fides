@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,9 +26,30 @@ type attestFetchReq struct {
 }
 
 type attestFetchResult struct {
-	PredicateType string `json:"predicate_type"`
-	Compliant     bool   `json:"compliant"`
-	SourceURL     string `json:"source_url"`
+	PredicateType             string `json:"predicate_type"`
+	Compliant                 bool   `json:"compliant"`
+	SourceURL                 string `json:"source_url"`
+	ProofPresent              bool   `json:"proof_present"`
+	CryptographicallyVerified bool   `json:"cryptographically_verified"` // false for provider imports
+}
+
+type providerProvenancePayload struct {
+	evidence.Result
+	Provider    string               `json:"provider"`
+	Repository  string               `json:"repository"`
+	SourceURL   string               `json:"source_url"`
+	SignerProof *providerSignerProof `json:"signer_proof,omitempty"`
+}
+
+// In version 1, ArtifactSHA256 is the expected in-toto subject digest. An
+// offline verifier must compare it with the audited artifact and the signed
+// DSSE subject. It must require explicit auditor trust and signer policy,
+// and fail closed on missing trust or an unsupported proof format/version.
+type providerSignerProof struct {
+	Version        int    `json:"version"`
+	Format         string `json:"format"`
+	ArtifactSHA256 string `json:"artifact_sha256"`
+	Bundle         []byte `json:"bundle_base64"` // JSONB cannot change bytes encoded as base64.
 }
 
 // handleAttestFetch fetches platform-native SLSA provenance/attestations for
@@ -58,7 +80,7 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sha := strings.ToLower(strings.TrimSpace(req.ArtifactSHA256))
-	if len(sha) != 64 {
+	if _, err := hex.DecodeString(sha); len(sha) != 64 || err != nil {
 		http.Error(w, "artifact_sha256 must be a 64-character hex digest", http.StatusBadRequest)
 		return
 	}
@@ -139,7 +161,25 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 		if !result.Compliant {
 			allCompliant = false
 		}
-		payload, _ := json.Marshal(result)
+		payload := providerProvenancePayload{
+			Result:     result,
+			Provider:   cfg.Provider,
+			Repository: cfg.Host + "/" + repoPath,
+			SourceURL:  stmt.SourceURL,
+		}
+		if len(stmt.Bundle) > 0 {
+			payload.SignerProof = &providerSignerProof{
+				Version:        1,
+				Format:         "sigstore-dsse-bundle",
+				ArtifactSHA256: sha,
+				Bundle:         stmt.Bundle,
+			}
+		}
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
 		name := fmt.Sprintf("%s-provenance-%d", cfg.Provider, i+1)
 
 		if err := s.appendAttestation(r.Context(), &models.Attestation{
@@ -148,13 +188,18 @@ func (s *Server) handleAttestFetch(w http.ResponseWriter, r *http.Request) {
 			ArtifactSHA256: &sha,
 			Name:           name,
 			TypeName:       "slsa-provenance",
-			Payload:        string(payload),
+			Payload:        string(raw),
 			IsCompliant:    result.Compliant,
 		}, nil, attestationEvidence{}); err != nil {
 			internalError(w, err)
 			return
 		}
-		results = append(results, attestFetchResult{PredicateType: stmt.PredicateType, Compliant: result.Compliant, SourceURL: stmt.SourceURL})
+		results = append(results, attestFetchResult{
+			PredicateType: stmt.PredicateType,
+			Compliant:     result.Compliant,
+			SourceURL:     stmt.SourceURL,
+			ProofPresent:  payload.SignerProof != nil,
+		})
 	}
 
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {

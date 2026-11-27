@@ -114,6 +114,7 @@ func TestRunVerifyImage_RecordsAttestationShape(t *testing.T) {
 		Signer:   "user@example.com",
 		Issuer:   "https://accounts.example.com",
 		LogIndex: int64ptr(7),
+		Proof:    &cosignverify.Proof{Bundle: []byte(" \n{ \"mediaType\": \"fixture\" }\n")},
 	}
 
 	var gotTrailID, gotArtifactSHA, gotName, gotTypeName, gotPayload string
@@ -168,6 +169,9 @@ func TestRunVerifyImage_RecordsAttestationShape(t *testing.T) {
 		recorded.Issuer != verdict.Issuer || recorded.LogIndex == nil || *recorded.LogIndex != 7 {
 		t.Fatalf("recorded attestation payload does not match verdict: %+v", recorded)
 	}
+	if recorded.Proof == nil || !bytes.Equal(recorded.Proof.Bundle, verdict.Proof.Bundle) {
+		t.Fatal("recorded attestation did not preserve the exact bundle bytes")
+	}
 }
 
 // TestRunVerifyImage_FailedVerdictStillRecordsAttestation ensures a failed
@@ -198,5 +202,8 @@ func TestRunVerifyImage_FailedVerdictStillRecordsAttestation(t *testing.T) {
 	}
 	if !strings.Contains(recordedPayload, `"verified":false`) {
 		t.Fatalf("expected recorded payload to mark verified=false: %s", recordedPayload)
+	}
+	if strings.Contains(recordedPayload, `"proof":`) {
+		t.Fatalf("failed verdict carried a proof: %s", recordedPayload)
 	}
 }
