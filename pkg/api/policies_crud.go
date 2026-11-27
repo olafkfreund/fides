@@ -78,3 +78,83 @@ func (s *Server) handleDeletePolicyGlobal(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, map[string]any{"status": "deleted"})
 }
+
+func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, name, COALESCE(description, '') AS description, rules /* page keys */ FROM policies WHERE org_id = $1`
+	rows, err := s.queryPage(r, page, query, orgID)
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	type PolicyView struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Target string `json:"target"`
+		YAML   string `json:"yaml"`
+	}
+
+	list := []*PolicyView{}
+	for rows.Next() {
+		var p PolicyView
+		var rulesBytes []byte
+		if err := rows.Scan(&p.ID, &p.Name, &p.Target, &rulesBytes); err != nil {
+			internalError(w, err)
+			return
+		}
+		p.YAML = string(rulesBytes)
+		list = append(list, &p)
+	}
+	// A failed iteration must not read as a short result.
+	if err := rows.Err(); err != nil {
+		internalError(w, err)
+		return
+	}
+
+	page.write(w, list)
+}
+
+type savePolicyReq struct {
+	ID   string `json:"id"`
+	YAML string `json:"yaml"`
+}
+
+func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	var req savePolicyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	policyID, err := uuid.Parse(req.ID)
+	if err != nil {
+		http.Error(w, "invalid policy id", http.StatusBadRequest)
+		return
+	}
+	// Scope the update to the caller's tenant so one org cannot modify another's policy.
+	res, err := s.q(r.Context()).ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
+	if err != nil {
+		http.Error(w, "failed to save policy", http.StatusInternalServerError)
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		http.Error(w, "policy not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"success"}`))
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -71,6 +72,24 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+type environmentRuntimeArtifact struct {
+	Service    string `json:"service"`
+	SHA256     string `json:"sha256"`
+	Registered bool   `json:"registered"`
+	Name       string `json:"name"`
+}
+
+type environmentView struct {
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name"`
+	Type          string                       `json:"type"`
+	Description   string                       `json:"description"`
+	LastSnapshot  string                       `json:"lastSnapshot"`
+	Running       []environmentRuntimeArtifact `json:"running"`
+	Drifts        []string                     `json:"drifts"`
+	ShadowChanges []string                     `json:"shadowChanges"`
+}
+
 func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
@@ -91,43 +110,22 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Complete detailed Environment view model mapping to what frontend app.js expects
-	type RuntimeArtifact struct {
-		Service    string `json:"service"`
-		SHA256     string `json:"sha256"`
-		Registered bool   `json:"registered"`
-		Name       string `json:"name"`
-	}
-
-	type EnvironmentView struct {
-		ID            string            `json:"id"`
-		Name          string            `json:"name"`
-		Type          string            `json:"type"`
-		Description   string            `json:"description"`
-		Archived      bool              `json:"archived"`
-		LastSnapshot  string            `json:"lastSnapshot"`
-		Running       []RuntimeArtifact `json:"running"`
-		Drifts        []string          `json:"drifts"`
-		ShadowChanges []string          `json:"shadowChanges"`
+	type listedEnvironment struct {
+		environmentView
+		Archived bool `json:"archived"`
 	}
 
 	defer rows.Close()
-	list := []*EnvironmentView{}
-	byID := map[string]*EnvironmentView{}
-	var ids []string
+	list := []*listedEnvironment{}
+	byID := map[string]*environmentView{}
 	for rows.Next() {
-		var ev EnvironmentView
+		var ev listedEnvironment
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description, &ev.Archived); err != nil {
 			internalError(w, err)
 			return
 		}
-		ev.LastSnapshot = "No snapshot reported yet"
-		ev.Running = []RuntimeArtifact{}
-		ev.Drifts = []string{}
-		ev.ShadowChanges = []string{}
 		list = append(list, &ev)
-		ids = append(ids, ev.ID)
-		byID[ev.ID] = &ev
+		byID[ev.ID] = &ev.environmentView
 	}
 	if err := rows.Err(); err != nil {
 		internalError(w, err)
@@ -138,14 +136,29 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
-	if len(ids) == 0 {
-		page.write(w, list)
+	if err := s.enrichEnvironmentDrift(r.Context(), orgID, byID); err != nil {
+		internalError(w, err)
 		return
+	}
+	page.write(w, list)
+}
+
+func (s *Server) enrichEnvironmentDrift(ctx context.Context, orgID uuid.UUID, byID map[string]*environmentView) error {
+	if len(byID) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(byID))
+	for id, ev := range byID {
+		ids = append(ids, id)
+		ev.LastSnapshot = "No snapshot reported yet"
+		ev.Running = []environmentRuntimeArtifact{}
+		ev.Drifts = []string{}
+		ev.ShadowChanges = []string{}
 	}
 
 	// Match allowlists by the exact reported runtime digest, as snapshot
 	// ingestion does, and only check historical approvals for current shadows.
-	runtimeRows, err := s.q(r.Context()).QueryContext(r.Context(), `
+	runtimeRows, err := s.q(ctx).QueryContext(ctx, `
 		WITH latest AS (
 			SELECT DISTINCT ON (environment_id) environment_id, id, created_at
 			FROM environment_snapshots
@@ -183,8 +196,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		LEFT JOIN trail_results t ON t.trail_id = r.trail_id
 		ORDER BY r.service_name, r.id`, pq.Array(ids), orgID)
 	if err != nil {
-		internalError(w, err)
-		return
+		return err
 	}
 	defer runtimeRows.Close()
 	for runtimeRows.Next() {
@@ -193,10 +205,9 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		var service, digest sql.NullString
 		var registered, approved sql.NullBool
 		var priorApproval, failing bool
-		var artifact RuntimeArtifact
+		var artifact environmentRuntimeArtifact
 		if err := runtimeRows.Scan(&envID, &snapshot, &service, &digest, &registered, &artifact.Name, &approved, &priorApproval, &failing); err != nil {
-			internalError(w, err)
-			return
+			return err
 		}
 		ev := byID[envID]
 		if snapshot.Valid {
@@ -214,11 +225,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 			ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", artifact.Service, artifact.SHA256))
 		}
 	}
-	if err := runtimeRows.Err(); err != nil {
-		internalError(w, err)
-		return
-	}
-	page.write(w, list)
+	return runtimeRows.Err()
 }
 
 func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Request) {
@@ -240,100 +247,15 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 	}
 
 	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE id = $1 AND org_id = $2`
-	var id, name, envType, description string
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&id, &name, &envType, &description)
+	var ev environmentView
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("environment not found: %v", err), http.StatusNotFound)
 		return
 	}
-
-	// Complete detailed Environment view model mapping
-	type RuntimeArtifact struct {
-		Service    string `json:"service"`
-		SHA256     string `json:"sha256"`
-		Registered bool   `json:"registered"`
-		Name       string `json:"name"`
-	}
-
-	type EnvironmentView struct {
-		ID            string            `json:"id"`
-		Name          string            `json:"name"`
-		Type          string            `json:"type"`
-		Description   string            `json:"description"`
-		LastSnapshot  string            `json:"lastSnapshot"`
-		Running       []RuntimeArtifact `json:"running"`
-		Drifts        []string          `json:"drifts"`
-		ShadowChanges []string          `json:"shadowChanges"`
-	}
-
-	ev := EnvironmentView{
-		ID:            id,
-		Name:          name,
-		Type:          envType,
-		Description:   description,
-		LastSnapshot:  "No snapshot reported yet",
-		Running:       []RuntimeArtifact{},
-		Drifts:        []string{},
-		ShadowChanges: []string{},
-	}
-
-	// Fetch latest snapshot ID
-	var latestSnapID string
-	var snapTime time.Time
-	querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, envID).Scan(&latestSnapID, &snapTime)
-
-	if err == nil {
-		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-
-		// Query running artifacts in snapshot
-		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-		            FROM snapshot_artifacts sa
-		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-		            WHERE sa.snapshot_id = $1`
-		// Read all running artifacts before per-artifact queries — under RLS,
-		// s.q(ctx) is a single pinned connection and nested queries would break
-		// the outer cursor.
-		if saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID); err == nil {
-			var running []RuntimeArtifact
-			defer saRows.Close()
-			for saRows.Next() {
-				var ra RuntimeArtifact
-				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-					running = append(running, ra)
-				}
-			}
-			// A failed iteration must not read as a short result.
-			if err := saRows.Err(); err != nil {
-				internalError(w, err)
-				return
-			}
-			saRows.Close()
-
-			for _, ra := range running {
-				ev.Running = append(ev.Running, ra)
-				if !ra.Registered {
-					ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-					continue
-				}
-				var trailID sql.NullString
-				if err := s.q(r.Context()).QueryRowContext(r.Context(),
-					"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					internalError(w, err)
-					return
-				}
-				if trailID.Valid {
-					var compliantCount, totalCount int
-					if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
-						internalError(w, err)
-						return
-					}
-					if totalCount > 0 && compliantCount < totalCount {
-						ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-					}
-				}
-			}
-		}
+	if err := s.enrichEnvironmentDrift(r.Context(), orgID, map[string]*environmentView{ev.ID: &ev}); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	// Fetch MCP servers configured for this environment
@@ -369,7 +291,7 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 
 	// Build the report struct
 	report := struct {
-		Environment EnvironmentView `json:"environment"`
+		Environment environmentView `json:"environment"`
 		MCPServers  []MCPServerView `json:"mcp_servers"`
 		ExportedAt  string          `json:"exported_at"`
 	}{
@@ -378,7 +300,7 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 		ExportedAt:  time.Now().Format(time.RFC3339),
 	}
 
-	fileName := fmt.Sprintf("audit-report-%s.json", name)
+	fileName := fmt.Sprintf("audit-report-%s.json", ev.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
 	json.NewEncoder(w).Encode(report)

@@ -19,7 +19,7 @@ Artificially splitting the handwritten spec or generating it during this refacto
 Line references are from the reviewed base. Refresh them after dependent changes land.
 
 1. **pkg/api/server.go:120–309, 745–955, 1060–1254, 1430–1656** — After overlapping fixes, move SSO, artifact, compliance and assistant handlers into their existing or new domain files. Preserve route registration and API contracts. Use JSON encoding in both policy fallback branches, preserving each branch's existing control content. Keep `pkg/api/swagger.go` as the approved size exception.
-2. **pkg/api/environment_handlers.go:106–207, 209–370** — After #520, reuse its batched enrichment in list and audit paths. Preserve the relevant output shape for each consumer and verify allowlist handling in both views.
+2. **pkg/api/environment_handlers.go:106–207, 209–370** — After #520, reuse its batched enrichment in list and audit paths. Preserve the relevant output shape for each consumer and verify allowlist handling in both views. If enrichment fails, the audit export returns HTTP 500 so missing drift data cannot appear in a successful report.
 3. **cmd/cli/main.go:35–222 and cmd/cli/integrations.go** — Group command functions by existing CLI subcommand domains, including large code that remains in main. Keep roughly the approved 800-line target and avoid changing flags, registration or output as part of moves. Separate the JSON behavior fix in review from mechanical changes.
 
 ## Risks
