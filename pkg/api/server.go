@@ -87,6 +87,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/trails/{id}/approvals", s.handleListApprovals)
 	mux.HandleFunc("POST /api/v1/trails/{id}/approvals", s.handleRecordApproval)
 	mux.HandleFunc("GET /api/v1/trails/{id}/audit-package", s.handleTrailAuditPackage)
+	mux.HandleFunc("GET /api/v1/trails/{id}/signed-audit-pack", s.handleSignedAuditPack)
 	mux.HandleFunc("GET /api/v1/trails/{id}/deployment-anchors", s.handleListDeploymentAnchors)
 
 	// Search / query + snapshot diff

@@ -38,6 +38,8 @@ non-compliance — previously `1`.)
 | `fides verify-chain --trail <id>` | Verify the tamper-evidence chain (exit 2 if broken); also reports the external RFC3161 anchor status (`external_anchor`) if the trail was anchored |
 | `fides anchor --trail <id> [--tsa <url>]` | Anchor the trail's chain head to an external RFC3161 timestamp authority (proves the head existed at a point in time, independently of the Fides DB). TSA URL from `--tsa` or the server's `FIDES_TSA_URL`; a `--tsa` value must match `FIDES_TSA_URL` or one of `FIDES_TSA_URLS` |
 | `fides audit --trail <id> [--output <file.zip>]` | Download the trail audit package |
+| `fides audit --signed --trail <id> [--output <file.zip>]` | Download the signed audit ZIP and its detached signature |
+| `fides verify-pack <file.zip> --archive-key <public.pem>` | Verify a signed audit pack offline with [local auditor trust](verifying-a-fides-audit-pack.md) |
 
 `fides assert` exits `0` for a compliant verdict, `2` for a non-compliant verdict,
 and `1` for a missing digest, unsupported selector, transport, HTTP, or response error. Omit `--policy`

@@ -3576,6 +3576,29 @@ const SwaggerJSON = `{
         ]
       }
     },
+    "/trails/{id}/signed-audit-pack": {
+      "get": {
+        "tags": ["Trails"],
+        "summary": "Download a signed offline audit pack",
+        "description": "Decode the X-Fides-Audit-Signature header from standard base64 and save the resulting JSON as a .sig sibling of the ZIP (pack.zip.sig). Verify with the independently distributed public key. Retain trusted public keys by key ID when the server rotates its signing key.",
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}],
+        "responses": {
+          "200": {
+            "description": "Finalized and signed audit ZIP",
+            "headers": {
+              "X-Fides-Audit-Signature": {
+                "description": "Standard base64-encoded detached JSON signature",
+                "schema": {"type": "string", "format": "byte"}
+              }
+            },
+            "content": {"application/zip": {"schema": {"type": "string", "format": "binary"}}}
+          },
+          "401": {"description": "Authentication required"},
+          "404": {"description": "Trail not found"},
+          "503": {"description": "Server signing key unavailable"}
+        }
+      }
+    },
     "/trails/{id}/change-gate": {
       "get": {
         "tags": [

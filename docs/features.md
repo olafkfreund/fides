@@ -129,6 +129,8 @@ report) for auditors.
 fides audit --trail $TRAIL --output trail-audit.zip
 ```
 
+Use the signed format for offline review. [Verifying a Fides audit pack](verifying-a-fides-audit-pack.md)
+
 ## 8. Cloud runtimes and S3
 
 ```bash

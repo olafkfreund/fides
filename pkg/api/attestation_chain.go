@@ -132,6 +132,7 @@ func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation,
 
 type trailChainEntry struct {
 	ledger.Entry
+	id              string
 	rawPayload      string
 	createdAt       sql.NullTime
 	evidenceMatches bool
@@ -141,7 +142,7 @@ type trailChainEntry struct {
 // The policy definition is historical and verified by the hash itself.
 func (s *Server) readTrailChain(ctx context.Context, trailID uuid.UUID) ([]trailChainEntry, error) {
 	rows, err := s.q(ctx).QueryContext(ctx,
-		`SELECT a.name, a.type_name, a.payload::text, a.is_compliant,
+		`SELECT a.id, a.name, a.type_name, a.payload::text, a.is_compliant,
 		        COALESCE(a.content_hash, ''), COALESCE(a.prev_hash, ''), a.created_at,
 		        a.hash_version, COALESCE(a.evidence_inputs::text, ''),
 		        CASE WHEN a.hash_version = 2 THEN COALESCE(a.evidence_inputs = jsonb_build_object(
@@ -163,7 +164,7 @@ func (s *Server) readTrailChain(ctx context.Context, trailID uuid.UUID) ([]trail
 	var entries []trailChainEntry
 	for rows.Next() {
 		e := trailChainEntry{Entry: ledger.Entry{TrailID: trailID.String()}}
-		if err := rows.Scan(&e.Name, &e.TypeName, &e.rawPayload, &e.IsCompliant, &e.ContentHash, &e.PrevHash,
+		if err := rows.Scan(&e.id, &e.Name, &e.TypeName, &e.rawPayload, &e.IsCompliant, &e.ContentHash, &e.PrevHash,
 			&e.createdAt, &e.Version, &e.Evidence, &e.evidenceMatches); err != nil {
 			return nil, err
 		}
