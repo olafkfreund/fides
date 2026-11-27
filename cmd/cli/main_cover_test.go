@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -76,6 +77,36 @@ func TestPostRequestReturnsErrorOnServerFailure(t *testing.T) {
 	}
 }
 
+func TestIssueReadOnlyServiceAccountKey(t *testing.T) {
+	if endpoint := os.Getenv("FIDES_TEST_KEY_ISSUE_ENDPOINT"); endpoint != "" {
+		handleServiceAccount(CLIConfig{ServerURL: endpoint}, []string{"issue-key", "--account", "fixture", "--read-only"})
+		return
+	}
+
+	for _, tc := range []struct {
+		name, scope string
+		wantSuccess bool
+	}{
+		{name: "supported", scope: `,"read_only":true`, wantSuccess: true},
+		{name: "legacy server"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			const token = "fixture-key"
+			server, got := recordingServer(t, `{"api_key":"`+token+`","prefix":"fixture"`+tc.scope+`}`)
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestIssueReadOnlyServiceAccountKey$")
+			cmd.Env = append(os.Environ(), "FIDES_TEST_KEY_ISSUE_ENDPOINT="+server.URL)
+			output, err := cmd.CombinedOutput()
+			if (err == nil) != tc.wantSuccess || strings.Contains(string(output), token) != tc.wantSuccess {
+				t.Errorf("issuing scoped key from %s returned %v, output %q", tc.name, err, output)
+			}
+			if got.method != http.MethodPost || got.path != "/api/v1/tenant/service-accounts/fixture/keys" ||
+				!strings.Contains(got.raw, `"read_only":true`) {
+				t.Errorf("unexpected issue-key request: %+v", got)
+			}
+		})
+	}
+}
+
 // uploadMultipart is what carries an attestation payload and its attachments.
 // Assert on the actual multipart body it produces, not just that it succeeds.
 func TestUploadMultipartBodyCarriesFieldsAndAttachment(t *testing.T) {
@@ -96,7 +127,7 @@ func TestUploadMultipartBodyCarriesFieldsAndAttachment(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	respBody, err := uploadMultipart(cfg(srv), "trail-1", "deadbeef", "snyk-scan", "snyk",
-		`{"vulns":0}`, []string{attachment}, true)
+		`{"vulns":0}`, []attestationAttachment{{path: attachment}}, true)
 	if err != nil {
 		t.Fatalf("uploadMultipart: %v", err)
 	}
@@ -139,7 +170,7 @@ func TestUploadMultipartNotEncrypted(t *testing.T) {
 
 func TestUploadMultipartMissingAttachmentErrors(t *testing.T) {
 	srv, _ := recordingServer(t, `{}`)
-	_, err := uploadMultipart(cfg(srv), "t", "", "n", "ty", "p", []string{"/no/such/file"}, false)
+	_, err := uploadMultipart(cfg(srv), "t", "", "n", "ty", "p", []attestationAttachment{{path: "/no/such/file"}}, false)
 	if err == nil {
 		t.Fatal("expected an error opening a missing attachment")
 	}

@@ -235,9 +235,7 @@ jobs:
       # 6. Assert Policy compliance rules
       - name: Enforce Policy Gate
         run: |
-          fides assert \
-            --sha256 $IMAGE_DIGEST \
-            --policy "production-release-rules"
+          fides assert --sha256 "$IMAGE_DIGEST"
 
       # 7. Record deploy runtime snapshot state
       - name: Trigger Runtime Snapshot
@@ -316,9 +314,7 @@ trivy-scan:
 evaluate-rules:
   stage: assert
   script:
-    - fides assert 
-        --sha256 $IMAGE_DIGEST 
-        --policy "prod-verification"
+    - fides assert --sha256 "$IMAGE_DIGEST"
 
 deploy-service:
   stage: deploy
@@ -553,8 +549,10 @@ Add this tool mapping to your configuration profile (`~/.config/Claude/claude_de
   "mcpServers": {
     "fides-mcp": {
       "command": "/usr/local/bin/fides-mcp",
+      "args": ["--read-only"],
       "env": {
-        "FIDES_SERVER_URL": "http://localhost:8191"
+        "FIDES_SERVER_URL": "http://localhost:8191",
+        "FIDES_API_TOKEN": "<read-only service-account API key>"
       }
     }
   }

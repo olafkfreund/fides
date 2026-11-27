@@ -71,6 +71,7 @@ func TestSegregationOfDutiesReachableGreenIntegration(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	const (
 		committer = "dev@example.com"         // #277: supplied as a trail tag

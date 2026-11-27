@@ -29,7 +29,7 @@ The gate commands and their exit codes:
 | `verify-image` | A container image's cosign signature (keyless or key-based) | Signature missing/untrusted |
 | `verify-chain` | A trail's tamper-evidence chain (incl. external RFC3161 anchor) | Chain broken / tampered |
 | `env-verify` | Live runtime matches a compliance rule (via the runtime MCP sensor) | Runtime is non-compliant |
-| `assert` | An artifact's recorded evidence satisfies a named policy | Artifact is non-compliant (e.g. a recorded scan has criticals) |
+| `assert` | An artifact's build trail has no failing recorded controls | Artifact is non-compliant (e.g. a recorded scan has criticals) |
 
 ---
 
@@ -132,7 +132,7 @@ RFC3161 timestamp anchor.
 ### 5. "As a security engineer, fail the build if a recorded scan breaks policy"
 
 After recording a scan with `fides attest` (see [scanner integration](scanner-integration.md)),
-gate the artifact against a named policy — e.g. no criticals.
+gate the artifact on the recorded control verdicts for its build trail.
 
 ```yaml
 - uses: olafkfreund/fides/.github/actions/fides-gate@v0.3.0
@@ -141,7 +141,6 @@ gate the artifact against a named policy — e.g. no criticals.
     server-url: ${{ vars.FIDES_SERVER_URL }}
     api-token: ${{ secrets.FIDES_API_TOKEN }}
     sha256: ${{ steps.build.outputs.digest }}
-    policy: no-critical-vulns
 ```
 
 ### 6. "As a team adopting Fides, warn first, enforce later"

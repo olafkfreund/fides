@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"fides/pkg/gitstatus"
+	"fides/pkg/models"
 )
 
 type verifyBranchProtectionReq struct {
@@ -78,15 +79,14 @@ func (s *Server) handleVerifyBranchProtection(w http.ResponseWriter, r *http.Req
 	compliant := bp.Protected && (cfg.Provider != "github" || bp.RequiredReviews >= 1)
 
 	payload, _ := json.Marshal(bp)
-	contentHash, prevHash, err := s.attestationChain(r.Context(), trailID, "branch-protection", "branch-protection", string(payload), compliant)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	if _, err := s.q(r.Context()).ExecContext(r.Context(),
-		`INSERT INTO attestations (id, trail_id, name, type_name, payload, is_compliant, content_hash, prev_hash, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())`,
-		uuid.New(), trailID, "branch-protection", "branch-protection", string(payload), compliant, contentHash, prevHash); err != nil {
+	if err := s.appendAttestation(r.Context(), &models.Attestation{
+		ID:          uuid.New(),
+		TrailID:     trailID,
+		Name:        "branch-protection",
+		TypeName:    "branch-protection",
+		Payload:     string(payload),
+		IsCompliant: compliant,
+	}, nil); err != nil {
 		internalError(w, err)
 		return
 	}

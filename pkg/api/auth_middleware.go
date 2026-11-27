@@ -156,9 +156,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // serveAuthenticated attaches the principal to the request context and, when
 // RLS scoping is enabled (FIDES_RLS_ENABLED=true), pins a tenant-scoped DB
 // connection (app.current_org set to the principal's org) into the context so
-// handlers' s.q(ctx) calls are isolated by Postgres RLS. The connection is
+// queries and transactions share the same tenant scope. The connection is
 // released after the handler returns.
 func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
+	if p.ReadOnly && !readOnlyServiceRoute(r) {
+		http.Error(w, "route is outside the read-only key scope", http.StatusForbidden)
+		return
+	}
 	ctx := auth.WithPrincipal(r.Context(), p)
 
 	if db.RLSEnabled() && s.DB != nil {
@@ -174,6 +178,25 @@ func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *a
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
+// Only the audited MCP destinations are in scope. The trail change gate
+// writes evidence, and the ServiceNow status and CMDB reads can mint OAuth tokens.
+func readOnlyServiceRoute(r *http.Request) bool {
+	switch r.Method + " " + r.URL.EscapedPath() {
+	case "GET /api/v1/flows",
+		"GET /api/v1/environments",
+		"GET /api/v1/policies",
+		"GET /api/v1/compliance",
+		"GET /api/v1/search/artifacts",
+		"GET /api/v1/search/attestations",
+		"GET /api/v1/controls/coverage",
+		"GET /api/v1/metrics/deployment-frequency",
+		"GET /api/v1/servicenow/grounding",
+		"POST /api/v1/mcp": // The JSON-RPC dispatcher exposes only the curated reads.
+		return true
+	}
+	return false
+}
+
 // principalOrg returns the authenticated tenant for the request. Handlers use
 // this as the sole source of org scoping. The bool is false only if the request
 // somehow bypassed authMiddleware (defensive).
@@ -183,6 +206,27 @@ func principalOrg(r *http.Request) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return p.OrgID, true
+}
+
+func requireMutationRole(w http.ResponseWriter, r *http.Request, role string) bool {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if p.Role == role || (role == auth.RoleWriter && p.Role == auth.RoleAdmin) {
+		return true
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+func withMutationRole(role string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if requireMutationRole(w, r, role) {
+			next(w, r)
+		}
+	}
 }
 
 // securityHeaders adds baseline hardening headers to every response.

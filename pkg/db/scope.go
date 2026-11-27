@@ -8,6 +8,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
+	"errors"
+	"time"
 )
 
 // Querier is the subset of *sql.DB / *sql.Conn / *sql.Tx used by handlers, so a
@@ -31,6 +34,23 @@ func QuerierFromContext(ctx context.Context) (Querier, bool) {
 	return q, ok
 }
 
+// BeginTx starts a transaction on the request connection when one is pinned.
+func BeginTx(ctx context.Context, pool *sql.DB, opts *sql.TxOptions) (*sql.Tx, error) {
+	q, scoped := QuerierFromContext(ctx)
+	if !scoped {
+		return pool.BeginTx(ctx, opts)
+	}
+	conn, ok := q.(*sql.Conn)
+	if !ok {
+		return nil, errors.New("cannot begin transaction on the current scoped querier")
+	}
+	return conn.BeginTx(ctx, opts)
+}
+
+func discardConn(conn *sql.Conn) {
+	_ = conn.Raw(func(any) error { return driver.ErrBadConn })
+}
+
 // setOrgGUC sets the tenant GUC on the given connection. It uses set_config so
 // the value can be passed as a bind parameter (SET does not accept parameters).
 func setOrgGUC(ctx context.Context, conn *sql.Conn, org string) error {
@@ -48,16 +68,18 @@ func ScopedConn(ctx context.Context, pool *sql.DB, org string) (*sql.Conn, func(
 		return nil, nil, err
 	}
 	if err := setOrgGUC(ctx, conn, org); err != nil {
-		//nolint:errcheck // returning a pooled connection; the read already happened
-		conn.Close()
+		discardConn(conn)
 		return nil, nil, err
 	}
 	release := func() {
-		// Best-effort reset on a fresh context so cancellation of the request
-		// context cannot skip the cleanup, then return the conn to the pool.
-		_, _ = conn.ExecContext(context.Background(), "SELECT set_config('app.current_org', '', false)")
-		//nolint:errcheck // returning a pooled connection; the read already happened
-		conn.Close()
+		// Cleanup must still run after the request is canceled.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := setOrgGUC(ctx, conn, ""); err != nil {
+			discardConn(conn)
+			return
+		}
+		_ = conn.Close()
 	}
 	return conn, release, nil
 }

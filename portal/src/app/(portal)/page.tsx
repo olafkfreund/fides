@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Package, ShieldCheck, CheckCircle2, Zap } from "lucide-react";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiList } from "@/lib/api";
+import { runtimeTypeLabel } from "@/lib/environment";
 import { Panel, SectionLabel, Donut, StatTile } from "@/components/dash";
 
 // Live snapshot from the console summary endpoint (counts + recent checks).
@@ -94,10 +95,15 @@ export default function Overview() {
     };
 
     // Secondary panels change slowly — a plain poll is plenty.
+    let envsPending = false;
     const pollAux = () => {
-      apiGet<Env[]>("/api/v1/environments").then((e) => !stop && setEnvs(e || [])).catch(() => {});
+      if (!envsPending) {
+        envsPending = true;
+        apiList<Env>("/api/v1/environments")
+          .then((e) => !stop && setEnvs(e)).catch(() => {}).finally(() => { envsPending = false; });
+      }
       apiGet<Coverage>("/api/v1/controls/coverage").then((c) => !stop && setCov(c)).catch(() => {});
-      apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events").then((e) => !stop && setEvents(e || [])).catch(() => {});
+      apiGet<IntEvent[]>("/api/v1/tenant/servicenow/events?limit=50").then((e) => !stop && setEvents(e || [])).catch(() => {});
     };
     pollAux();
     const auxId = setInterval(pollAux, 10000);
@@ -210,7 +216,7 @@ export default function Overview() {
                   <span className={`size-1.5 rounded-full ${secure ? "bg-green-400" : "bg-red-400"}`} />
                   <span className="truncate font-mono text-xs">{e.name}</span>
                   <span className="ml-auto flex shrink-0 gap-1.5">
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">{/aws|ecs|lambda/i.test(e.type + e.name) ? "AWS" : "K8s"}</span>
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">{runtimeTypeLabel(e.type)}</span>
                     <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase ${secure ? "bg-green-500/15 text-green-400" : "bg-red-500/15 text-red-400"}`}>{secure ? "Secure" : "Drift"}</span>
                   </span>
                 </div>

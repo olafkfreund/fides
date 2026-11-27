@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, ChevronDown, ShieldCheck, ShieldAlert } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip, DistBars } from "@/components/dash";
 
 type Flow = { id: string; name: string; description?: string; created_at?: string; updated_at?: string; tags?: Record<string, string> | string[] | null };
@@ -22,12 +24,16 @@ function tagList(tags: Flow["tags"]): string[] {
 const input = "w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono text-foreground";
 
 export default function Flows() {
-  const [flows, setFlows] = useState<Flow[]>([]);
+  const flowList = usePagedList<Flow>();
+  const { items: flows, load: loadFlows } = flowList;
   const [ffilter, setFfilter] = useState("");
   const [nName, setNName] = useState(""); const [nDesc, setNDesc] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [trailsByFlow, setTrailsByFlow] = useState<Record<string, Trail[]>>({});
-  const [artifactsByFlow, setArtifactsByFlow] = useState<Record<string, FlowArtifact[]>>({});
+  const trailList = usePagedList<Trail>();
+  const artifactList = usePagedList<FlowArtifact>();
+  const [trailFlow, setTrailFlow] = useState<string | null>(null);
+  const [artifactFlow, setArtifactFlow] = useState<string | null>(null);
+  const [trailCounts, setTrailCounts] = useState<Record<string, number>>({});
   const [subtab, setSubtab] = useState<Record<string, "trails" | "artifacts">>({});
   const [chain, setChain] = useState<Record<string, ChainVerdict>>({});
   const [gate, setGate] = useState<Record<string, Gate>>({});
@@ -36,9 +42,6 @@ export default function Flows() {
   // redirect routes. flow/trail may each be a UUID or a name (legacy links
   // carry the flow name and the commit SHA), so we match against both.
   const [link, setLink] = useState<{ flow: string; trail: string; att: string } | null>(null);
-
-  const loadFlows = () => apiGet<Flow[]>("/api/v1/flows").then(setFlows).catch((e) => setErr(String(e.message || e)));
-  useEffect(() => { loadFlows(); }, []);
 
   // Read the evidence-link params once on mount. window.location is used
   // deliberately: this page is statically exported (output: "export"), and
@@ -58,20 +61,37 @@ export default function Flows() {
     if (flow || trail) setLink({ flow: flow || "", trail: trail || "", att: (p.get("attestation_type") || "").slice(0, 64) });
   }, []);
 
+  const flowName = link?.flow;
+  const flowPath = `/api/v1/flows?name=${encodeURIComponent(ffilter)}`;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadFlows(flowPath, !ffilter && flowName ? (item) => item.id === flowName || item.name === flowName : undefined);
+    }, ffilter ? 200 : 0);
+    return () => window.clearTimeout(timer);
+  }, [loadFlows, flowPath, ffilter, flowName]);
+
   const createFlow = async () => {
     setErr("");
-    try { await apiPost("/api/v1/flows", { name: nName, description: nDesc }); setNName(""); setNDesc(""); loadFlows(); }
+    try { await apiPost("/api/v1/flows", { name: nName, description: nDesc }); setNName(""); setNDesc(""); loadFlows(flowPath); }
     catch (e) { setErr(String((e as Error).message || e)); }
   };
 
-  const toggle = async (id: string) => {
+  const loadArtifacts = (id: string) => {
+    if (artifactFlow === id) return;
+    setArtifactFlow(id);
+    artifactList.load(`/api/v1/flows/${id}/artifacts`);
+  };
+
+  const toggle = async (id: string, target?: string) => {
     if (expanded === id) { setExpanded(null); return; }
     setExpanded(id);
-    if (!trailsByFlow[id]) {
-      try {
-        const trails = await apiGet<Trail[]>(`/api/v1/flows/${id}/trails`);
-        setTrailsByFlow((m) => ({ ...m, [id]: trails || [] }));
-      } catch (e) { setErr(String((e as Error).message || e)); }
+    if (subtab[id] === "artifacts") loadArtifacts(id);
+    if (trailFlow !== id || target) {
+      setTrailFlow(id);
+      const loaded = await trailList.load(`/api/v1/flows/${id}/trails`, target
+        ? (item) => item.id === target || item.name === target || item.git_commit === target
+        : undefined);
+      if (loaded) setTrailCounts((counts) => ({ ...counts, [id]: loaded.length }));
     }
   };
 
@@ -82,7 +102,7 @@ export default function Flows() {
   // resolver sends UUIDs and the legacy rescue route sends a flow name and a
   // commit SHA.
   const linkedFlow = link ? flows.find((x) => x.id === link.flow || x.name === link.flow) : undefined;
-  const linkedTrails = linkedFlow ? trailsByFlow[linkedFlow.id] : undefined;
+  const linkedTrails = linkedFlow && trailFlow === linkedFlow.id ? trailList.items : undefined;
   const linkedTrail =
     link && link.trail && linkedTrails
       ? linkedTrails.find((x) => x.id === link.trail || x.name === link.trail || x.git_commit === link.trail) ||
@@ -94,9 +114,9 @@ export default function Flows() {
   // before the trails arrive, "not found" would be wrong rather than merely
   // premature. An auditor following a stale link gets a notice, not a blank page.
   let linkNotice = "";
-  if (link && flows.length > 0 && !linkedFlow) {
+  if (link && !flowList.loading && !flowList.error && !flowList.next && !linkedFlow) {
     linkNotice = "Evidence link: flow not found, or not visible to your account.";
-  } else if (link && link.trail && linkedTrails && !linkedTrail) {
+  } else if (link?.trail && linkedTrails && !trailList.loading && !trailList.error && !trailList.next && !linkedTrail) {
     linkNotice = "Evidence link: trail not found, or not visible to your account.";
   }
 
@@ -106,7 +126,7 @@ export default function Flows() {
     // toggle() is the click path's own expand+load; reusing it is the point, and
     // inlining its body here to satisfy the rule would be the worse trade.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (linkedFlow && expanded !== linkedFlow.id) toggle(linkedFlow.id);
+    if (linkedFlow && expanded !== linkedFlow.id) toggle(linkedFlow.id, link?.trail);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedFlow]);
 
@@ -118,12 +138,6 @@ export default function Flows() {
     );
     return () => clearTimeout(id);
   }, [highlight]);
-
-  const loadArtifacts = async (id: string) => {
-    if (artifactsByFlow[id]) return;
-    try { const a = await apiGet<FlowArtifact[]>(`/api/v1/flows/${id}/artifacts`); setArtifactsByFlow((m) => ({ ...m, [id]: a || [] })); }
-    catch (e) { setErr(String((e as Error).message || e)); }
-  };
 
   const verifyTrail = async (trailId: string) => {
     try {
@@ -146,15 +160,11 @@ export default function Flows() {
     } catch (e) { setErr(String((e as Error).message || e)); }
   };
 
-  const shown = flows.filter((f) => f.name.toLowerCase().includes(ffilter.toLowerCase()));
 
-  // Activity viz from already-fetched data: prefer the expanded flow's
-  // attestations-per-trail; otherwise trails-per-flow for whatever flows have
-  // been loaded. No new fetches — both come from trailsByFlow / flows.
-  const selTrails = expanded ? trailsByFlow[expanded] : undefined;
-  const activity = selTrails && selTrails.length
+  const selTrails = expanded === trailFlow ? trailList.items : [];
+  const activity = selTrails.length
     ? { header: "Attestations per trail", items: selTrails.map((t) => ({ label: t.name, value: t.attestations })) }
-    : { header: "Trails per flow", items: Object.entries(trailsByFlow).map(([id, ts]) => ({ label: flows.find((f) => f.id === id)?.name || id, value: ts.length })) };
+    : { header: "Loaded trails per flow", items: Object.entries(trailCounts).map(([id, count]) => ({ label: flows.find((f) => f.id === id)?.name || id, value: count })) };
 
   return (
     <div>
@@ -179,12 +189,12 @@ export default function Flows() {
         </Panel>
 
         <Panel label="Flows" right={<input className="w-56 rounded-md border border-border bg-background px-3 py-1.5 text-sm" value={ffilter} onChange={(e) => setFfilter(e.target.value)} placeholder="Filter by name…" />}>
-          {shown.length === 0 && <p className="text-sm text-muted-foreground">No flows.</p>}
+          {flows.length === 0 && <p className="text-sm text-muted-foreground">{flowList.loading ? "Loading…" : "No flows."}</p>}
           <div className="flex flex-col gap-2">
-            {shown.map((f) => {
+            {flows.map((f) => {
               const open = expanded === f.id;
-              const trails = trailsByFlow[f.id];
-              const arts = artifactsByFlow[f.id];
+              const trails = trailFlow === f.id ? trailList.items : undefined;
+              const arts = artifactFlow === f.id ? artifactList.items : undefined;
               const tab = subtab[f.id] || "trails";
               return (
                 <div key={f.id} className="rounded-md border border-border">
@@ -211,7 +221,7 @@ export default function Flows() {
                         <button onClick={() => { setSubtab((s) => ({ ...s, [f.id]: "artifacts" })); loadArtifacts(f.id); }} className={`rounded-md px-3 py-1 text-xs ${tab === "artifacts" ? "bg-primary/15 text-foreground" : "text-muted-foreground"}`}>Artifacts</button>
                       </div>
                       {tab === "artifacts" ? (
-                        !arts ? <p className="text-sm text-muted-foreground">Loading artifacts…</p> : arts.length === 0 ? <p className="text-sm text-muted-foreground">No artifacts recorded for this flow.</p> : (
+                        (!arts || (artifactList.loading && !arts.length)) ? <p className="text-sm text-muted-foreground">Loading artifacts…</p> : arts.length === 0 ? <p className="text-sm text-muted-foreground">No artifacts recorded for this flow.</p> : (
                           <div className="flex flex-col gap-2">
                             {arts.map((a) => (
                               <div key={a.sha256} className="rounded-md border border-border p-3">
@@ -224,7 +234,7 @@ export default function Flows() {
                             ))}
                           </div>
                         )
-                      ) : !trails ? <p className="text-sm text-muted-foreground">Loading trails…</p> : trails.length === 0 ? (
+                      ) : (!trails || (trailList.loading && !trails.length)) ? <p className="text-sm text-muted-foreground">Loading trails…</p> : trails.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No trails recorded for this flow yet.</p>
                       ) : (
                         <div className="flex flex-col gap-2">
@@ -278,12 +288,22 @@ export default function Flows() {
                           })}
                         </div>
                       )}
+                      {tab === "artifacts" && artifactFlow === f.id && <LoadMore {...artifactList} />}
+                      {tab === "trails" && trailFlow === f.id && <LoadMore {...trailList} more={async () => {
+                        const loaded = await trailList.more();
+                        if (loaded) setTrailCounts((counts) => ({ ...counts, [f.id]: (counts[f.id] || 0) + loaded.length }));
+                      }} />}
+                      {(tab === "artifacts" ? artifactList.error : trailList.error) && (
+                        <p role="alert" className="mt-3 text-sm text-red-400">{tab === "artifacts" ? artifactList.error : trailList.error}</p>
+                      )}
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
+          <LoadMore {...flowList} />
+          {flowList.error && <p role="alert" className="mt-3 text-sm text-red-400">{flowList.error}</p>}
         </Panel>
 
         {err && <p className="text-sm text-red-400">{err}</p>}
