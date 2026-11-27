@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 517
 spec: spec/2026-11-27-517-mcp-compliance-contract.md
 ---
