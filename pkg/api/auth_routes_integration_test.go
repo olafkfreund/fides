@@ -253,6 +253,62 @@ func (f *routeAuthFixture) denied(t *testing.T, path, body string, credential ro
 	}
 }
 
+func newMutationRouteFixture(t *testing.T, route mutationRoute) (*routeAuthFixture, string, string) {
+	t.Helper()
+	f := newRouteAuthFixture(t)
+	ids := f.own
+	switch route.pattern {
+	case "POST /api/v1/attest/fetch":
+		mustExec(t, f.pool, `INSERT INTO artifacts (sha256, org_id, trail_id, name, type)
+			VALUES ($1, $2, $3, 'fixture', 'docker')`, ids["sha"], ids["org"], ids["trail"])
+		f.stubGitProvider(t)
+	case "POST /api/v1/verify-branch-protection":
+		f.stubGitProvider(t)
+	case "POST /api/v1/controls/{id}/unarchive":
+		mustExec(t, f.pool, `UPDATE controls SET archived = true WHERE id = $1`, ids["control"])
+	case "POST /api/v1/environments/{id}/unarchive":
+		mustExec(t, f.pool, `UPDATE environments SET archived = true WHERE id = $1`, ids["env"])
+	}
+
+	provider := "unleash"
+	if !strings.Contains(route.pattern, "/flags/") {
+		provider = "github"
+	}
+	target := strings.NewReplacer(
+		"{id}", ids[route.id], "{key}", "fixture", "{envId}", ids["env"],
+		"{policyId}", ids["envPolicy"], "{sha}", ids["removeSHA"],
+		"{keyId}", ids["key"], "{provider}", provider,
+	).Replace(route.pattern)
+	body := os.Expand(route.body, func(key string) string {
+		id, ok := ids[key]
+		if !ok {
+			t.Fatalf("unknown route fixture $%s", key)
+		}
+		return id
+	})
+	return f, target, body
+}
+
+func (f *routeAuthFixture) admitted(t *testing.T, route mutationRoute, target, body, role string) {
+	t.Helper()
+	t.Run(role+"-admitted", func(t *testing.T) {
+		before := f.snapshot(t)
+		table, message := route.check, ""
+		if route.status >= 400 {
+			table, message = "", route.check
+		}
+		serveMutation(t, f.handler, target, body, f.sessions[role], route.status, message)
+		after := f.snapshot(t)
+		if table == "" {
+			if changed := changedRouteTables(before, after); len(changed) > 0 {
+				t.Errorf("expected no writes, changed %v", changed)
+			}
+		} else if before[table] == after[table] {
+			t.Errorf("expected a write to %s", table)
+		}
+	})
+}
+
 func TestMutationAuthorizationIntegration(t *testing.T) {
 	for _, route := range mutationRoutes {
 		switch route.auth {
@@ -260,37 +316,7 @@ func TestMutationAuthorizationIntegration(t *testing.T) {
 			continue // Exercised by TestPublicMutationAuthorizationIntegration.
 		}
 		t.Run(route.pattern, func(t *testing.T) {
-			f := newRouteAuthFixture(t)
-			ids := f.own
-			switch route.pattern {
-			case "POST /api/v1/attest/fetch":
-				mustExec(t, f.pool, `INSERT INTO artifacts (sha256, org_id, trail_id, name, type)
-					VALUES ($1, $2, $3, 'fixture', 'docker')`, ids["sha"], ids["org"], ids["trail"])
-				f.stubGitProvider(t)
-			case "POST /api/v1/verify-branch-protection":
-				f.stubGitProvider(t)
-			case "POST /api/v1/controls/{id}/unarchive":
-				mustExec(t, f.pool, `UPDATE controls SET archived = true WHERE id = $1`, ids["control"])
-			case "POST /api/v1/environments/{id}/unarchive":
-				mustExec(t, f.pool, `UPDATE environments SET archived = true WHERE id = $1`, ids["env"])
-			}
-
-			provider := "unleash"
-			if !strings.Contains(route.pattern, "/flags/") {
-				provider = "github"
-			}
-			target := strings.NewReplacer(
-				"{id}", ids[route.id], "{key}", "fixture", "{envId}", ids["env"],
-				"{policyId}", ids["envPolicy"], "{sha}", ids["removeSHA"],
-				"{keyId}", ids["key"], "{provider}", provider,
-			).Replace(route.pattern)
-			body := os.Expand(route.body, func(key string) string {
-				id, ok := ids[key]
-				if !ok {
-					t.Fatalf("unknown route fixture $%s", key)
-				}
-				return id
-			})
+			f, target, body := newMutationRouteFixture(t, route)
 			t.Run("anonymous", func(t *testing.T) {
 				f.denied(t, target, body, nil, http.StatusUnauthorized, "authentication required")
 			})
@@ -316,30 +342,20 @@ func TestMutationAuthorizationIntegration(t *testing.T) {
 				})
 			}
 
-			role := auth.RoleAdmin
 			switch route.auth {
+			case adminOnly:
+				f.admitted(t, route, target, body, auth.RoleAdmin)
 			case writerOnly:
-				role = auth.RoleWriter
+				f.admitted(t, route, target, body, auth.RoleWriter)
+				t.Run(auth.RoleAdmin+"-admission", func(t *testing.T) {
+					adminFixture, adminTarget, adminBody := newMutationRouteFixture(t, route)
+					adminFixture.admitted(t, route, adminTarget, adminBody, auth.RoleAdmin)
+				})
 			case authenticated:
-				role = auth.RoleViewer
+				for _, role := range []string{auth.RoleViewer, auth.RoleAuditor, auth.RoleWriter, auth.RoleAdmin} {
+					f.admitted(t, route, target, body, role)
+				}
 			}
-
-			t.Run(role+"-admitted", func(t *testing.T) {
-				before := f.snapshot(t)
-				table, message := route.check, ""
-				if route.status >= 400 {
-					table, message = "", route.check
-				}
-				serveMutation(t, f.handler, target, body, f.sessions[role], route.status, message)
-				after := f.snapshot(t)
-				if table == "" {
-					if changed := changedRouteTables(before, after); len(changed) > 0 {
-						t.Errorf("expected no writes, changed %v", changed)
-					}
-				} else if before[table] == after[table] {
-					t.Errorf("expected a write to %s", table)
-				}
-			})
 		})
 	}
 }
@@ -522,6 +538,46 @@ func TestMutationCredentialsIntegration(t *testing.T) {
 		serveMutation(t, f.handler, revoke, "", admin, 200, "")
 		f.denied(t, trailRoute, trailBody, writer, 401, "invalid credentials")
 	})
+}
+
+func TestExplicitApprovalDelegationIntegration(t *testing.T) {
+	f := newRouteAuthFixture(t)
+	mustExec(t, f.pool, `UPDATE service_accounts SET role = $1, may_delegate_approvals = true WHERE id = $2`,
+		auth.RoleViewer, f.own["account"])
+	issue := "POST /api/v1/tenant/service-accounts/" + f.own["account"] + "/keys"
+	rec := serveMutation(t, f.handler, issue, `{"label":"approval-capability","expires_hours":1}`,
+		f.sessions[auth.RoleAdmin], http.StatusCreated, "")
+	var key struct {
+		Token string `json:"api_key"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &key); err != nil || key.Token == "" {
+		t.Fatalf("key issuance did not return an API key: %v", err)
+	}
+	target := "POST /api/v1/trails/" + f.own["trail"] + "/approvals"
+	const body = `{"reason":"fixture review","on_behalf_of":"own@example.invalid"}`
+	credential := routeBearer(key.Token)
+	before := f.snapshot(t)["trail_approvals"]
+	f.denied(t, target, "{", f.sessions[auth.RoleWriter], http.StatusBadRequest, "invalid request")
+	serveMutation(t, f.handler, target, body, credential, http.StatusForbidden, "")
+	if f.snapshot(t)["trail_approvals"] != before {
+		t.Fatal("disabled delegation wrote an approval")
+	}
+
+	t.Setenv("FIDES_DELEGATED_APPROVAL_ENABLED", "true")
+	serveMutation(t, f.handler, target, `{"reason":"fixture review"}`, credential, http.StatusForbidden, "")
+	if f.snapshot(t)["trail_approvals"] != before {
+		t.Fatal("nondelegated request wrote an approval")
+	}
+	rec = serveMutation(t, f.handler, target, body, credential, http.StatusCreated, "")
+	var approval struct {
+		ApprovedBy  string `json:"approved_by"`
+		Kind        string `json:"kind"`
+		DelegatedBy string `json:"delegated_by"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &approval); err != nil || approval.ApprovedBy != "own@example.invalid" ||
+		approval.Kind != "session" || approval.DelegatedBy == "" {
+		t.Fatalf("explicit delegation was not preserved: %s (%v)", rec.Body, err)
+	}
 }
 
 func TestPublicMutationAuthorizationIntegration(t *testing.T) {
