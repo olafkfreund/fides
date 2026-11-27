@@ -16,6 +16,9 @@ func mockMCPServer(t *testing.T, sse bool) *httptest.Server {
 	t.Helper()
 	const sessionID = "sess-123"
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
+			t.Errorf("Authorization = %q, want Bearer tok", got)
+		}
 		body, _ := io.ReadAll(r.Body)
 		var req JsonRpcRequest
 		json.Unmarshal(body, &req)
@@ -98,5 +101,24 @@ func TestLastSSEData(t *testing.T) {
 	}
 	if lastSSEData([]byte("event: ping\n\n")) != nil {
 		t.Fatalf("expected nil when there is no data frame")
+	}
+}
+
+func TestHTTPClientReportsErrorFromConfiguredEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/mcp" {
+			t.Errorf("request = %s %s, want POST /mcp", r.Method, r.URL.Path)
+		}
+		if user, pass, ok := r.BasicAuth(); !ok || user != "test-user" || pass != "test-pass" {
+			t.Error("request missing configured basic auth")
+		}
+		http.Error(w, "test endpoint rejected the request", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client := NewHTTPClient(srv.URL+"/mcp", WithBasicAuth("test-user", "test-pass"))
+	_, err := client.ListTools(t.Context())
+	if err == nil || err.Error() != "mcp: http 403: test endpoint rejected the request" {
+		t.Fatalf("ListTools error = %v, want HTTP 403 with response message", err)
 	}
 }
