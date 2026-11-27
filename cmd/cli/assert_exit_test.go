@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -59,8 +60,8 @@ func TestAssertCommand(t *testing.T) {
 			output, err := cmd.CombinedOutput()
 			exit := 0
 			if err != nil {
-				processErr, ok := err.(*exec.ExitError)
-				if !ok {
+				var processErr *exec.ExitError
+				if !errors.As(err, &processErr) {
 					t.Fatal(err)
 				}
 				exit = processErr.ExitCode()
