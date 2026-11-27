@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 516
 spec: spec/2026-11-27-516-db-query-panics.md
 ---
