@@ -18,7 +18,8 @@ and delivered by the tenant webhook sink:
 ```text
 X-Fides-Signature   sha256=<hex>      HMAC_SHA256(secret, timestamp + "." + rawBody)
 X-Fides-Timestamp   <unix seconds>    part of the signed payload; also a replay guard
-X-Fides-Event-Id    <uuid>            dedupe key — delivery is at-least-once
+X-Fides-Event-Id    <uuid>            stable event identifier
+X-Fides-Delivery-Id <uuid>/webhook    stable webhook sink delivery identifier
 X-Fides-Event-Type  <event type>      e.g. compliance.evaluated, servicenow.change_gate
 ```
 
@@ -128,9 +129,13 @@ verified envelope to a flow:
 3. Do **not** use the out-of-box "Inbound REST/Webhook" trigger for the Fides feed
    — it bypasses HMAC verification. Always enter through the verifying resource.
 
-Because delivery is at-least-once, make the flow idempotent: dedupe on
-`X-Fides-Event-Id` (e.g. a lookup against a small "processed events" table) before
-any side effect.
+Deduplicate before applying side effects. Use `X-Fides-Delivery-Id` or the
+existing `X-Fides-Event-Id` for receivers that also accept older senders.
+Scope the deduplication key to the destination if one receiver handles several
+independent subscriptions. A successful send can repeat if the dispatcher
+loses its acknowledgement before recording it. The webhook sink can also send
+to several targets in one attempt, so retrying after one target fails can
+repeat a send to another target that already succeeded.
 
 ## 6. Testing checklist
 

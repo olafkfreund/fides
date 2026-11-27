@@ -41,8 +41,7 @@ var uncoveredOrgTables []string
 // backlog -- giving them one is an outage, and this list asserts their absence
 // rather than tolerating it.
 //
-// All three are read on a connection that has no app.current_org yet, because
-// the query is what establishes the tenant:
+// These system tables are read on connections without app.current_org:
 //
 //   - sessions: SessionStore.Get selects org_id FROM sessions WHERE token_hash
 //     = $1 (pkg/auth/auth.go:189). The org comes OUT of that row, so it cannot
@@ -53,11 +52,10 @@ var uncoveredOrgTables []string
 //     with an explicit DISABLE + DROP POLICY for it -- self-healing deployments
 //     where an earlier version of that file DID apply a policy and broke
 //     API-key authentication.
-//   - integration_events: a system outbox the events dispatcher drains across
-//     ALL tenants on a non-request connection. A policy hides every row and
-//     delivery silently stops.
+//   - integration_events and integration_event_deliveries: the dispatcher
+//     drains these system tables across tenants on a non-request connection.
 //
-// Isolation for all three is enforced in-query instead: every management
+// Isolation for these tables is enforced in-query instead: every management
 // handler filters by org_id, which TestEveryHandlerEstablishesTenantScope gates.
 //
 // The reason this list asserts rather than excuses: the service_accounts
@@ -65,6 +63,7 @@ var uncoveredOrgTables []string
 // as "not done yet" would invite someone to make it again -- and the failure is
 // silent for reads and total for auth.
 var rlsExcludedByDesign = []string{
+	"integration_event_deliveries",
 	"integration_events",
 	"service_accounts",
 	"sessions",
@@ -190,17 +189,14 @@ func TestEveryOrgScopedTableHasAnRLSPolicyIntegration(t *testing.T) {
 	// excluded by design must still have NO policy. If one appears, authentication
 	// or event delivery is already broken in whatever environment applied it.
 	for _, tbl := range rlsExcludedByDesign {
-		var exists bool
-		if err := conn.QueryRow(`SELECT EXISTS (
-			SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = $1)`, tbl).Scan(&exists); err != nil {
-			t.Fatalf("check policy on %s: %v", tbl, err)
+		var enabled, hasPolicy bool
+		if err := conn.QueryRow(`SELECT relrowsecurity, EXISTS (
+			SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = $1)
+			FROM pg_class WHERE oid = to_regclass('public.' || $1)`, tbl).Scan(&enabled, &hasPolicy); err != nil {
+			t.Fatalf("check RLS on %s: %v", tbl, err)
 		}
-		if exists {
-			t.Errorf("%s has an RLS policy and must not — it is read before the tenant is\n"+
-				"known, so a policy hides every row. sessions breaks login, service_accounts\n"+
-				"breaks API keys, integration_events silently stops event delivery. Remove it\n"+
-				"from the table list in schema-rls.sql; the DISABLE/DROP block at the end of\n"+
-				"that file exists because this has happened before.", tbl)
+		if enabled || hasPolicy {
+			t.Errorf("%s must have RLS disabled and no policies so system queries can run before tenant scoping", tbl)
 		}
 	}
 

@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, StatTile, Chip, Donut, DistBars } from "@/components/dash";
 
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; trail_id: string; created_at?: string };
@@ -11,11 +13,11 @@ type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algori
 const control = "rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function Attestations() {
-  const [atts, setAtts] = useState<Att[]>([]);
+  const ledger = usePagedList<Att>();
+  const atts = ledger.items;
   const [type, setType] = useState("");
   const [compliance, setCompliance] = useState("");
   const [name, setName] = useState("");
-  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<Record<string, AttDetail>>({});
   const [err, setErr] = useState("");
 
@@ -31,11 +33,8 @@ export default function Attestations() {
     const q = new URLSearchParams();
     if (t) q.set("type", t);
     if (c) q.set("compliant", c);
-    setLoading(true);
-    apiGet<Att[]>(`/api/v1/search/attestations?${q}`)
-      .then((a) => setAtts(a || []))
-      .catch((e) => setErr(String(e.message || e)))
-      .finally(() => setLoading(false));
+    if (name) q.set("name", name);
+    ledger.load(`/api/v1/search/attestations?${q}`);
   };
   // Preset filters from the URL so dashboard deep-links (e.g. ?compliant=false for
   // "Active Alerts") land pre-filtered. Static export → read window.location directly.
@@ -60,7 +59,7 @@ export default function Attestations() {
       <PageHeader title="Attestations" subtitle="Evidence recorded against build trails." />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile label="Total" value={String(atts.length)} />
+        <StatTile label="Loaded attestations" value={String(atts.length)} />
         <StatTile label="Compliant" value={`${atts.length ? Math.round((compliant / atts.length) * 100) : 0}%`} sub={`${compliant} of ${atts.length}`} color="text-green-400" />
         <StatTile label="Evidence Types" value={String(types.length)} />
       </div>
@@ -84,10 +83,10 @@ export default function Attestations() {
           <select className={control} value={compliance} onChange={(e) => setCompliance(e.target.value)}>
             <option value="">Any compliance</option><option value="true">Compliant</option><option value="false">Non-compliant</option>
           </select>
-          <button onClick={load} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
+          <button onClick={() => load()} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
         </div>
 
-        {loading ? <p className="text-sm text-muted-foreground">Loading…</p> : shown.length ? (
+        {ledger.loading && !atts.length ? <p className="text-sm text-muted-foreground">Loading…</p> : shown.length ? (
           <div className="flex flex-col divide-y divide-border">
             {shown.map((a) => {
               const d = open[a.id];
@@ -120,6 +119,8 @@ export default function Attestations() {
             })}
           </div>
         ) : <p className="text-sm text-muted-foreground">No attestations match.</p>}
+        <LoadMore {...ledger} />
+        {ledger.error && <p role="alert" className="mt-3 text-sm text-red-400">{ledger.error}</p>}
       </Panel>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"flag"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -104,4 +106,42 @@ func diffCVEs(base, cur map[string]bool) (added, fixed []string) {
 	sort.Strings(added)
 	sort.Strings(fixed)
 	return added, fixed
+}
+
+// handleImpact shows which artifacts and running environments are affected by a
+// CVE, with not_affected VEX statements suppressed (GET /api/v1/impact).
+func handleImpact(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("impact", flag.ExitOnError)
+	cve := cmd.String("cve", "", "CVE identifier, e.g. CVE-2021-44228")
+	backfill := cmd.Bool("backfill", false, "re-extract CVEs from existing scan attestations into the impact index (admin; idempotent)")
+	cmd.Parse(args)
+	if *backfill {
+		post(config, "/api/v1/vulnerabilities/backfill", map[string]any{}, "")
+		return
+	}
+	if *cve == "" {
+		fmt.Println("Usage: fides impact --cve <CVE-ID>  |  fides impact --backfill")
+		os.Exit(1)
+	}
+	body, err := getRequest(config, "/api/v1/impact?cve="+neturl.QueryEscape(*cve))
+	fail(err, "query impact")
+	fmt.Println(body)
+}
+
+// handleVEX records a VEX statement (POST /api/v1/vex). A not_affected statement
+// suppresses the CVE from the impact query so teams focus on exploitable risk.
+func handleVEX(config CLIConfig, args []string) {
+	cmd := flag.NewFlagSet("vex", flag.ExitOnError)
+	cve := cmd.String("cve", "", "CVE identifier (required)")
+	status := cmd.String("status", "", "not_affected | affected | fixed | under_investigation (required)")
+	product := cmd.String("product", "", "scope: empty=org-wide, an artifact sha256, or a component purl (suppresses the CVE for every artifact containing that component)")
+	justification := cmd.String("justification", "", "reason (optional)")
+	cmd.Parse(args)
+	if *cve == "" || *status == "" {
+		fmt.Println("Usage: fides vex --cve <CVE-ID> --status <not_affected|affected|fixed|under_investigation> [--product <sha256>] [--justification <text>]")
+		os.Exit(1)
+	}
+	post(config, "/api/v1/vex", map[string]any{
+		"cve": *cve, "status": *status, "product": *product, "justification": *justification,
+	}, "")
 }

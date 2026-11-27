@@ -175,6 +175,25 @@ fides slack config --secret-path fides/slack-webhook
 Compliance events (`compliance.evaluated`, `snapshot.noncompliant`) are posted to
 the channel when the event engine is enabled (`FIDES_EVENTS_ENABLED=true`).
 
+### Outbound event delivery
+
+With `FIDES_EVENTS_ENABLED=true`, attestation ingest commits its
+`compliance.evaluated` event with the attestation. Snapshot ingest commits its
+`snapshot.noncompliant` event for drift or shadows and its `snapshot.reported`
+event for a nonempty service inventory with the snapshot. An enqueue failure
+rolls back the corresponding ingest write. Events from artifact reports,
+environment and flag changes, fetched attestations, segregation of duties,
+and ServiceNow handlers retain their existing enqueue behavior.
+
+The dispatcher records and retries each configured sink independently until
+it succeeds or reaches its attempt limit. When an event is first scheduled,
+the registered sink names are fixed for that event. A dispatcher with no
+registered sinks leaves unscheduled events queued. A lost acknowledgement can
+cause duplicate delivery. The webhook sink can also retry individual targets
+that already succeeded when another target failed in the same attempt.
+Receivers can deduplicate per destination using the stable delivery or event
+identifier.
+
 ## 13. Other integration config (CLI)
 
 ```bash

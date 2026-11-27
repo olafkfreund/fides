@@ -20,9 +20,9 @@ Show
 Type "# Gate commands return exit 2 when the verdict is FAIL — any CI job blocks on that." Enter
 Sleep 1.2s
 
-Type "# Policy gate: does this artifact's recorded evidence satisfy a named policy?" Enter
+Type "# Compliance gate: did the artifact's recorded controls pass?" Enter
 Sleep 800ms
-Type 'fides assert --sha256 $DIGEST --policy no-critical-vulns; echo "exit=$?"' Enter
+Type 'fides assert --sha256 $DIGEST; echo "exit=$?"' Enter
 Sleep 2.5s
 
 Type "# Signature gate: was the image signed (keyless) by OUR CI workflow?" Enter

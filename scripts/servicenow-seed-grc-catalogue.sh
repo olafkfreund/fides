@@ -106,16 +106,44 @@ echo "Seeding the Fides control catalogue into ${SN}"
 echo
 
 # Pull the catalogue and emit one TSV line per control: key, framework, description.
-CATALOGUE=$(curl -sS -k -H "Authorization: Bearer ${FIDES_API_TOKEN}" \
-  "${FIDES_SERVER_URL%/}/api/v1/controls" \
-  | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-r=d if isinstance(d,list) else d.get('controls',[])
-for c in r:
-    if c.get('archived'): continue
-    desc=(c.get('description') or c.get('name') or '').replace('\t',' ').strip()
-    print('\t'.join([c['key'], c.get('framework') or 'Fides', desc]))")
+CATALOGUE=$(python3 - <<'PYTHON'
+import json
+import os
+import re
+import ssl
+from urllib.parse import urljoin, urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+def origin(url):
+    parsed = urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username is not None:
+        raise ValueError('Invalid Fides URL')
+    return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+url = os.environ['FIDES_SERVER_URL'].rstrip('/') + '/api/v1/controls'
+expected_origin = origin(url)
+token = os.environ['FIDES_API_TOKEN']
+# Match the catalogue script's historical support for self-signed Fides endpoints.
+opener = build_opener(NoRedirect(), HTTPSHandler(context=ssl._create_unverified_context()))
+seen = set()
+while url:
+    if origin(url) != expected_origin or url in seen:
+        raise ValueError('Invalid Fides control pagination link')
+    seen.add(url)
+    with opener.open(Request(url, headers={'Authorization': 'Bearer ' + token}), timeout=30) as response:
+        listing = json.load(response)
+        for control in listing if isinstance(listing, list) else listing.get('controls', []):
+            if not control.get('archived'):
+                desc = (control.get('description') or control.get('name') or '').replace('\t', ' ').strip()
+                print('\t'.join([control['key'], control.get('framework') or 'Fides', desc]))
+        link = re.search(r'<([^>]+)>\s*;\s*rel="next"', response.headers.get('Link', ''))
+        url = urljoin(url, link.group(1)) if link else None
+PYTHON
+) || exit 1
 
 if [ -z "$CATALOGUE" ]; then
   echo "No controls returned by Fides — nothing to seed." >&2

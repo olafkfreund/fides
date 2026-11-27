@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { Plus, Trash2, Save, Sparkles, Info, Loader2, Wand2, ShieldCheck, Maximize2, Minimize2 } from "lucide-react";
-import { apiGet, apiPost, api } from "@/lib/api";
+import { apiList, apiPost, api } from "@/lib/api";
 import { PageHeader, Panel } from "@/components/dash";
 
 // Monaco is client-only; load it with ssr:false so the static export doesn't try
@@ -55,7 +55,7 @@ export default function Policies() {
     finally { setChecking(false); }
   };
 
-  const load = () => apiGet<Policy[]>("/api/v1/policies").then((p) => setPolicies(p || [])).catch((e) => setMsg({ t: String(e.message), ok: false }));
+  const load = () => apiList<Policy>("/api/v1/policies").then((p) => setPolicies(p || [])).catch((e) => setMsg({ t: String(e.message), ok: false }));
   useEffect(() => { load(); }, []);
 
   const select = (p: Policy) => { setSel(p); setMode("view"); setEditRules(p.yaml || ""); setNotes(""); setMsg({ t: "", ok: true }); };

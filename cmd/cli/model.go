@@ -268,7 +268,7 @@ func handleModelVersions(config CLIConfig, args []string) {
 		cmd.Usage()
 		os.Exit(1)
 	}
-	body, err := getRequest(config, "/api/v1/flows/"+*flowID+"/trails")
+	body, err := getList(config, "/api/v1/flows/"+*flowID+"/trails")
 	fail(err, "list model versions")
 	fmt.Println(body)
 }
@@ -286,7 +286,7 @@ func handleModelTimeline(config CLIConfig, args []string) {
 	q := neturl.Values{}
 	q.Set("type", modelprovenance.AttestationType)
 	q.Set("trail", *trailID)
-	body, err := getRequest(config, "/api/v1/search/attestations?"+q.Encode())
+	body, err := getList(config, "/api/v1/search/attestations?"+q.Encode())
 	fail(err, "list model timeline")
 	fmt.Println(body)
 }

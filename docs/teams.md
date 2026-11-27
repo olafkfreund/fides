@@ -83,7 +83,7 @@ Record evidence  →  Gate in warn-only  →  Enforce gates  →  Adopt control 
   # GitHub — see docs/ci-gate.md
   - uses: olafkfreund/fides/.github/actions/fides-gate@v0.3.0
     with: { command: assert, sha256: "${{ steps.build.outputs.digest }}",
-            policy: no-critical-vulns, warn-only: true }
+            warn-only: true }
   ```
 
 **What you get:** a live portal showing every build's evidence, `verify-chain`

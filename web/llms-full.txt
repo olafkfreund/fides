@@ -260,9 +260,7 @@ jobs:
       - name: Compliance Policy Gate Check
         run: |
           # Fides will exit non-zero and fail the workflow if the artifact is non-compliant
-          fides assert \
-            --sha256 $IMAGE_DIGEST \
-            --policy "production-release-rules"
+          fides assert --sha256 "$IMAGE_DIGEST"
 
       # 8. Deploy to Production (Kubernetes)
       - name: Deploy to K8s
@@ -354,9 +352,7 @@ run-security-scans:
         --encrypt
 
     # 2. Policy Assertion Check (Fails build if not compliant)
-    - fides assert 
-        --sha256 $IMAGE_DIGEST 
-        --policy "prod-verification"
+    - fides assert --sha256 "$IMAGE_DIGEST"
 
 deploy-prod:
   stage: deploy
@@ -467,7 +463,7 @@ flowchart TD
     subgraph CI/CD Pipelines [CI/CD Pipelines (GitHub, GitLab, Jenkins)]
         CLI_Init[fides trail start] --> CLI_Report[fides artifact report]
         CLI_Report --> CLI_Scan[fides attest --type snyk/trivy/gitleaks]
-        CLI_Scan --> CLI_Gate[fides assert --policy prod-policy]
+        CLI_Scan --> CLI_Gate[fides assert --sha256 DIGEST]
     end
 
     subgraph Runtimes [Runtime Systems]
@@ -1020,6 +1016,6 @@ The statically compiled cross-platform CLI tool handles operations in CI/CD pipe
 | **Trails** | `fides trail start --flow <f> --trail <t>` | Initializes a new build trail. | Linux, macOS, Win |
 | **Artifacts** | `fides artifact report --sha256 <s> --name <n>` | Records build artifact fingerprint. | Linux, macOS, Win |
 | **Attestations** | `fides attest --type snyk --file results.json` | Posts security scans or test reports. | Linux, macOS, Win |
-| **Verification** | `fides assert --policy <p> --sha256 <s>` | Compliance gate check. Exits non-zero if invalid. | Linux, macOS, Win |
+| **Verification** | `fides assert --sha256 <s>` | Compliance gate check. Exits 2 for non-compliance or 1 for errors. | Linux, macOS, Win |
 | **Runtimes** | `fides snapshot k8s <env> --namespace <ns>` | Queries cluster pods and posts runtime snapshot. | Linux, macOS |
 | **Runtimes** | `fides snapshot docker <env>` | Queries Docker host and posts runtime snapshot. | Linux, macOS, Win |

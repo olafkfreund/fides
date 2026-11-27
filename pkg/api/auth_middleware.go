@@ -156,7 +156,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 // serveAuthenticated attaches the principal to the request context and, when
 // RLS scoping is enabled (FIDES_RLS_ENABLED=true), pins a tenant-scoped DB
 // connection (app.current_org set to the principal's org) into the context so
-// handlers' s.q(ctx) calls are isolated by Postgres RLS. The connection is
+// queries and transactions share the same tenant scope. The connection is
 // released after the handler returns.
 func (s *Server) serveAuthenticated(w http.ResponseWriter, r *http.Request, p *auth.Principal, next http.Handler) {
 	ctx := auth.WithPrincipal(r.Context(), p)
@@ -183,6 +183,27 @@ func principalOrg(r *http.Request) (uuid.UUID, bool) {
 		return uuid.UUID{}, false
 	}
 	return p.OrgID, true
+}
+
+func requireMutationRole(w http.ResponseWriter, r *http.Request, role string) bool {
+	p, ok := auth.FromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if p.Role == role || (role == auth.RoleWriter && p.Role == auth.RoleAdmin) {
+		return true
+	}
+	http.Error(w, "forbidden", http.StatusForbidden)
+	return false
+}
+
+func withMutationRole(role string, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if requireMutationRole(w, r, role) {
+			next(w, r)
+		}
+	}
 }
 
 // securityHeaders adds baseline hardening headers to every response.

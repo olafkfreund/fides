@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, Copy, Package, CheckCircle2, XCircle, ShieldCheck, FileText } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, Chip } from "@/components/dash";
 
 type Artifact = { sha256: string; name: string; type: string; git_commit?: string; created_at?: string };
@@ -67,37 +69,40 @@ function EvidenceBlock({ att }: { att: AttDetail }) {
 export default function Artifacts() {
   const [sha, setSha] = useState("");
   const [name, setName] = useState("");
-  const [arts, setArts] = useState<Artifact[]>([]);
+  const registry = usePagedList<Artifact>();
+  const arts = registry.items;
   const [openSha, setOpenSha] = useState("");
-  const [atts, setAtts] = useState<Att[]>([]);
+  const evidence = usePagedList<Att>();
+  const atts = evidence.items;
   const [sbom, setSbom] = useState<{ items: SbomItem[]; status: string; raw?: unknown } | null>(null);
   const [openAtt, setOpenAtt] = useState<Record<string, AttDetail>>({});
-  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const searchArts = () => {
     const q = new URLSearchParams();
     if (sha) q.set("sha", sha);
     if (name) q.set("name", name);
-    apiGet<Artifact[]>(`/api/v1/search/artifacts?${q}`).then((a) => setArts(a || [])).catch((e) => setErr(String(e.message || e)));
+    registry.load(`/api/v1/search/artifacts?${q}`);
   };
   useEffect(() => { searchArts(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const openArtifact = async (a: Artifact) => {
+  const openArtifact = (a: Artifact) => {
     if (openSha === a.sha256) { setOpenSha(""); return; }
-    setOpenSha(a.sha256); setAtts([]); setSbom(null); setOpenAtt({}); setLoading(true); setErr("");
-    try {
-      const list = await apiGet<Att[]>(`/api/v1/search/attestations?sha=${encodeURIComponent(a.sha256)}`);
-      setAtts(list || []);
-      const sbomAtt = (list || []).find((x) => /sbom/i.test(x.type_name) || /sbom/i.test(x.name));
-      if (sbomAtt) {
-        const d = await apiGet<AttDetail>(`/api/v1/attestations/${sbomAtt.id}`);
-        const items = parseSbom(d.payload);
-        setSbom({ items, status: sbomAtt.is_compliant ? "compliant" : "non-compliant", raw: items.length ? undefined : d.payload });
-      }
-    } catch (e) { setErr(String((e as Error).message)); }
-    finally { setLoading(false); }
+    setOpenSha(a.sha256); setSbom(null); setOpenAtt({}); setErr("");
+    evidence.load(`/api/v1/search/attestations?sha=${encodeURIComponent(a.sha256)}`);
   };
+
+  const sbomAtt = atts.find((x) => /sbom/i.test(x.type_name) || /sbom/i.test(x.name));
+  useEffect(() => {
+    if (!openSha || !sbomAtt) return;
+    let active = true;
+    apiGet<AttDetail>(`/api/v1/attestations/${sbomAtt.id}`).then((d) => {
+      if (!active) return;
+      const items = parseSbom(d.payload);
+      setSbom({ items, status: sbomAtt.is_compliant ? "compliant" : "non-compliant", raw: items.length ? undefined : d.payload });
+    }).catch((e) => { if (active) setErr(String(e.message || e)); });
+    return () => { active = false; };
+  }, [openSha, sbomAtt]);
 
   const toggleAtt = async (id: string) => {
     if (openAtt[id]) { setOpenAtt((s) => { const n = { ...s }; delete n[id]; return n; }); return; }
@@ -114,7 +119,7 @@ export default function Artifacts() {
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <div className="rounded-lg border border-primary/30 bg-primary/5 p-3">
               <div className="font-mono text-2xl font-bold tabular-nums text-primary">{arts.length}</div>
-              <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Total</div>
+              <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Loaded artifacts</div>
             </div>
             {Object.entries(arts.reduce<Record<string, number>>((m, a) => { m[a.type] = (m[a.type] || 0) + 1; return m; }, {}))
               .sort((a, b) => b[1] - a[1])
@@ -135,7 +140,7 @@ export default function Artifacts() {
           <button onClick={searchArts} className="rounded-md bg-primary px-6 py-2 text-sm font-semibold text-primary-foreground">Search</button>
         </div>
 
-        {arts.length ? (
+        {registry.loading && !arts.length ? <p className="mt-3 text-sm text-muted-foreground">Loading…</p> : arts.length ? (
           <div className="mt-4 flex flex-col divide-y divide-border">
             {arts.map((a) => {
               const isOpen = openSha === a.sha256;
@@ -159,7 +164,7 @@ export default function Artifacts() {
                         {a.created_at && <span className="text-muted-foreground">recorded {a.created_at.replace("T", " ").slice(0, 19)}</span>}
                       </div>
 
-                      {loading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
+                      {evidence.loading && !atts.length ? <p className="text-sm text-muted-foreground">Loading…</p> : (
                         <>
                           {/* SBOM */}
                           <div>
@@ -185,12 +190,12 @@ export default function Artifacts() {
                                   <pre className="mt-1 max-h-48 overflow-auto font-mono text-foreground/80">{JSON.stringify(sbom.raw, null, 2)}</pre>
                                 </div>
                               )
-                            ) : <p className="text-xs text-muted-foreground">No SBOM attestation recorded for this artifact.</p>}
+                            ) : <p className="text-xs text-muted-foreground">{sbomAtt ? (err ? "SBOM unavailable." : "Loading SBOM…") : (evidence.next ? "No SBOM in the loaded attestations." : "No SBOM attestation recorded for this artifact.")}</p>}
                           </div>
 
                           {/* Attestations */}
                           <div>
-                            <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><ShieldCheck className="size-3.5" /> Attestations ({atts.length})</div>
+                            <div className="mb-1.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><ShieldCheck className="size-3.5" /> {evidence.next ? "Loaded attestations" : "Attestations"} ({atts.length})</div>
                             {atts.length ? (
                               <div className="flex flex-col divide-y divide-border rounded-md border border-border">
                                 {atts.map((at) => (
@@ -205,6 +210,8 @@ export default function Artifacts() {
                                 ))}
                               </div>
                             ) : <p className="text-xs text-muted-foreground">No attestations recorded for this artifact.</p>}
+                            <LoadMore {...evidence} />
+                            {evidence.error && <p role="alert" className="mt-3 text-sm text-red-400">{evidence.error}</p>}
                           </div>
                         </>
                       )}
@@ -215,6 +222,8 @@ export default function Artifacts() {
             })}
           </div>
         ) : <p className="mt-3 text-sm text-muted-foreground">No results.</p>}
+        <LoadMore {...registry} />
+        {registry.error && <p role="alert" className="mt-3 text-sm text-red-400">{registry.error}</p>}
       </Panel>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}
