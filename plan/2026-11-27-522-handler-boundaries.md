@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 522
 spec: spec/2026-11-27-522-handler-boundaries.md
 ---
