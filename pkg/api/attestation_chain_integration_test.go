@@ -63,13 +63,18 @@ func TestAttestationChainIntegration(t *testing.T) {
 }
 
 func TestMixedAttestationChainAnchorIntegration(t *testing.T) {
-	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "true")
+	t.Setenv("FIDES_LEDGER_EVIDENCE_V2", "")
 	f := newRouteAuthFixture(t)
 	t.Setenv("FIDES_TSA_ROOTS", "")
 	org, trail := f.own["org"], f.own["trail"]
+	post := func(name, payload string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"trail_id":%q,"name":%q,"type_name":"fixture","payload":%q}`, trail, name, payload)
+		expectRecording(t, postRecording(f.handler, "/api/v1/attestations", "", "application/json",
+			strings.NewReader(body), f.sessions[auth.RoleWriter]), http.StatusCreated)
+	}
+	post("old", "{}")
 	oldHash := ledger.ContentHash(trail, "old", "fixture", "{}", true, "")
-	mustExec(t, f.pool, `INSERT INTO attestations (trail_id,name,type_name,payload,content_hash)
-		VALUES ($1,'old','fixture','{}',$2)`, trail, oldHash)
 	token := offlineChainAnchor(t, oldHash)
 	mustExec(t, f.pool, `INSERT INTO trail_anchors (org_id,trail_id,chain_head_hash,tsa_url,timestamp_token)
 		VALUES ($1,$2,$3,'https://fixture.invalid',$4)`, org, trail, oldHash, token)
