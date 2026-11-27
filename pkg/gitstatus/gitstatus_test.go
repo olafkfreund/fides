@@ -3,9 +3,11 @@ package gitstatus
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -111,6 +113,48 @@ func TestPostGitLabStatus(t *testing.T) {
 	}
 	if gotState != "success" {
 		t.Fatalf("compliant should map to gitlab 'success', got %s", gotState)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestPostStatusAdditionalProviders(t *testing.T) {
+	const apiBase = "https://scm.example.test/enterprise/"
+	for _, tc := range []struct {
+		provider, requestURI, state string
+	}{
+		{ProviderBitbucket, "/enterprise/repositories/team/widget/commit/abc123/statuses/build", "SUCCESSFUL"},
+		{ProviderAzureDevOps, "/enterprise/team/_apis/git/repositories/widget/commits/abc123/statuses?api-version=7.1", "succeeded"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.Method != http.MethodPost || r.URL.Scheme != "https" || r.URL.Host != "scm.example.test" || r.URL.RequestURI() != tc.requestURI {
+					t.Errorf("request = %s %s, want POST %s", r.Method, r.URL, tc.requestURI)
+				}
+				if tc.provider == ProviderBitbucket {
+					if r.Header.Get("Authorization") != "Bearer fake-token" {
+						t.Error("missing Bitbucket bearer token")
+					}
+				} else if user, pat, ok := r.BasicAuth(); !ok || user != "" || pat != "fake-token" {
+					t.Error("expected Azure DevOps PAT as Basic authentication with an empty username")
+				}
+				defer r.Body.Close()
+				var body struct{ State string }
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					return nil, fmt.Errorf("decode status request: %w", err)
+				}
+				if body.State != tc.state {
+					t.Errorf("state = %q, want %q", body.State, tc.state)
+				}
+				return &http.Response{StatusCode: http.StatusCreated, Body: io.NopCloser(strings.NewReader(""))}, nil
+			})}
+			err := PostStatus(t.Context(), client, tc.provider, apiBase, "fake-token", Repo{Path: "team/widget"}, "abc123", Verdict{Compliant: true})
+			if err != nil {
+				t.Fatalf("PostStatus: %v", err)
+			}
+		})
 	}
 }
 
