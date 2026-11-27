@@ -35,9 +35,10 @@ original digest. Retain their historical status even if the current object can
 be read. The approved export must verify stored size and digest on read.
 Preserve existing ledger hashes and anchors through prerequisite updates.
 
-The public issue names separate integrity work and gives no dependency IDs.
-Keep validation claims limited to the recorded evidence until those updates
-land. This check leaves the export and verifier implementation pending.
+[#556](https://github.com/olafkfreund/fides/issues/556) tracks evidence
+commitments and historical policy inputs. [#557](https://github.com/olafkfreund/fides/issues/557)
+tracks signer-proof retention and independent verification. After both land,
+use their stored proof formats in the audit-pack export and verifier.
 
 ## Risks
 
