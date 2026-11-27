@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 519
 intent: intent/2026-11-27-519-outbox-delivery.md
 ---
