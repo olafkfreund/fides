@@ -282,7 +282,7 @@ func (s *Server) appendCRAConfirmation(c *craTx, submission craSubmission) error
 		if err := s.appendAttestation(c.ctx, &models.Attestation{
 			ID: uuid.New(), TrailID: owned, Name: "CRA submission", TypeName: evidenceType,
 			Payload: string(payload), IsCompliant: check.compliant, ValidationErrors: check.reasons,
-		}, nil); err != nil {
+		}, nil, attestationEvidence{}); err != nil {
 			return err
 		}
 		seen[link.TrailID] = true
