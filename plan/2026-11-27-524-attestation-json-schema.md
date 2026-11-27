@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 524
 spec: spec/2026-11-27-524-attestation-json-schema.md
 ---
