@@ -51,7 +51,7 @@ HTTP `400` for a non-empty `policy` query parameter.
 | `fides snapshot lambda --env <id>` | AWS Lambda (via aws CLI) |
 | `fides snapshot cloud-run --env <id> --service <name> --region <region> [--project <project>]` | Cloud Run serving revisions (via gcloud) |
 | `fides snapshot azure-apps --env <id> --resource-group <group> --app <name>` | Azure App Service or Functions app (via Azure CLI) |
-| `fides snapshot s3 --env <id> --bucket <name> [--prefix <prefix>]` | S3 object content manifest (via AWS CLI v2) |
+| `fides snapshot s3 --env <id> --bucket <name> [--prefix <prefix>]` | S3 object content manifest (via AWS SDK) |
 
 ### Runtime evidence and incomplete reads
 

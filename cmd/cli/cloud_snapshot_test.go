@@ -91,8 +91,12 @@ func TestCloudRunSnapshot(t *testing.T) {
 
 func TestCloudSnapshotCollectionFailureDoesNotPost(t *testing.T) {
 	if os.Getenv("FIDES_SNAPSHOT_SUBPROCESS") == "1" {
-		handleSnapshotWithCommand(CLIConfig{ServerURL: os.Getenv("FIDES_SERVER_URL")}, []string{"s3", "--env", "env-id", "--bucket", "example"},
-			func(context.Context, string, ...string) ([]byte, error) {
+		handleSnapshotWithCommand(CLIConfig{ServerURL: os.Getenv("FIDES_SERVER_URL")}, []string{"cloud-run",
+			"--env", "env-id", "--service", "api", "--region", "europe-west1"},
+			func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name != "gcloud" || !slices.Equal(args[:min(len(args), 4)], []string{"run", "services", "describe", "api"}) {
+					t.Fatalf("unexpected command %s %v", name, args)
+				}
 				return []byte("provider-stdout-secret"), errors.New("provider-stderr-secret")
 			})
 		return
@@ -105,7 +109,7 @@ func TestCloudSnapshotCollectionFailureDoesNotPost(t *testing.T) {
 	cmd.Env = append(os.Environ(), "FIDES_SNAPSHOT_SUBPROCESS=1", "FIDES_SERVER_URL="+srv.URL)
 	out, err := cmd.CombinedOutput()
 	var status *exec.ExitError
-	if !errors.As(err, &status) || status.ExitCode() != 1 || !strings.Contains(string(out), "S3 list-objects-v2 failed") ||
+	if !errors.As(err, &status) || status.ExitCode() != 1 || !strings.Contains(string(out), "could not describe the Cloud Run service") ||
 		strings.Contains(string(out), "secret") {
 		t.Fatalf("unexpected exit %v or output %q", err, out)
 	}

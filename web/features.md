@@ -143,13 +143,14 @@ the environment on destroy, retaining its snapshots.
   The collector rejects unsupported layouts and limits a package read to 1 GiB.
   [Run from a package](https://learn.microsoft.com/azure/app-service/deploy-run-package) ·
   [Kudu permissions](https://learn.microsoft.com/en-us/azure/app-service/resources-kudu)
-- **S3** requires `s3:ListBucket`, `s3:GetObject`, and `s3:GetObjectVersion`
-  when object versions exist. Encrypted buckets may also require KMS access.
-  Each object is downloaded and hashed into a manifest ordered by exact key.
+- **S3** uses the AWS SDK's configured region and credentials. Grant
+  `s3:ListBucket`, `s3:GetObject`, and `s3:GetObjectVersion` when objects are
+  versioned. Encrypted buckets may also require KMS access. Object bytes
+  stream into hashes for a manifest ordered by exact key.
   An empty prefix result has a stable digest. The collector lists the prefix
   again and rechecks object metadata, but mutable prefixes are not atomic.
   Each run incurs listing, metadata, download, and possible data-transfer
-  charges. Temporary disk usage can reach the size of the largest object.
+  charges.
 
 Each of these collectors has a five-minute collection deadline and fails
 the command on incomplete observation before sending a snapshot to Fides.

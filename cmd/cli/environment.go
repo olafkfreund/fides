@@ -255,7 +255,11 @@ func handleSnapshotWithCommand(config CLIConfig, args []string, run snapshotComm
 		case "azure-apps":
 			reportedArtifacts, err = azureSnapshotArtifacts(ctx, *resourceGroup, *app, run)
 		case "s3":
-			reportedArtifacts, err = s3SnapshotArtifacts(ctx, *bucket, *prefix, run)
+			var client s3SnapshotClient
+			client, err = newS3SnapshotClient(ctx)
+			if err == nil {
+				reportedArtifacts, err = s3SnapshotArtifacts(ctx, *bucket, *prefix, client)
+			}
 		}
 		if ctx.Err() != nil {
 			err = ctx.Err()

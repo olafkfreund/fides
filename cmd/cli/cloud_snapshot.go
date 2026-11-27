@@ -14,7 +14,7 @@ type snapshotCommand func(context.Context, string, ...string) ([]byte, error)
 
 func runSnapshotCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	switch name {
-	case "gcloud", "az", "aws":
+	case "gcloud", "az":
 	default:
 		return nil, errors.New("unsupported provider CLI")
 	}
