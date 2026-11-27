@@ -95,14 +95,14 @@ func (s *Server) trainingRecords(r *http.Request, orgID uuid.UUID, page *listPag
 	}
 	var err error
 	if page == nil {
-		rows, err = s.q(r.Context()).QueryContext(r.Context(), query+" ORDER BY completed_at DESC, id DESC", orgID)
+		rows, err = s.q(r.Context()).QueryContext(r.Context(), query+" ORDER BY completed_at DESC, id DESC", orgID) //nolint:rowserrcheck // The shared loop checks rows.Err through the interface below.
 	} else {
 		rows, err = s.queryPage(r, page, query, orgID)
 	}
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // Cleanup follows the same policy as sql.Rows.Close. Iteration errors are checked below.
 	for rows.Next() {
 		var person, course, notes string
 		var completed time.Time

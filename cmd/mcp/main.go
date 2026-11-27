@@ -700,7 +700,7 @@ func setAuthHeaders(req *http.Request) {
 // makeGetRequest calls the operator-configured Fides server (FIDES_SERVER_URL).
 // The URL is not user/attacker input, so the SSRF (G704) findings are suppressed.
 func makeGetRequest(url string) ([]byte, error) {
-	body, _, err := getPage(httpClient, url)
+	body, _, err := getPage(httpClient, url) //nolint:bodyclose // getPage closes the body before returning.
 	return body, err
 }
 

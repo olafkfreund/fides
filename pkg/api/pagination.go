@@ -161,7 +161,7 @@ func (p *listPage) query(query string, args ...any) (string, []any) {
 
 func (s *Server) queryPage(r *http.Request, p *listPage, query string, args ...any) (*pageRows, error) {
 	query, args = p.query(query, args...)
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, args...)
+	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, args...) //nolint:rowserrcheck // Callers check iteration and early-close errors through pageRows.Err.
 	if err != nil {
 		return nil, err
 	}

@@ -46,6 +46,7 @@ func sameOrigin(a, b *url.URL) bool {
 }
 
 // ReadList reads a paginated array. A positive limit bounds the total returned items.
+// The get callback reads and closes the response body before returning.
 func ReadList(client *http.Client, start string, limit int, get func(*http.Client, string) ([]byte, *http.Response, error)) ([]byte, error) {
 	origin, err := url.Parse(start)
 	if err != nil {
@@ -72,7 +73,7 @@ func ReadList(client *http.Client, start string, limit int, get func(*http.Clien
 		if seen[key] {
 			return nil, fmt.Errorf("repeated pagination link")
 		}
-		body, response, err := get(&pageClient, key)
+		body, response, err := get(&pageClient, key) //nolint:bodyclose // The callback owns the body.
 		if err != nil {
 			return nil, err
 		}

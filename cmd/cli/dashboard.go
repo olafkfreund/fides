@@ -162,7 +162,7 @@ func (m dashModel) fetchPolicies() tea.Msg {
 }
 
 func (m dashModel) fetchArtifacts() tea.Msg {
-	body, response, err := getPage(httpClient, m.config.Token, fmt.Sprintf("%s/api/v1/artifacts?limit=%d", m.config.ServerURL, dashboardListLimit))
+	body, response, err := getPage(httpClient, m.config.Token, fmt.Sprintf("%s/api/v1/artifacts?limit=%d", m.config.ServerURL, dashboardListLimit)) //nolint:bodyclose // getPage closes the body before returning.
 	if err != nil {
 		return artifactsMsg{err: err}
 	}
