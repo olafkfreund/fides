@@ -152,6 +152,11 @@ they work in a pipeline before anything has been recorded.
 | `fides control add --key --name [--framework --require t1,t2]` | Add a custom control |
 | `fides report --framework <name> [--format oscal]` | Auditor-ready per-framework report (control-by-control evidence + coverage); `--format oscal` emits a NIST OSCAL 1.x assessment-results JSON document instead (e.g. for FedRAMP 20x submission) |
 | `fides report --cra-incidents [--hours N]` | EU CRA 24h reporting set: exploitable vulnerabilities (VEX `not_affected` excluded) discovered in the window, with affected artifacts + running environments |
+| `fides cra list` / `fides cra get --case <id>` | List or inspect reporting cases and their deadline history |
+| `fides cra create --file <case.json>` | Open an actively exploited vulnerability or severe incident case |
+| `fides cra correct --case <id> --file <correction.json>` | Record new milestone information or correct a deadline trigger |
+| `fides cra export --case <id> --file <stage.json>` | Save a draft worksheet for filing in the ENISA platform |
+| `fides cra submit --case <id> --file <submission.json>` | Record the actual filing that an operator confirms |
 | `fides change-gate --trail <id>` | Evidence-backed approve/hold verdict + 0–100 risk score (exits 2 on HOLD) |
 | `fides approve --trail <id> [--reason <r>] [--role approver\|deployer]` | Record a segregation-of-duties approval (human vs machine; four-eyes = 2 distinct humans); refreshes the trail's `segregation-of-duties` attestation proving committer != approver != deployer |
 

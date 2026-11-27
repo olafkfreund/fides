@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -95,5 +96,38 @@ func TestITOMSinkIgnoresUnrelatedEvents(t *testing.T) {
 	sink := NewITOMSink(fakeLoader{enabled: true})
 	if err := sink.Deliver(context.Background(), events.Event{Type: "other", Payload: []byte("{}")}); err != nil {
 		t.Fatalf("unrelated event should be a no-op: %v", err)
+	}
+}
+
+func TestITOMCRADeadlineUsesStableKeyAndMinimalFields(t *testing.T) {
+	var record Event
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Records []Event `json:"records"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Records) != 1 {
+			t.Errorf("expected one CRA event, got %v: %v", body.Records, err)
+			http.Error(w, "invalid fixture", http.StatusBadRequest)
+			return
+		}
+		record = body.Records[0]
+	}))
+	defer srv.Close()
+	sink := NewITOMSink(fakeLoader{enabled: true, cfg: Config{InstanceURL: srv.URL, AuthType: AuthBasic}})
+	sink.newClient = func(cfg Config) (*Client, error) {
+		return testClient(cfg.InstanceURL, cfg.AuthType, srv.Client()), nil
+	}
+	ev := events.Event{Type: events.CRADeadlineOverdue, Payload: []byte(`{
+		"case_id":"d90baabe-29a9-4069-84c9-2f16211b3ebd","stage":"final","revision":2,
+		"due_at":"2026-11-01T12:00:00Z","private":"restricted"
+	}`)}
+	for range 2 {
+		if err := sink.Deliver(t.Context(), ev); err != nil {
+			t.Fatal(err)
+		}
+		wantKey := messageKey(ev.Type, "d90baabe-29a9-4069-84c9-2f16211b3ebd", "final:2")
+		if record.MessageKey != wantKey || record.Severity != "2" || strings.Contains(record.AdditionalInfo, "restricted") {
+			t.Fatalf("unexpected CRA ITOM record: %+v", record)
+		}
 	}
 }
