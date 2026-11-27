@@ -4,7 +4,7 @@
 // polyfill (navigator.modelContext) elsewhere. Tools run in the page with the
 // user's session, so they call the same-origin, cookie-authed Fides API.
 
-import { apiGet, apiPost } from "./api";
+import { apiGet, apiList, apiPost } from "./api";
 
 type JSONSchema = Record<string, unknown>;
 type ToolDef = {
@@ -34,21 +34,21 @@ const TOOLS: ToolDef[] = [
     description: "List the configured Fides compliance flows (CI/CD pipelines).",
     inputSchema: { type: "object", properties: {} },
     readOnly: true,
-    execute: () => apiGet("/api/v1/flows"),
+    execute: () => apiList("/api/v1/flows"),
   },
   {
     name: "fides_list_environments",
     description: "List runtime environments and their compliance status.",
     inputSchema: { type: "object", properties: {} },
     readOnly: true,
-    execute: () => apiGet("/api/v1/environments"),
+    execute: () => apiList("/api/v1/environments"),
   },
   {
     name: "fides_list_policies",
     description: "List named compliance policies and their jq rules.",
     inputSchema: { type: "object", properties: {} },
     readOnly: true,
-    execute: () => apiGet("/api/v1/policies"),
+    execute: () => apiList("/api/v1/policies"),
   },
   {
     name: "fides_controls_coverage",
@@ -62,14 +62,14 @@ const TOOLS: ToolDef[] = [
     description: "Search build artifacts by SHA256 prefix and/or name.",
     inputSchema: { type: "object", properties: { sha: { type: "string" }, name: { type: "string" } } },
     readOnly: true,
-    execute: (i) => apiGet(`/api/v1/search/artifacts${q({ sha: i.sha as string, name: i.name as string })}`),
+    execute: (i) => apiList(`/api/v1/search/artifacts${q({ sha: i.sha as string, name: i.name as string })}`),
   },
   {
     name: "fides_search_attestations",
     description: "Search attestations by type, compliance (true/false), or artifact SHA256.",
     inputSchema: { type: "object", properties: { type: { type: "string" }, compliant: { type: "string", enum: ["", "true", "false"] }, sha: { type: "string" } } },
     readOnly: true,
-    execute: (i) => apiGet(`/api/v1/search/attestations${q({ type: i.type as string, compliant: i.compliant as string, sha: i.sha as string })}`),
+    execute: (i) => apiList(`/api/v1/search/attestations${q({ type: i.type as string, compliant: i.compliant as string, sha: i.sha as string })}`),
   },
   {
     name: "fides_deployment_frequency",

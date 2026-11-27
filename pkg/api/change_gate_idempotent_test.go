@@ -33,6 +33,7 @@ func TestChangeGateIdempotentSoD(t *testing.T) {
 	if _, err := pool.Exec(string(schema)); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
+	applyAttestationValidationMigration(t, pool)
 
 	org, flow, trail := uuid.New(), uuid.New(), uuid.New()
 	// Unique emails per run: users.email is globally unique, so hardcoded

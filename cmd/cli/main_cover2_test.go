@@ -150,12 +150,13 @@ func TestHandleAttestSBOMParsesAndUploads(t *testing.T) {
 
 func TestHandleAssertCompliantPasses(t *testing.T) {
 	srv, got := recordingServer(t, `{"compliant":true,"violations":[]}`)
-	handleAssert(cfg(srv), []string{"--sha256", strings.Repeat("c", 64), "--policy", "prod"})
+	digest := strings.Repeat("c", 64)
+	handleAssert(cfg(srv), []string{"--sha256", digest, "--policy", ""})
 	if got.method != "GET" {
 		t.Errorf("method = %s, want GET", got.method)
 	}
-	if !strings.Contains(got.query, "policy=prod") {
-		t.Errorf("query = %q, want the policy filter", got.query)
+	if got.path != "/api/v1/compliance" || got.query != "sha256="+digest {
+		t.Errorf("request = %s?%s, want the compliance endpoint with only sha256", got.path, got.query)
 	}
 }
 

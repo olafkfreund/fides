@@ -32,6 +32,7 @@ spec:
     sha256:
       default: ''
     policy:
+      description: 'Legacy assert input. Leave empty because named policy selection is unsupported.'
       default: ''
     signer:
       default: ''

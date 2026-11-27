@@ -226,9 +226,7 @@ func main() {
 			slack.NewSink(slack.NewDBLoader(db, secrets)),
 		}
 		// Optional SIEM forwarding: stream every event to a Splunk HEC endpoint.
-		// Require the token too — a URL without a token would 401 on every
-		// delivery and, because the dispatcher fails an event if any sink errors,
-		// stall delivery to the other sinks. Better to skip a misconfigured sink.
+		// Require the token because Splunk rejects unauthenticated deliveries.
 		if hecURL := os.Getenv("FIDES_SIEM_HEC_URL"); hecURL != "" {
 			if hecToken := os.Getenv("FIDES_SIEM_HEC_TOKEN"); hecToken != "" {
 				sinks = append(sinks, siem.NewSplunkSink(hecURL, hecToken))

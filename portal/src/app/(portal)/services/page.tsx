@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiList, apiPost } from "@/lib/api";
 
 type Service = {
   service: string;
@@ -21,7 +21,7 @@ export default function Services() {
   const [tier, setTier] = useState("1");
 
   const load = () =>
-    apiGet<Service[]>("/api/v1/services")
+    apiList<Service>("/api/v1/services")
       .then((x) => setItems(x ?? []))
       .catch((e) => setErr(String((e as Error).message || e)));
   useEffect(() => {

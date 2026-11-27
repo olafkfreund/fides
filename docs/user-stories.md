@@ -174,7 +174,7 @@ fides metrics deployment-frequency --weeks 12
 > and know the blast radius of a new CVE."*
 
 ```bash
-fides assert --sha256 $DIGEST --policy no-critical-vulns   # exit 2 if non-compliant
+fides assert --sha256 $DIGEST   # exit 2 if non-compliant
 fides impact --cve CVE-2026-12345                          # which artifacts + running envs are hit
 fides vex --cve CVE-2026-12345 --status not_affected --product $DIGEST  # suppress false positives
 ```

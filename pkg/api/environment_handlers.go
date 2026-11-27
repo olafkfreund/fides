@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -27,13 +28,13 @@ import (
 
 type createEnvironmentReq struct {
 	Name        string `json:"name"`
-	Type        string `json:"type"` // docker | k8s | ecs | lambda | s3 | server
+	Type        string `json:"type"` // Includes docker, k8s, ecs, lambda, cloud-run, azure-apps, s3 and server.
 	Description string `json:"description"`
 }
 
 // handleCreateEnvironment creates (or upserts by name) an environment for the
 // caller's org. Idempotent on (org_id, name) so re-running a setup script or the
-// reporter bootstrap is safe. Tenant scope comes from the principal (H2/IDOR).
+// reporter bootstrap is safe. Create-only callers opt out of the upsert.
 func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
@@ -53,13 +54,15 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	err := s.q(r.Context()).QueryRowContext(r.Context(),
 		`INSERT INTO environments (id, org_id, name, type, description)
 		 VALUES ($1, $2, $3, $4, $5)
-		 -- Re-registering an environment by name un-archives it. Creating one is
-		 -- a statement that it is in use, and the alternative is a silent trap:
-		 -- the caller gets 201 and an id, then wonders why it is absent from
-		 -- coverage and from the environment list.
-		 ON CONFLICT (org_id, name) DO UPDATE SET type = EXCLUDED.type, description = EXCLUDED.description, archived = FALSE
+		 ON CONFLICT (org_id, name) DO UPDATE
+		 SET type = EXCLUDED.type, description = EXCLUDED.description, archived = FALSE
+		 WHERE NOT $6
 		 RETURNING id`,
-		uuid.New(), orgID, req.Name, req.Type, req.Description).Scan(&id)
+		uuid.New(), orgID, req.Name, req.Type, req.Description, r.URL.Query().Get("create_only") == "true").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "environment name already exists", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		internalError(w, err)
 		return
@@ -71,139 +74,237 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+type environmentRecord struct {
+	createEnvironmentReq
+	ID       uuid.UUID `json:"id"`
+	Archived bool      `json:"archived"`
+}
+
+func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	row := s.q(ctx).QueryRowContext(ctx, `
+		SELECT id, name, type, COALESCE(description, ''), archived
+		FROM environments WHERE id = $1 AND org_id = $2`, id, orgID)
+	writeEnvironmentRecord(w, row)
+}
+
+func (s *Server) handleUpdateEnvironment(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Name        *string `json:"name"`
+		Type        *string `json:"type"`
+		Description *string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if (req.Name != nil && strings.TrimSpace(*req.Name) == "") ||
+		(req.Type != nil && strings.TrimSpace(*req.Type) == "") {
+		http.Error(w, "name and type cannot be blank", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	row := s.q(ctx).QueryRowContext(ctx, `
+		UPDATE environments
+		SET name = COALESCE($3, name), type = COALESCE($4, type), description = COALESCE($5, description)
+		WHERE id = $1 AND org_id = $2
+		RETURNING id, name, type, COALESCE(description, ''), archived`,
+		id, orgID, req.Name, req.Type, req.Description)
+	writeEnvironmentRecord(w, row)
+}
+
+func writeEnvironmentRecord(w http.ResponseWriter, row *sql.Row) {
+	var env environmentRecord
+	var pqErr *pq.Error
+	err := row.Scan(&env.ID, &env.Name, &env.Type, &env.Description, &env.Archived)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		http.Error(w, "environment not found", http.StatusNotFound)
+	case errors.As(err, &pqErr) && pqErr.Code == "23505":
+		http.Error(w, "environment name already exists", http.StatusConflict)
+	case pqErr != nil && pqErr.Code == "22001":
+		http.Error(w, "environment name or type is too long", http.StatusBadRequest)
+	case err != nil:
+		internalError(w, err)
+	default:
+		writeJSON(w, env)
+	}
+}
+
+type environmentRuntimeArtifact struct {
+	Service    string `json:"service"`
+	SHA256     string `json:"sha256"`
+	Registered bool   `json:"registered"`
+	Name       string `json:"name"`
+}
+
+type environmentView struct {
+	ID            string                       `json:"id"`
+	Name          string                       `json:"name"`
+	Type          string                       `json:"type"`
+	Description   string                       `json:"description"`
+	LastSnapshot  string                       `json:"lastSnapshot"`
+	Running       []environmentRuntimeArtifact `json:"running"`
+	Drifts        []string                     `json:"drifts"`
+	ShadowChanges []string                     `json:"shadowChanges"`
+}
+
 func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// Archived environments are hidden unless asked for. Retiring one is meant
-	// to get it out of the way; leaving it listed would only move the clutter
-	// from the coverage number to the page.
-	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description, archived
-	             FROM environments WHERE org_id = $1 AND NOT archived`
-	if r.URL.Query().Get("include_archived") == "true" {
-		queryEnv = `SELECT id, name, type, COALESCE(description, '') AS description, archived
-		            FROM environments WHERE org_id = $1`
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), queryEnv, orgID)
+	includeArchived := r.URL.Query().Get("include_archived") == "true"
+	rows, err := s.queryPage(r, page, `
+		SELECT id, name, type, COALESCE(description, ''), archived /* page keys */
+		FROM environments WHERE org_id = $1 AND ($2 OR NOT archived)
+		  AND strpos(lower(name), lower($3)) > 0`, orgID, includeArchived, r.URL.Query().Get("name"))
 	if err != nil {
 		internalError(w, err)
 		return
 	}
+
+	type listedEnvironment struct {
+		environmentView
+		Archived bool `json:"archived"`
+	}
+
 	defer rows.Close()
-
-	// Complete detailed Environment view model mapping to what frontend app.js expects
-	type RuntimeArtifact struct {
-		Service    string `json:"service"`
-		SHA256     string `json:"sha256"`
-		Registered bool   `json:"registered"`
-		Name       string `json:"name"`
-	}
-
-	type EnvironmentView struct {
-		ID            string            `json:"id"`
-		Name          string            `json:"name"`
-		Type          string            `json:"type"`
-		Description   string            `json:"description"`
-		Archived      bool              `json:"archived"`
-		LastSnapshot  string            `json:"lastSnapshot"`
-		Running       []RuntimeArtifact `json:"running"`
-		Drifts        []string          `json:"drifts"`
-		ShadowChanges []string          `json:"shadowChanges"`
-	}
-
-	// Collect all base environments FIRST. Under RLS, s.q(ctx) is a single
-	// pinned connection, so we must drain this cursor before running any
-	// sub-query — otherwise the nested query disrupts the outer cursor and only
-	// the first row is returned.
-	list := []*EnvironmentView{}
+	list := []*listedEnvironment{}
+	byID := map[string]*environmentView{}
 	for rows.Next() {
-		var ev EnvironmentView
+		var ev listedEnvironment
 		if err := rows.Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description, &ev.Archived); err != nil {
-			rows.Close()
 			internalError(w, err)
 			return
 		}
-		ev.LastSnapshot = "No snapshot reported yet"
-		ev.Running = []RuntimeArtifact{}
-		ev.Drifts = []string{}
-		ev.ShadowChanges = []string{}
 		list = append(list, &ev)
+		byID[ev.ID] = &ev.environmentView
 	}
-	// A failed iteration must not read as a short result.
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		internalError(w, err)
 		return
 	}
-	rows.Close()
+	// Finish the base page before enriching it on the request's pinned connection.
+	if err := rows.Close(); err != nil {
+		internalError(w, err)
+		return
+	}
+	if err := s.enrichEnvironmentDrift(r.Context(), orgID, byID); err != nil {
+		internalError(w, err)
+		return
+	}
+	page.write(w, list)
+}
 
-	// Enrich each environment now that the outer cursor is closed.
-	for _, ev := range list {
-		var latestSnapID string
-		var snapTime time.Time
-		querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-		if err := s.q(r.Context()).QueryRowContext(r.Context(), querySnap, ev.ID).Scan(&latestSnapID, &snapTime); err != nil {
-			continue
-		}
-		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-
-		// Read all running artifacts into memory before the per-artifact queries.
-		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-		            FROM snapshot_artifacts sa
-		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-		            WHERE sa.snapshot_id = $1`
-		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
-		if err != nil {
-			defer saRows.Close()
-			continue
-		}
-		var running []RuntimeArtifact
-		for saRows.Next() {
-			var ra RuntimeArtifact
-			if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-				running = append(running, ra)
-			}
-		}
-		// A failed iteration must not read as a short result.
-		if err := saRows.Err(); err != nil {
-			internalError(w, err)
-			return
-		}
-		saRows.Close()
-
-		for _, ra := range running {
-			ev.Running = append(ev.Running, ra)
-			if !ra.Registered {
-				ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-				continue
-			}
-			var trailID sql.NullString
-			// No row is the ordinary case -- the artifact is simply not
-			// registered. A real error is not, and swallowing it here silently
-			// under-reports drift, which is the one direction a compliance view
-			// must not fail in.
-			if err := s.q(r.Context()).QueryRowContext(r.Context(),
-				"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				internalError(w, err)
-				return
-			}
-			if trailID.Valid {
-				var compliantCount, totalCount int
-				if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					internalError(w, err)
-					return
-				}
-				if totalCount > 0 && compliantCount < totalCount {
-					ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-				}
-			}
-		}
+func (s *Server) enrichEnvironmentDrift(ctx context.Context, orgID uuid.UUID, byID map[string]*environmentView) error {
+	if len(byID) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(byID))
+	for id, ev := range byID {
+		ids = append(ids, id)
+		ev.LastSnapshot = "No snapshot reported yet"
+		ev.Running = []environmentRuntimeArtifact{}
+		ev.Drifts = []string{}
+		ev.ShadowChanges = []string{}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	// Match allowlists by the exact reported runtime digest, as snapshot
+	// ingestion does, and only check historical approvals for current shadows.
+	runtimeRows, err := s.q(ctx).QueryContext(ctx, `
+		WITH latest AS (
+			SELECT DISTINCT ON (environment_id) environment_id, id, created_at
+			FROM environment_snapshots
+			WHERE environment_id = ANY($1)
+			ORDER BY environment_id, created_at DESC NULLS LAST, id DESC
+		), running AS (
+			SELECT l.environment_id, sa.id, sa.service_name, sa.runtime_digest, a.name, a.trail_id,
+			       (a.sha256 IS NOT NULL) AS registered, (al.id IS NOT NULL) AS approved
+			FROM latest l
+			JOIN snapshot_artifacts sa ON sa.snapshot_id = l.id
+			LEFT JOIN artifacts a ON a.sha256 = sa.artifact_sha256 AND a.org_id = $2
+			LEFT JOIN environment_allowlist al ON al.environment_id = l.environment_id
+			                                  AND al.artifact_sha256 = sa.runtime_digest
+		), prior_approval AS (
+			SELECT DISTINCT r.environment_id, r.service_name
+			FROM running r
+			JOIN environment_snapshots s ON s.environment_id = r.environment_id
+			JOIN snapshot_artifacts sa ON sa.snapshot_id = s.id AND sa.service_name = r.service_name
+			JOIN environment_allowlist al ON al.environment_id = s.environment_id
+			                             AND al.artifact_sha256 = sa.runtime_digest
+			WHERE NOT r.registered AND NOT r.approved AND r.service_name <> ''
+		), trail_results AS (
+			SELECT at.trail_id, bool_or(NOT at.is_compliant) AS failing
+			FROM (SELECT DISTINCT trail_id FROM running WHERE trail_id IS NOT NULL) rt
+			JOIN trails tr ON tr.id = rt.trail_id
+			JOIN flows f ON f.id = tr.flow_id AND f.org_id = $2
+			JOIN attestations at ON at.trail_id = tr.id
+			GROUP BY at.trail_id
+		)
+		SELECT l.environment_id, l.created_at, r.service_name, r.runtime_digest, r.registered,
+		       COALESCE(r.name, ''), r.approved, (p.service_name IS NOT NULL), COALESCE(t.failing, false)
+		FROM latest l
+		LEFT JOIN running r ON r.environment_id = l.environment_id
+		LEFT JOIN prior_approval p ON p.environment_id = r.environment_id AND p.service_name = r.service_name
+		LEFT JOIN trail_results t ON t.trail_id = r.trail_id
+		ORDER BY r.service_name, r.id`, pq.Array(ids), orgID)
+	if err != nil {
+		return err
+	}
+	defer runtimeRows.Close()
+	for runtimeRows.Next() {
+		var envID string
+		var snapshot sql.NullTime
+		var service, digest sql.NullString
+		var registered, approved sql.NullBool
+		var priorApproval, failing bool
+		var artifact environmentRuntimeArtifact
+		if err := runtimeRows.Scan(&envID, &snapshot, &service, &digest, &registered, &artifact.Name, &approved, &priorApproval, &failing); err != nil {
+			return err
+		}
+		ev := byID[envID]
+		if snapshot.Valid {
+			ev.LastSnapshot = snapshot.Time.Format("2006-01-02 15:04:05")
+		}
+		if !service.Valid {
+			continue
+		}
+		artifact.Service, artifact.SHA256, artifact.Registered = service.String, digest.String, registered.Bool
+		ev.Running = append(ev.Running, artifact)
+		if !artifact.Registered && !approved.Bool {
+			ev.ShadowChanges = append(ev.ShadowChanges, shadowMessage(artifact.Service, artifact.SHA256, priorApproval))
+		}
+		if failing {
+			ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", artifact.Service, artifact.SHA256))
+		}
+	}
+	return runtimeRows.Err()
 }
 
 func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Request) {
@@ -225,100 +326,15 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 	}
 
 	queryEnv := `SELECT id, name, type, COALESCE(description, '') AS description FROM environments WHERE id = $1 AND org_id = $2`
-	var id, name, envType, description string
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&id, &name, &envType, &description)
+	var ev environmentView
+	err = s.q(r.Context()).QueryRowContext(r.Context(), queryEnv, envID, orgID).Scan(&ev.ID, &ev.Name, &ev.Type, &ev.Description)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("environment not found: %v", err), http.StatusNotFound)
 		return
 	}
-
-	// Complete detailed Environment view model mapping
-	type RuntimeArtifact struct {
-		Service    string `json:"service"`
-		SHA256     string `json:"sha256"`
-		Registered bool   `json:"registered"`
-		Name       string `json:"name"`
-	}
-
-	type EnvironmentView struct {
-		ID            string            `json:"id"`
-		Name          string            `json:"name"`
-		Type          string            `json:"type"`
-		Description   string            `json:"description"`
-		LastSnapshot  string            `json:"lastSnapshot"`
-		Running       []RuntimeArtifact `json:"running"`
-		Drifts        []string          `json:"drifts"`
-		ShadowChanges []string          `json:"shadowChanges"`
-	}
-
-	ev := EnvironmentView{
-		ID:            id,
-		Name:          name,
-		Type:          envType,
-		Description:   description,
-		LastSnapshot:  "No snapshot reported yet",
-		Running:       []RuntimeArtifact{},
-		Drifts:        []string{},
-		ShadowChanges: []string{},
-	}
-
-	// Fetch latest snapshot ID
-	var latestSnapID string
-	var snapTime time.Time
-	querySnap := `SELECT id, created_at FROM environment_snapshots WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), querySnap, envID).Scan(&latestSnapID, &snapTime)
-
-	if err == nil {
-		ev.LastSnapshot = snapTime.Format("2006-01-02 15:04:05")
-
-		// Query running artifacts in snapshot
-		querySA := `SELECT sa.service_name, sa.runtime_digest, (sa.artifact_sha256 IS NOT NULL), COALESCE(a.name, '')
-		            FROM snapshot_artifacts sa
-		            LEFT JOIN artifacts a ON sa.artifact_sha256 = a.sha256
-		            WHERE sa.snapshot_id = $1`
-		// Read all running artifacts before per-artifact queries — under RLS,
-		// s.q(ctx) is a single pinned connection and nested queries would break
-		// the outer cursor.
-		if saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID); err == nil {
-			var running []RuntimeArtifact
-			defer saRows.Close()
-			for saRows.Next() {
-				var ra RuntimeArtifact
-				if err := saRows.Scan(&ra.Service, &ra.SHA256, &ra.Registered, &ra.Name); err == nil {
-					running = append(running, ra)
-				}
-			}
-			// A failed iteration must not read as a short result.
-			if err := saRows.Err(); err != nil {
-				internalError(w, err)
-				return
-			}
-			saRows.Close()
-
-			for _, ra := range running {
-				ev.Running = append(ev.Running, ra)
-				if !ra.Registered {
-					ev.ShadowChanges = append(ev.ShadowChanges, fmt.Sprintf("service %s running unregistered digest %s", ra.Service, ra.SHA256))
-					continue
-				}
-				var trailID sql.NullString
-				if err := s.q(r.Context()).QueryRowContext(r.Context(),
-					"SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1", ra.SHA256, orgID).Scan(&trailID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-					internalError(w, err)
-					return
-				}
-				if trailID.Valid {
-					var compliantCount, totalCount int
-					if err := s.q(r.Context()).QueryRowContext(r.Context(), "SELECT COUNT(*), SUM(CASE WHEN is_compliant THEN 1 ELSE 0 END) FROM attestations WHERE trail_id = $1", trailID.String).Scan(&totalCount, &compliantCount); err != nil && !errors.Is(err, sql.ErrNoRows) {
-						internalError(w, err)
-						return
-					}
-					if totalCount > 0 && compliantCount < totalCount {
-						ev.Drifts = append(ev.Drifts, fmt.Sprintf("service %s running drifted artifact %s (failing controls)", ra.Service, ra.SHA256))
-					}
-				}
-			}
-		}
+	if err := s.enrichEnvironmentDrift(r.Context(), orgID, map[string]*environmentView{ev.ID: &ev}); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	// Fetch MCP servers configured for this environment
@@ -354,7 +370,7 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 
 	// Build the report struct
 	report := struct {
-		Environment EnvironmentView `json:"environment"`
+		Environment environmentView `json:"environment"`
 		MCPServers  []MCPServerView `json:"mcp_servers"`
 		ExportedAt  string          `json:"exported_at"`
 	}{
@@ -363,13 +379,18 @@ func (s *Server) handleExportEnvironmentAudit(w http.ResponseWriter, r *http.Req
 		ExportedAt:  time.Now().Format(time.RFC3339),
 	}
 
-	fileName := fmt.Sprintf("audit-report-%s.json", name)
+	fileName := fmt.Sprintf("audit-report-%s.json", ev.Name)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
 	json.NewEncoder(w).Encode(report)
 }
 
 func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 	envIDStr := r.URL.Query().Get("environment_id")
 	if envIDStr == "" {
 		http.Error(w, "missing environment_id query param", http.StatusBadRequest)
@@ -385,9 +406,13 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 		return
 	}
 
-	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at 
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, environment_id, name, transport, COALESCE(command, ''), args, env_vars, COALESCE(url, ''), COALESCE(auth_header, ''), created_at, updated_at /* page keys */
 	          FROM environment_mcp_servers WHERE environment_id = $1`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, envID)
+	rows, err := s.queryPage(r, page, query, envID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -421,8 +446,7 @@ func (s *Server) handleListEnvironmentMCPServers(w http.ResponseWriter, r *http.
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 func (s *Server) handleSaveEnvironmentMCPServer(w http.ResponseWriter, r *http.Request) {
@@ -595,7 +619,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	}
 
 	// Evaluate rules deterministically using PolicyEngine
-	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
+	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(r.Context(), output, req.Rules)
 	if err != nil {
 		internalError(w, err)
 		return

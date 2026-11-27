@@ -13,14 +13,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 
+	"fides/internal/outbound"
 	"fides/pkg/events"
 )
 
@@ -53,7 +52,7 @@ type Sink struct {
 func NewSink(loader Loader) *Sink {
 	return &Sink{
 		loader:   loader,
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   outbound.NewHTTPSClient(10 * time.Second),
 		now:      time.Now,
 		validate: validateTargetURL,
 	}
@@ -72,7 +71,7 @@ type envelope struct {
 
 // Deliver sends the event to every configured target. A failure for any target
 // returns an error so the dispatcher retries; receivers MUST dedupe on the
-// X-Fides-Event-Id header (delivery is at-least-once).
+// X-Fides-Delivery-Id or X-Fides-Event-Id header.
 func (s *Sink) Deliver(ctx context.Context, ev events.Event) error {
 	targets, err := s.loader.Targets(ctx, ev.OrgID, ev.Type)
 	if err != nil {
@@ -115,6 +114,9 @@ func (s *Sink) post(ctx context.Context, t Target, ev events.Event, ts string, b
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "fides-webhooks/1")
 	req.Header.Set("X-Fides-Event-Id", ev.ID.String())
+	if ev.DeliveryID != "" {
+		req.Header.Set("X-Fides-Delivery-Id", ev.DeliveryID)
+	}
 	req.Header.Set("X-Fides-Event-Type", ev.Type)
 	req.Header.Set("X-Fides-Timestamp", ts)
 	req.Header.Set("X-Fides-Signature", Sign(t.Secret, ts, body))
@@ -141,29 +143,9 @@ func Sign(secret, timestamp string, body []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
-// validateTargetURL enforces HTTPS and blocks SSRF to loopback/private/
-// link-local addresses (incl. the cloud metadata endpoint 169.254.169.254).
 func validateTargetURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("invalid webhook url: %w", err)
-	}
-	if u.Scheme != "https" {
-		return fmt.Errorf("webhook url must use https")
-	}
-	host := u.Hostname()
-	if host == "" {
-		return fmt.Errorf("webhook url has no host")
-	}
-
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("webhook host does not resolve: %w", err)
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
-			return fmt.Errorf("webhook url resolves to a disallowed address (%s)", ip)
-		}
+	if err := outbound.ValidateHTTPS(raw); err != nil {
+		return fmt.Errorf("webhook URL: %w", err)
 	}
 	return nil
 }

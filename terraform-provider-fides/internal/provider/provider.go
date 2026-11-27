@@ -64,7 +64,7 @@ func (p *fidesProvider) Configure(ctx context.Context, req provider.ConfigureReq
 }
 
 func (p *fidesProvider) Resources(_ context.Context) []func() resource.Resource {
-	return []func() resource.Resource{NewControlResource}
+	return []func() resource.Resource{NewControlResource, NewAttestationTypeResource, NewEnvironmentResource}
 }
 
 func (p *fidesProvider) DataSources(_ context.Context) []func() datasource.DataSource {

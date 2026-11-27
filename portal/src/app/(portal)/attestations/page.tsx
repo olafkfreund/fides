@@ -3,19 +3,24 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, ChevronRight } from "lucide-react";
 import { apiGet } from "@/lib/api";
+import { usePagedList } from "@/lib/usePagedList";
+import { LoadMore } from "@/components/LoadMore";
 import { PageHeader, Panel, StatTile, Chip, Donut, DistBars } from "@/components/dash";
 
 type Att = { id: string; name: string; type_name: string; is_compliant: boolean; trail_id: string; created_at?: string };
-type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algorithm?: string; content_hash?: string; artifact_sha256?: string };
+type ValidationError = { code: string; path?: string; message: string };
+type AttDetail = Att & { payload?: unknown; signed_by?: string; signature_algorithm?: string; content_hash?: string; artifact_sha256?: string; validation_errors?: ValidationError[] | null };
+type AttestationType = { id: string; name: string; description?: string; schema?: string | null };
 
 const control = "rounded-md border border-border bg-background px-3 py-2 text-sm";
 
 export default function Attestations() {
-  const [atts, setAtts] = useState<Att[]>([]);
+  const ledger = usePagedList<Att>();
+  const definitions = usePagedList<AttestationType>();
+  const atts = ledger.items;
   const [type, setType] = useState("");
   const [compliance, setCompliance] = useState("");
   const [name, setName] = useState("");
-  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<Record<string, AttDetail>>({});
   const [err, setErr] = useState("");
 
@@ -31,11 +36,8 @@ export default function Attestations() {
     const q = new URLSearchParams();
     if (t) q.set("type", t);
     if (c) q.set("compliant", c);
-    setLoading(true);
-    apiGet<Att[]>(`/api/v1/search/attestations?${q}`)
-      .then((a) => setAtts(a || []))
-      .catch((e) => setErr(String(e.message || e)))
-      .finally(() => setLoading(false));
+    if (name) q.set("name", name);
+    ledger.load(`/api/v1/search/attestations?${q}`);
   };
   // Preset filters from the URL so dashboard deep-links (e.g. ?compliant=false for
   // "Active Alerts") land pre-filtered. Static export → read window.location directly.
@@ -46,7 +48,10 @@ export default function Attestations() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (c) setCompliance(c);
     if (t) setType(t);
-    const timer = setTimeout(() => load({ compliance: c, type: t }), 0);
+    const timer = setTimeout(() => {
+      load({ compliance: c, type: t });
+      definitions.load("/api/v1/attestation-types");
+    }, 0);
     return () => clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -60,7 +65,7 @@ export default function Attestations() {
       <PageHeader title="Attestations" subtitle="Evidence recorded against build trails." />
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatTile label="Total" value={String(atts.length)} />
+        <StatTile label="Loaded attestations" value={String(atts.length)} />
         <StatTile label="Compliant" value={`${atts.length ? Math.round((compliant / atts.length) * 100) : 0}%`} sub={`${compliant} of ${atts.length}`} color="text-green-400" />
         <StatTile label="Evidence Types" value={String(types.length)} />
       </div>
@@ -84,10 +89,10 @@ export default function Attestations() {
           <select className={control} value={compliance} onChange={(e) => setCompliance(e.target.value)}>
             <option value="">Any compliance</option><option value="true">Compliant</option><option value="false">Non-compliant</option>
           </select>
-          <button onClick={load} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
+          <button onClick={() => load()} className="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground">Apply</button>
         </div>
 
-        {loading ? <p className="text-sm text-muted-foreground">Loading…</p> : shown.length ? (
+        {ledger.loading && !atts.length ? <p className="text-sm text-muted-foreground">Loading…</p> : shown.length ? (
           <div className="flex flex-col divide-y divide-border">
             {shown.map((a) => {
               const d = open[a.id];
@@ -112,6 +117,19 @@ export default function Attestations() {
                           {d.content_hash && <span>chain hash <code className="font-mono">{d.content_hash.slice(0, 16)}…</code></span>}
                         </div>
                       )}
+                      {!!d.validation_errors?.length && (
+                        <div className="rounded-md border border-border p-3 text-sm">
+                          <p className="font-medium text-red-400">Validation failures</p>
+                          <ul className="mt-1 list-disc space-y-1 pl-5">
+                            {d.validation_errors.map(({ code, path, message }, index) => (
+                              <li key={index} className="break-words">
+                                {message} <code className="text-xs text-muted-foreground">({code})</code>
+                                {path && <> at <code className="text-xs">{path}</code></>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       <pre className="max-h-72 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-xs leading-relaxed text-foreground/90">{d.payload != null ? JSON.stringify(d.payload, null, 2) : "(no payload)"}</pre>
                     </div>
                   )}
@@ -120,6 +138,29 @@ export default function Attestations() {
             })}
           </div>
         ) : <p className="text-sm text-muted-foreground">No attestations match.</p>}
+        <LoadMore {...ledger} />
+        {ledger.error && <p role="alert" className="mt-3 text-sm text-red-400">{ledger.error}</p>}
+      </Panel>
+
+      <Panel label="Attestation Types" className="mt-6">
+        <div className="divide-y divide-border">
+          {definitions.items.map((definition) => (
+            <details key={definition.id} className="py-2 text-sm">
+              <summary className="cursor-pointer font-medium">{definition.name}</summary>
+              {definition.description && <p className="my-2 text-muted-foreground">{definition.description}</p>}
+              {definition.schema ? (
+                <pre aria-label="JSON Schema" className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-border bg-background p-3 font-mono text-xs">
+                  {definition.schema}
+                </pre>
+              ) : <p className="mt-2 text-muted-foreground">No JSON Schema configured.</p>}
+            </details>
+          ))}
+        </div>
+        {!definitions.items.length && !definitions.error && (
+          <p className="text-sm text-muted-foreground">{definitions.loading ? "Loading…" : "No attestation types configured."}</p>
+        )}
+        <LoadMore {...definitions} />
+        {definitions.error && <p role="alert" className="mt-3 text-sm text-red-400">{definitions.error}</p>}
       </Panel>
 
       {err && <p className="mt-4 text-sm text-red-400">{err}</p>}

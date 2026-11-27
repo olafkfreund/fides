@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	neturl "net/url"
 	"os"
 	"strings"
 	"time"
@@ -18,13 +16,10 @@ import (
 	"fides/pkg/admission"
 	"fides/pkg/ai"
 	"fides/pkg/auth"
-	"fides/pkg/crypto"
 	"fides/pkg/db"
-	"fides/pkg/events"
 	"fides/pkg/inbound"
 	"fides/pkg/models"
 	"fides/pkg/policy"
-	"fides/pkg/servicenow"
 	"fides/pkg/storage"
 	"fides/pkg/telemetry"
 	"fides/pkg/vault"
@@ -73,8 +68,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/orgs", s.handleListOrgs)
 
 	// Flow API
-	mux.HandleFunc("POST /api/v1/flows", s.handleCreateFlow)
-	mux.HandleFunc("PUT /api/v1/flows", s.handleUpdateFlow)
+	mux.HandleFunc("POST /api/v1/flows", withMutationRole(auth.RoleAdmin, s.handleCreateFlow))
+	mux.HandleFunc("PUT /api/v1/flows", withMutationRole(auth.RoleAdmin, s.handleUpdateFlow))
 	mux.HandleFunc("GET /api/v1/flows", s.handleListFlows)
 	mux.HandleFunc("GET /api/v1/flows/{id}/trails", s.handleListFlowTrails)
 	mux.HandleFunc("GET /api/v1/flows/{id}/artifacts", s.handleListFlowArtifacts)
@@ -84,7 +79,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/evidence/flows/{flow}/trails/{trail}", s.handleEvidenceLink)
 
 	// Trail API
-	mux.HandleFunc("POST /api/v1/trails", s.handleCreateTrail)
+	mux.HandleFunc("POST /api/v1/trails", withMutationRole(auth.RoleWriter, s.handleCreateTrail))
 	mux.HandleFunc("GET /api/v1/trails/{id}/verify-chain", s.handleVerifyTrailChain)
 	// Anchor a trail's chain head to an external RFC3161 timestamp authority (#297).
 	mux.HandleFunc("POST /api/v1/trails/{id}/anchor", s.handleCreateTrailAnchor)
@@ -110,7 +105,7 @@ func (s *Server) Routes() http.Handler {
 	// if drift is detected, write an elevated risk note back onto the
 	// ServiceNow change request that approved the prior state (ServiceNow has
 	// no native post-approval re-scoring).
-	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", s.handleDriftReevaluateChange)
+	mux.HandleFunc("POST /api/v1/environments/{id}/snapshots/reevaluate-change", withMutationRole(auth.RoleWriter, s.handleDriftReevaluateChange))
 
 	// DORA-style delivery metrics
 	mux.HandleFunc("GET /api/v1/metrics/dora", s.handleDoraMetrics)
@@ -129,15 +124,15 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/control-catalog", s.handleControlCatalog)
 	mux.HandleFunc("GET /api/v1/risk-register", s.handleRiskRegister)
 	mux.HandleFunc("GET /api/v1/exceptions", s.handleListExceptions)
-	mux.HandleFunc("POST /api/v1/exceptions", s.handleCreateException)
-	mux.HandleFunc("POST /api/v1/exceptions/{id}/revoke", s.handleRevokeException)
+	mux.HandleFunc("POST /api/v1/exceptions", withMutationRole(auth.RoleAdmin, s.handleCreateException))
+	mux.HandleFunc("POST /api/v1/exceptions/{id}/revoke", withMutationRole(auth.RoleAdmin, s.handleRevokeException))
 	mux.HandleFunc("GET /api/v1/sdlc", s.handleSDLC)
 	mux.HandleFunc("GET /api/v1/audit-pack", s.handleAuditPack)
 	mux.HandleFunc("GET /api/v1/services", s.handleListServices)
-	mux.HandleFunc("POST /api/v1/services", s.handleSaveService)
+	mux.HandleFunc("POST /api/v1/services", withMutationRole(auth.RoleAdmin, s.handleSaveService))
 	mux.HandleFunc("GET /api/v1/training", s.handleListTraining)
-	mux.HandleFunc("POST /api/v1/training", s.handleRecordTraining)
-	mux.HandleFunc("POST /api/v1/verify-branch-protection", s.handleVerifyBranchProtection)
+	mux.HandleFunc("POST /api/v1/training", withMutationRole(auth.RoleWriter, s.handleRecordTraining))
+	mux.HandleFunc("POST /api/v1/verify-branch-protection", withMutationRole(auth.RoleWriter, s.handleVerifyBranchProtection))
 	mux.HandleFunc("POST /api/v1/controls/import-framework", s.handleImportFramework)
 	mux.HandleFunc("GET /api/v1/reports/framework/{framework}", s.handleFrameworkReport)
 	// EU CRA 24h exploited-vulnerability / incident reporting set (#293).
@@ -145,79 +140,85 @@ func (s *Server) Routes() http.Handler {
 
 	// Slack notification settings
 	mux.HandleFunc("GET /api/v1/tenant/slack", s.handleGetSlack)
-	mux.HandleFunc("POST /api/v1/tenant/slack", s.handleSaveSlack)
+	mux.HandleFunc("POST /api/v1/tenant/slack", withMutationRole(auth.RoleAdmin, s.handleSaveSlack))
 
 	// Logical environments (aggregate physical environments)
 	mux.HandleFunc("GET /api/v1/logical-environments", s.handleListLogicalEnv)
-	mux.HandleFunc("POST /api/v1/logical-environments", s.handleCreateLogicalEnv)
-	mux.HandleFunc("POST /api/v1/logical-environments/{id}/members", s.handleAddLogicalMember)
-	mux.HandleFunc("DELETE /api/v1/logical-environments/{id}/members/{envId}", s.handleRemoveLogicalMember)
+	mux.HandleFunc("POST /api/v1/logical-environments", withMutationRole(auth.RoleAdmin, s.handleCreateLogicalEnv))
+	mux.HandleFunc("POST /api/v1/logical-environments/{id}/members", withMutationRole(auth.RoleAdmin, s.handleAddLogicalMember))
+	mux.HandleFunc("DELETE /api/v1/logical-environments/{id}/members/{envId}", withMutationRole(auth.RoleAdmin, s.handleRemoveLogicalMember))
 	mux.HandleFunc("GET /api/v1/logical-environments/{id}/state", s.handleLogicalEnvState)
 
 	// Environment policies (required attestation types, tag-conditional) + tags
 	mux.HandleFunc("GET /api/v1/environments/{id}/policies", s.handleListEnvPolicies)
-	mux.HandleFunc("POST /api/v1/environments/{id}/policies", s.handleCreatePolicy)
-	mux.HandleFunc("DELETE /api/v1/environments/{id}/policies/{policyId}", s.handleDeletePolicy)
+	mux.HandleFunc("POST /api/v1/environments/{id}/policies", withMutationRole(auth.RoleAdmin, s.handleCreatePolicy))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}/policies/{policyId}", withMutationRole(auth.RoleAdmin, s.handleDeletePolicy))
 	mux.HandleFunc("GET /api/v1/environments/{id}/policy-check", s.handlePolicyCheck)
-	mux.HandleFunc("POST /api/v1/environments/{id}/tags", s.handleSetEnvTags)
-	mux.HandleFunc("POST /api/v1/flows/{id}/tags", s.handleSetFlowTags)
+	mux.HandleFunc("POST /api/v1/environments/{id}/tags", withMutationRole(auth.RoleAdmin, s.handleSetEnvTags))
+	mux.HandleFunc("POST /api/v1/flows/{id}/tags", withMutationRole(auth.RoleAdmin, s.handleSetFlowTags))
 
 	// Per-environment artifact allow-list (explicit approvals)
 	mux.HandleFunc("GET /api/v1/environments/{id}/allowlist", s.handleListAllowlist)
-	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", s.handleAddAllowlist)
-	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", s.handleRemoveAllowlist)
+	mux.HandleFunc("POST /api/v1/environments/{id}/allowlist", withMutationRole(auth.RoleAdmin, s.handleAddAllowlist))
+	mux.HandleFunc("DELETE /api/v1/environments/{id}/allowlist/{sha}", withMutationRole(auth.RoleAdmin, s.handleRemoveAllowlist))
 
 	// Policy-driven auto-remediation (proposed -> approved|rejected -> applied),
 	// gated by an approval record before an action can be applied (issue #235).
-	mux.HandleFunc("POST /api/v1/remediation", s.handleProposeRemediation)
+	mux.HandleFunc("POST /api/v1/remediation", withMutationRole(auth.RoleWriter, s.handleProposeRemediation))
 	mux.HandleFunc("GET /api/v1/remediation", s.handleListRemediation)
 	mux.HandleFunc("GET /api/v1/remediation/{id}", s.handleGetRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", s.handleApproveRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", s.handleRejectRemediation)
-	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", s.handleApplyRemediation)
+	mux.HandleFunc("POST /api/v1/remediation/{id}/approve", withMutationRole(auth.RoleAdmin, s.handleApproveRemediation))
+	mux.HandleFunc("POST /api/v1/remediation/{id}/reject", withMutationRole(auth.RoleAdmin, s.handleRejectRemediation))
+	mux.HandleFunc("POST /api/v1/remediation/{id}/apply", withMutationRole(auth.RoleAdmin, s.handleApplyRemediation))
 
 	// Artifact API
-	mux.HandleFunc("POST /api/v1/artifacts", s.handleReportArtifact)
+	mux.HandleFunc("POST /api/v1/artifacts", withMutationRole(auth.RoleWriter, s.handleReportArtifact))
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
 
 	// Attestation Type API
-	mux.HandleFunc("POST /api/v1/attestation-types", s.handleCreateAttestationType)
+	mux.HandleFunc("GET /api/v1/attestation-types", s.handleListAttestationTypes)
+	mux.HandleFunc("POST /api/v1/attestation-types", withMutationRole(auth.RoleAdmin, s.handleCreateAttestationType))
+	mux.HandleFunc("GET /api/v1/attestation-types/{id}", s.handleGetAttestationType)
+	mux.HandleFunc("PATCH /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handlePatchAttestationType))
+	mux.HandleFunc("DELETE /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handleDeleteAttestationType))
 
 	// Attestation API
-	mux.HandleFunc("POST /api/v1/attestations", s.handleReportAttestation)
+	mux.HandleFunc("POST /api/v1/attestations", withMutationRole(auth.RoleWriter, s.handleReportAttestation))
 
 	// Snapshot API
-	mux.HandleFunc("POST /api/v1/snapshots", s.handleReportSnapshot)
+	mux.HandleFunc("POST /api/v1/snapshots", withMutationRole(auth.RoleWriter, s.handleReportSnapshot))
 
 	// Compliance and Drift API
 	mux.HandleFunc("GET /api/v1/compliance", s.handleCheckCompliance)
 	mux.HandleFunc("GET /api/v1/environments", s.handleListEnvironments)
-	mux.HandleFunc("POST /api/v1/environments", s.handleCreateEnvironment)
+	mux.HandleFunc("POST /api/v1/environments", withMutationRole(auth.RoleAdmin, s.handleCreateEnvironment))
+	mux.HandleFunc("GET /api/v1/environments/{id}", s.handleGetEnvironment)
+	mux.HandleFunc("PATCH /api/v1/environments/{id}", withMutationRole(auth.RoleAdmin, s.handleUpdateEnvironment))
 	mux.HandleFunc("POST /api/v1/environments/{id}/archive", s.handleArchiveEnvironment)
 	mux.HandleFunc("POST /api/v1/environments/{id}/unarchive", s.handleUnarchiveEnvironment)
 	mux.HandleFunc("GET /api/v1/environments/export", s.handleExportEnvironmentAudit)
 	mux.HandleFunc("GET /api/v1/policies", s.handleListPolicies)
-	mux.HandleFunc("POST /api/v1/policies", s.handleSavePolicy)
+	mux.HandleFunc("POST /api/v1/policies", withMutationRole(auth.RoleAdmin, s.handleSavePolicy))
 	mux.HandleFunc("POST /api/v1/policies/create", s.handleCreatePolicyGlobal)
 	mux.HandleFunc("DELETE /api/v1/policies/{id}", s.handleDeletePolicyGlobal)
 	mux.HandleFunc("GET /api/v1/ai-assessments", s.handleListAIAssessments)
 
 	// Tenant Webhooks (signed outbound delivery)
 	mux.HandleFunc("GET /api/v1/tenant/webhooks", s.handleListWebhooks)
-	mux.HandleFunc("POST /api/v1/tenant/webhooks", s.handleSaveWebhook)
+	mux.HandleFunc("POST /api/v1/tenant/webhooks", withMutationRole(auth.RoleAdmin, s.handleSaveWebhook))
 
 	// Tenant Git Providers (CI/CD commit-status gating)
 	mux.HandleFunc("GET /api/v1/tenant/git-providers", s.handleListGitProviders)
-	mux.HandleFunc("POST /api/v1/tenant/git-providers", s.handleSaveGitProvider)
+	mux.HandleFunc("POST /api/v1/tenant/git-providers", withMutationRole(auth.RoleAdmin, s.handleSaveGitProvider))
 
 	// Ingest platform-native attestations (GitHub Artifact Attestations,
 	// GitLab Attestations) for a built artifact, using the tenant's configured
 	// git-provider token, and record them onto the matching trail/artifact.
-	mux.HandleFunc("POST /api/v1/attest/fetch", s.handleAttestFetch)
+	mux.HandleFunc("POST /api/v1/attest/fetch", withMutationRole(auth.RoleWriter, s.handleAttestFetch))
 
 	// Tenant ServiceNow settings (CMDB/ITOM/ITSM)
 	mux.HandleFunc("GET /api/v1/tenant/servicenow", s.handleGetServiceNow)
-	mux.HandleFunc("POST /api/v1/tenant/servicenow", s.handleSaveServiceNow)
+	mux.HandleFunc("POST /api/v1/tenant/servicenow", withMutationRole(auth.RoleAdmin, s.handleSaveServiceNow))
 	mux.HandleFunc("GET /api/v1/tenant/servicenow/events", s.handleServiceNowEvents)
 
 	// Assurance console summary — powers the source-owned portal frontpage
@@ -229,34 +230,34 @@ func (s *Server) Routes() http.Handler {
 
 	// ITSM change-control gate: fetch a ServiceNow change request and record a
 	// servicenow-change attestation evaluated against its jq rules.
-	mux.HandleFunc("POST /api/v1/servicenow/change-check", s.handleServiceNowChangeCheck)
-	mux.HandleFunc("POST /api/v1/servicenow/change-gate", s.handleServiceNowChangeGate)
+	mux.HandleFunc("POST /api/v1/servicenow/change-check", withMutationRole(auth.RoleWriter, s.handleServiceNowChangeCheck))
+	mux.HandleFunc("POST /api/v1/servicenow/change-gate", withMutationRole(auth.RoleWriter, s.handleServiceNowChangeGate))
 
 	// Change<->Control linkage (#227): record that a ServiceNow change implemented
 	// a Fides control via a specific attestation, and reference it back on the
 	// change_request.
-	mux.HandleFunc("POST /api/v1/servicenow/link-control", s.handleServiceNowLinkControl)
+	mux.HandleFunc("POST /api/v1/servicenow/link-control", withMutationRole(auth.RoleAdmin, s.handleServiceNowLinkControl))
 
 	// Inbound CI/CD webhooks: auto-create a trail from a signed push event.
 	// Public: authenticated by the provider's HMAC/token signature, not a bearer.
 	mux.HandleFunc("POST /api/v1/webhooks/{provider}", s.handleInboundWebhook)
 	// Feature-flag change governance: record a flag change as a flag.changed
 	// attestation on a trail (epic #286 / #287).
-	mux.HandleFunc("POST /api/v1/flags/changed", s.handleRecordFlagChange)
+	mux.HandleFunc("POST /api/v1/flags/changed", withMutationRole(auth.RoleWriter, s.handleRecordFlagChange))
 	// Provider webhook adapters (Unleash/Flagsmith) -> flag.changed (#290).
-	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", s.handleFlagWebhook)
+	mux.HandleFunc("POST /api/v1/flags/webhook/{provider}", withMutationRole(auth.RoleWriter, s.handleFlagWebhook))
 	// Flag-change history for auditors + the /admin console (#291).
 	mux.HandleFunc("GET /api/v1/flags/history", s.handleFlagHistory)
 
 	// ServiceNow read/action endpoints (backing the MCP tools)
 	mux.HandleFunc("GET /api/v1/servicenow/change-status", s.handleServiceNowChangeStatus)
-	mux.HandleFunc("POST /api/v1/servicenow/incident", s.handleServiceNowCreateIncident)
+	mux.HandleFunc("POST /api/v1/servicenow/incident", withMutationRole(auth.RoleWriter, s.handleServiceNowCreateIncident))
 	mux.HandleFunc("GET /api/v1/servicenow/cmdb", s.handleServiceNowSearchCMDB)
 
 	// Deployment provenance anchoring: on change close / deploy, attach the
 	// signed deployment attestation (image digest, commit, build log ref,
 	// runtime snapshot ref) to the relevant CMDB CI.
-	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", s.handleServiceNowAnchorDeployment)
+	mux.HandleFunc("POST /api/v1/servicenow/deployment-anchor", withMutationRole(auth.RoleWriter, s.handleServiceNowAnchorDeployment))
 
 	// Now Assist grounding: authoritative control-coverage + evidence for a change.
 	mux.HandleFunc("GET /api/v1/servicenow/grounding", s.handleServiceNowGrounding)
@@ -269,7 +270,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/servicenow/mcp/servers", s.handleSNMCPServers)
 	mux.HandleFunc("POST /api/v1/servicenow/mcp/lookup", s.handleSNMCPLookup)
 	mux.HandleFunc("POST /api/v1/servicenow/mcp/tools", s.handleSNMCPTools)
-	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", s.handleSNMCPCall)
+	mux.HandleFunc("POST /api/v1/servicenow/mcp/call", withMutationRole(auth.RoleAdmin, s.handleSNMCPCall))
 
 	// Kubernetes ValidatingAdmissionWebhook (deploy-time gate). Public: the API
 	// server authenticates via mTLS (configure a CA bundle + NetworkPolicy).
@@ -277,13 +278,13 @@ func (s *Server) Routes() http.Handler {
 
 	// Environment MCP Connections API
 	mux.HandleFunc("GET /api/v1/environments/mcp", s.handleListEnvironmentMCPServers)
-	mux.HandleFunc("POST /api/v1/environments/mcp", s.handleSaveEnvironmentMCPServer)
+	mux.HandleFunc("POST /api/v1/environments/mcp", withMutationRole(auth.RoleAdmin, s.handleSaveEnvironmentMCPServer))
 	mux.HandleFunc("POST /api/v1/environments/mcp/query", s.handleQueryEnvironmentMCPServer)
-	mux.HandleFunc("POST /api/v1/environments/mcp/verify", s.handleVerifyEnvironmentCompliance)
+	mux.HandleFunc("POST /api/v1/environments/mcp/verify", withMutationRole(auth.RoleWriter, s.handleVerifyEnvironmentCompliance))
 
 	// Tenant Settings & SSO APIs
 	mux.HandleFunc("GET /api/v1/tenant/settings", s.handleGetTenantSettings)
-	mux.HandleFunc("POST /api/v1/tenant/settings", s.handleSaveTenantSettings)
+	mux.HandleFunc("POST /api/v1/tenant/settings", withMutationRole(auth.RoleAdmin, s.handleSaveTenantSettings))
 	mux.HandleFunc("GET /api/v1/auth/login", s.handleAuthLogin)
 	mux.HandleFunc("GET /api/v1/auth/callback", s.handleAuthCallback)
 	mux.HandleFunc("POST /api/v1/auth/local-login", s.handleLocalLogin)
@@ -301,7 +302,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/tenant/service-accounts/{id}/keys/{keyId}", s.handleRevokeServiceAccountKey)
 	mux.HandleFunc("POST /api/v1/tenant/service-accounts/{id}/delegation", s.handleSetServiceAccountDelegation)
 	mux.HandleFunc("GET /api/v1/tenant/group-mappings", s.handleListGroupMappings)
-	mux.HandleFunc("POST /api/v1/tenant/group-mappings", s.handleSaveGroupMapping)
+	mux.HandleFunc("POST /api/v1/tenant/group-mappings", withMutationRole(auth.RoleAdmin, s.handleSaveGroupMapping))
 
 	// Swagger API Docs
 	mux.HandleFunc("GET /api/v1/swagger.json", s.handleSwaggerJSON)
@@ -463,9 +464,13 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, name, COALESCE(description, '') AS description, created_at
-	          FROM organizations WHERE id = $1 ORDER BY name`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, name, COALESCE(description, '') AS description, created_at /* page keys */
+	          FROM organizations WHERE id = $1`
+	rows, err := s.queryPage(r, page, query, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -487,8 +492,7 @@ func (s *Server) handleListOrgs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type createFlowReq struct {
@@ -590,8 +594,13 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	query := `SELECT id, org_id, name, COALESCE(description, '') AS description, tags, created_at, updated_at FROM flows WHERE org_id = $1 ORDER BY name`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
+	page, ok := newListPage(w, r, orgID, textKey("name"), uuidKey("id"), false)
+	if !ok {
+		return
+	}
+	query := `SELECT id, org_id, name, COALESCE(description, '') AS description, tags, created_at, updated_at /* page keys */
+		FROM flows WHERE org_id = $1 AND strpos(lower(name), lower($2)) > 0`
+	rows, err := s.queryPage(r, page, query, orgID, r.URL.Query().Get("name"))
 	if err != nil {
 		internalError(w, err)
 		return
@@ -615,8 +624,7 @@ func (s *Server) handleListFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
+	page.write(w, list)
 }
 
 type createTrailReq struct {
@@ -721,956 +729,6 @@ func (s *Server) handleCreateTrail(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(trail)
-}
-
-type reportArtifactReq struct {
-	OrgID   string            `json:"org_id"`
-	TrailID string            `json:"trail_id"`
-	SHA256  string            `json:"sha256"`
-	Name    string            `json:"name"`
-	Type    string            `json:"type"`
-	Tags    map[string]string `json:"tags"`
-}
-
-func (s *Server) handleReportArtifact(w http.ResponseWriter, r *http.Request) {
-	var req reportArtifactReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	// Tenant scope comes from the authenticated principal, never the request body (H2/IDOR).
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var err error
-
-	var trailID *uuid.UUID
-	if req.TrailID != "" {
-		tID, err := uuid.Parse(req.TrailID)
-		if err != nil {
-			http.Error(w, "invalid trail_id", http.StatusBadRequest)
-			return
-		}
-		trailID = &tID
-	}
-
-	artifact := &models.Artifact{
-		SHA256:    req.SHA256,
-		OrgID:     orgID,
-		TrailID:   trailID,
-		Name:      req.Name,
-		Type:      req.Type,
-		Tags:      req.Tags,
-		CreatedAt: time.Now(),
-	}
-
-	query := `INSERT INTO artifacts (sha256, org_id, trail_id, name, type, tags, created_at) 
-	          VALUES ($1, $2, $3, $4, $5, $6, $7)
-	          ON CONFLICT (sha256) DO UPDATE SET trail_id = EXCLUDED.trail_id`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), query, artifact.SHA256, artifact.OrgID, artifact.TrailID, artifact.Name, artifact.Type, marshalJSONB(artifact.Tags), artifact.CreatedAt)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-
-	// Keep a queryable CMDB image CI per digest so the change gate can anchor a
-	// change's cmdb_ci to the binary it deployed (best-effort; the CMDB sink is
-	// a no-op when ServiceNow is not configured for the org).
-	_ = events.Enqueue(r.Context(), s.q(r.Context()), orgID, servicenow.ArtifactEventType, map[string]any{
-		"sha256": req.SHA256, "name": req.Name, "type": req.Type,
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(artifact)
-}
-
-func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	// Joining trail name for simple UI rendering
-	query := `SELECT a.sha256, a.org_id, a.trail_id, a.name, a.type, a.tags, a.created_at, COALESCE(t.name, '')
-	          FROM artifacts a
-	          LEFT JOIN trails t ON a.trail_id = t.id
-	          WHERE a.org_id = $1
-	          ORDER BY a.created_at DESC`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	// Struct representation specifically decorated for UI rendering
-	type ArtifactView struct {
-		models.Artifact
-		TrailName  string        `json:"trail_name"`
-		SBOMStatus string        `json:"sbom_status"`
-		SBOM       []interface{} `json:"sbom"`
-	}
-
-	list := []*ArtifactView{}
-	for rows.Next() {
-		var av ArtifactView
-		var tagsBytes []byte
-		if err := rows.Scan(&av.SHA256, &av.OrgID, &av.TrailID, &av.Name, &av.Type, &tagsBytes, &av.CreatedAt, &av.TrailName); err != nil {
-			internalError(w, err)
-			return
-		}
-		av.Tags = unmarshalJSONB(tagsBytes)
-
-		// Fetch actual SBOM from database attestations if present
-		var payloadBytes []byte
-		var isCompliant bool
-		querySBOM := `SELECT payload, is_compliant FROM attestations WHERE artifact_sha256 = $1 AND (name = 'sbom' OR type_name = 'sbom' OR type_name = 'sbom-scan') LIMIT 1`
-		err = s.q(r.Context()).QueryRowContext(r.Context(), querySBOM, av.SHA256).Scan(&payloadBytes, &isCompliant)
-		if err == nil {
-			if isCompliant {
-				av.SBOMStatus = "Compliant"
-			} else {
-				av.SBOMStatus = "Non-Compliant"
-			}
-
-			// Try to unmarshal payload as a list of packages
-			var packages []interface{}
-			if errUnmarshal := json.Unmarshal(payloadBytes, &packages); errUnmarshal == nil {
-				av.SBOM = packages
-			} else {
-				// If not a list, maybe it's an object with "packages" or "components" key
-				var obj map[string]interface{}
-				if errUnmarshalObj := json.Unmarshal(payloadBytes, &obj); errUnmarshalObj == nil {
-					if pkgs, ok := obj["packages"]; ok {
-						if pkgsList, ok := pkgs.([]interface{}); ok {
-							av.SBOM = pkgsList
-						}
-					} else if comps, ok := obj["components"]; ok {
-						if compsList, ok := comps.([]interface{}); ok {
-							av.SBOM = compsList
-						}
-					} else {
-						// Otherwise, just wrap the object in a slice
-						av.SBOM = []interface{}{obj}
-					}
-				} else {
-					av.SBOM = []interface{}{}
-				}
-			}
-		} else {
-			av.SBOMStatus = "Pending"
-			av.SBOM = []interface{}{}
-		}
-		list = append(list, &av)
-	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		internalError(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
-}
-
-// handleCheckCompliance answers whether an artifact passed its controls.
-//
-// Scoped to the caller's organization because the answer names the artifact and
-// reports its compliance posture, and an image digest is not a secret — it is in
-// every manifest and registry listing. Unscoped, anyone with an account could
-// ask whether another organization's build passed, for any digest they knew.
-func (s *Server) handleCheckCompliance(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	sha := r.URL.Query().Get("sha256")
-	if sha == "" {
-		http.Error(w, "missing sha256 query param", http.StatusBadRequest)
-		return
-	}
-
-	var name string
-	var trailID sql.NullString
-	// The attestation query below is keyed on this trail id, so scoping the
-	// artifact scopes the whole answer: a trail reached from an artifact in the
-	// caller's org is in the caller's org.
-	queryArt := `SELECT name, trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2 LIMIT 1`
-	err := s.q(r.Context()).QueryRowContext(r.Context(), queryArt, sha, orgID).Scan(&name, &trailID)
-	if err == sql.ErrNoRows {
-		http.Error(w, "artifact not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		internalError(w, err)
-		return
-	}
-
-	isCompliant := true
-	var reasons []string
-
-	if trailID.Valid && trailID.String != "" {
-		queryAtt := `SELECT name, type_name, is_compliant FROM attestations WHERE trail_id = $1`
-		rows, err := s.q(r.Context()).QueryContext(r.Context(), queryAtt, trailID.String)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		defer rows.Close()
-
-		for rows.Next() {
-			var attName, typeName string
-			var compliant bool
-			if err := rows.Scan(&attName, &typeName, &compliant); err != nil {
-				internalError(w, err)
-				return
-			}
-			if !compliant {
-				isCompliant = false
-				reasons = append(reasons, fmt.Sprintf("Failing control: %s (Type: %s)", attName, typeName))
-			}
-		}
-		// A failed iteration must not read as a short result.
-		if err := rows.Err(); err != nil {
-			internalError(w, err)
-			return
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"sha256":     sha,
-		"name":       name,
-		"compliant":  isCompliant,
-		"violations": reasons,
-	})
-}
-
-func (s *Server) handleListPolicies(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	query := `SELECT id, name, COALESCE(description, '') AS description, rules FROM policies WHERE org_id = $1`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	type PolicyView struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Target string `json:"target"`
-		YAML   string `json:"yaml"`
-	}
-
-	list := []*PolicyView{}
-	for rows.Next() {
-		var p PolicyView
-		var rulesBytes []byte
-		if err := rows.Scan(&p.ID, &p.Name, &p.Target, &rulesBytes); err != nil {
-			internalError(w, err)
-			return
-		}
-		p.YAML = string(rulesBytes)
-		list = append(list, &p)
-	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		internalError(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
-}
-
-type savePolicyReq struct {
-	ID   string `json:"id"`
-	YAML string `json:"yaml"`
-}
-
-func (s *Server) handleSavePolicy(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	var req savePolicyReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	policyID, err := uuid.Parse(req.ID)
-	if err != nil {
-		http.Error(w, "invalid policy id", http.StatusBadRequest)
-		return
-	}
-	// Scope the update to the caller's tenant so one org cannot modify another's policy.
-	res, err := s.q(r.Context()).ExecContext(r.Context(), "UPDATE policies SET rules = $1 WHERE id = $2 AND org_id = $3", req.YAML, policyID, orgID)
-	if err != nil {
-		http.Error(w, "failed to save policy", http.StatusInternalServerError)
-		return
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		http.Error(w, "policy not found", http.StatusNotFound)
-		return
-	}
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"success"}`))
-}
-
-func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	// Scope to the caller's tenant via attestation -> trail -> flow -> org.
-	query := `SELECT la.id, att.name, la.model_provider, la.model_name, la.assessment_raw, la.compliance_score, la.created_at
-	          FROM llm_assessments la
-	          JOIN attestations att ON la.attestation_id = att.id
-	          JOIN trails tr ON att.trail_id = tr.id
-	          JOIN flows f ON tr.flow_id = f.id
-	          WHERE f.org_id = $1
-	          ORDER BY la.created_at DESC`
-	rows, err := s.q(r.Context()).QueryContext(r.Context(), query, orgID)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	type AssessmentView struct {
-		ID              string    `json:"id"`
-		AttestationName string    `json:"attestationName"`
-		ModelProvider   string    `json:"modelProvider"`
-		ModelName       string    `json:"modelName"`
-		AssessmentRaw   string    `json:"assessmentRaw"`
-		ComplianceScore int       `json:"complianceScore"`
-		CreatedAt       time.Time `json:"createdAt"`
-	}
-
-	list := []*AssessmentView{}
-	for rows.Next() {
-		var av AssessmentView
-		if err := rows.Scan(&av.ID, &av.AttestationName, &av.ModelProvider, &av.ModelName, &av.AssessmentRaw, &av.ComplianceScore, &av.CreatedAt); err != nil {
-			internalError(w, err)
-			return
-		}
-		list = append(list, &av)
-	}
-	// A failed iteration must not read as a short result.
-	if err := rows.Err(); err != nil {
-		internalError(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(list)
-}
-
-type saveTenantSettingsReq struct {
-	OrgID   string                        `json:"org_id"`
-	Auth    *models.TenantAuthConfig      `json:"auth"`
-	Storage *models.TenantStorageSettings `json:"storage"`
-	Vault   *models.TenantVaultSettings   `json:"vault"`
-	LLM     *models.TenantLLMSettings     `json:"llm"`
-}
-
-// providerDefaults returns the well-known OAuth endpoints and scope for a
-// provider, used when the tenant config leaves them blank.
-func providerDefaults(provider string) (authURL, tokenURL, userInfoURL, scope string) {
-	switch provider {
-	case "github":
-		return "https://github.com/login/oauth/authorize",
-			"https://github.com/login/oauth/access_token",
-			"https://api.github.com/user",
-			"read:user user:email"
-	case "gitlab":
-		return "https://gitlab.com/oauth/authorize",
-			"https://gitlab.com/oauth/token",
-			"https://gitlab.com/api/v4/user",
-			"read_user"
-	case "google":
-		return "https://accounts.google.com/o/oauth2/v2/auth",
-			"https://oauth2.googleapis.com/token",
-			"https://openidconnect.googleapis.com/v1/userinfo",
-			"openid email profile"
-	case "okta":
-		return "https://okta.com/oauth2/v1/authorize",
-			"https://okta.com/oauth2/v1/token",
-			"https://okta.com/oauth2/v1/userinfo",
-			"openid email profile groups"
-	default:
-		return "", "", "", "openid email"
-	}
-}
-
-func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
-	provider := r.URL.Query().Get("provider")
-	if provider == "" {
-		provider = "github"
-	}
-	// org_id selects which tenant's SSO configuration to use. This is the only
-	// place an org_id is accepted from the client, and it is bound into a signed,
-	// single-use state nonce — the resulting session's org comes from that state.
-	orgID, err := uuid.Parse(r.URL.Query().Get("org_id"))
-	if err != nil {
-		http.Error(w, "valid org_id query parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	var authConfig models.TenantAuthConfig
-	queryAuth := `SELECT client_id, COALESCE(auth_url, ''), redirect_uri, enabled FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
-	err = s.q(r.Context()).QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&authConfig.ClientID, &authConfig.AuthURL, &authConfig.RedirectURI, &authConfig.Enabled)
-	if err != nil {
-		http.Error(w, "no SSO provider is configured for this organization", http.StatusBadRequest)
-		return
-	}
-	if !authConfig.Enabled {
-		http.Error(w, "auth provider disabled for tenant", http.StatusForbidden)
-		return
-	}
-
-	authURL := authConfig.AuthURL
-	defAuth, _, _, scope := providerDefaults(provider)
-	if authURL == "" {
-		authURL = defAuth
-	}
-	if authURL == "" {
-		http.Error(w, "unknown auth provider", http.StatusBadRequest)
-		return
-	}
-
-	state, err := s.States.New(orgID, provider, 10*time.Minute, time.Now())
-	if err != nil {
-		http.Error(w, "failed to initialize login", http.StatusInternalServerError)
-		return
-	}
-
-	q := neturl.Values{}
-	q.Set("client_id", authConfig.ClientID)
-	q.Set("redirect_uri", authConfig.RedirectURI)
-	q.Set("response_type", "code")
-	q.Set("scope", scope)
-	q.Set("state", state)
-	http.Redirect(w, r, authURL+"?"+q.Encode(), http.StatusTemporaryRedirect)
-}
-
-func (s *Server) handleAuthCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	stateParam := r.URL.Query().Get("state")
-	if code == "" || stateParam == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
-		return
-	}
-
-	// 1. Validate the single-use state nonce (CSRF / replay defense). The tenant
-	// and provider come from the server-side state, never from the client.
-	stateData, ok := s.States.Consume(stateParam, time.Now())
-	if !ok {
-		http.Error(w, "invalid or expired login state", http.StatusBadRequest)
-		return
-	}
-	orgID := stateData.OrgID
-	provider := stateData.Provider
-
-	// 2. Load the tenant's provider configuration and resolve the client secret.
-	var clientID, secretPath, tokenURL, userInfoURL, redirectURI string
-	var enabled bool
-	queryAuth := `SELECT client_id, client_secret_path, COALESCE(token_url, ''), COALESCE(userinfo_url, ''), redirect_uri, enabled
-	              FROM tenant_auth_configs WHERE org_id = $1 AND provider_name = $2 LIMIT 1`
-	if err := s.q(r.Context()).QueryRowContext(r.Context(), queryAuth, orgID, provider).Scan(&clientID, &secretPath, &tokenURL, &userInfoURL, &redirectURI, &enabled); err != nil || !enabled {
-		http.Error(w, "SSO provider not available", http.StatusBadRequest)
-		return
-	}
-
-	_, defToken, defUserInfo, _ := providerDefaults(provider)
-	if tokenURL == "" {
-		tokenURL = defToken
-	}
-	if userInfoURL == "" {
-		userInfoURL = defUserInfo
-	}
-
-	clientSecret, err := s.Secrets.GetSecret(r.Context(), "", secretPath)
-	if err != nil {
-		log.Printf("auth callback: client secret unavailable for org %s provider %s", orgID, provider)
-		http.Error(w, "server auth configuration error", http.StatusInternalServerError)
-		return
-	}
-
-	// 3. Exchange the code for a token and fetch the user's identity.
-	accessToken, err := auth.ExchangeCode(r.Context(), s.httpClient, auth.OAuthConfig{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		TokenURL:     tokenURL,
-		RedirectURI:  redirectURI,
-	}, code)
-	if err != nil {
-		log.Printf("auth callback: token exchange failed: %v", err)
-		http.Error(w, "authentication failed", http.StatusUnauthorized)
-		return
-	}
-
-	userInfo, err := auth.FetchUserInfo(r.Context(), s.httpClient, userInfoURL, accessToken)
-	if err != nil || userInfo.Email == "" {
-		log.Printf("auth callback: userinfo lookup failed: %v", err)
-		http.Error(w, "authentication failed", http.StatusUnauthorized)
-		return
-	}
-
-	// 4. Resolve the principal's role within the tenant.
-	principal := auth.Principal{OrgID: orgID, Email: userInfo.Email, Role: auth.RoleViewer, Kind: "session"}
-	var userID uuid.UUID
-	var role string
-	if err := s.q(r.Context()).QueryRowContext(r.Context(),
-		`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, userInfo.Email,
-	).Scan(&userID, &role); err == nil {
-		principal.UserID = userID
-		principal.Role = role
-	} else if len(userInfo.Groups) > 0 {
-		// Fall back to an SSO group → role mapping.
-		var mappedRole string
-		if err := s.q(r.Context()).QueryRowContext(r.Context(),
-			`SELECT role FROM sso_group_mappings WHERE org_id = $1 AND external_group = ANY($2) LIMIT 1`,
-			orgID, pq.Array(userInfo.Groups),
-		).Scan(&mappedRole); err == nil {
-			principal.Role = mappedRole
-		}
-	}
-
-	// 5. Establish the session and set a hardened cookie.
-	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
-	if err != nil {
-		http.Error(w, "failed to establish session", http.StatusInternalServerError)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    sessionToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int((12 * time.Hour).Seconds()),
-	})
-
-	http.Redirect(w, r, "/?login=success", http.StatusTemporaryRedirect)
-}
-
-type localLoginReq struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-// portalTenant returns the tenant for portal/basic auth. The org MUST be
-// configured via FIDES_API_ORG_ID — there is no hardcoded default (H2/IDOR).
-func portalTenant() (uuid.UUID, bool) {
-	id, err := uuid.Parse(os.Getenv("FIDES_API_ORG_ID"))
-	if err != nil {
-		return uuid.UUID{}, false
-	}
-	return id, true
-}
-
-// constantTimeEquals compares two strings without leaking length-independent
-// timing, used for credential checks.
-func constantTimeEquals(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
-}
-
-// resolvePortalPrincipal builds the principal for an authenticated portal admin.
-// The role is read from the user's DB record resolved WITHIN the tenant's org
-// scope (so it is correct even when RLS is enabled). If the admin is not
-// provisioned as a user, they retain the bootstrap Admin role implied by holding
-// the configured PORTAL_PASSWORD secret.
-// localUserLogin verifies an email/password against the users table (per-user
-// local login). Returns false if the user has no password set or it mismatches.
-func (s *Server) localUserLogin(ctx context.Context, orgID uuid.UUID, email, password string) (auth.Principal, bool) {
-	var p auth.Principal
-	if s.DB == nil {
-		return p, false
-	}
-	var uid uuid.UUID
-	var role, hash string
-	err := db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx,
-			`SELECT id, role, COALESCE(password_hash, '') FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`,
-			orgID, email).Scan(&uid, &role, &hash)
-	})
-	if err != nil || hash == "" {
-		return p, false
-	}
-	if !crypto.VerifyPassword(password, hash) {
-		return p, false
-	}
-	return auth.Principal{OrgID: orgID, UserID: uid, Email: email, Role: role, Kind: "session"}, true
-}
-
-func (s *Server) resolvePortalPrincipal(ctx context.Context, orgID uuid.UUID, email string) *auth.Principal {
-	p := &auth.Principal{OrgID: orgID, Email: email, Role: auth.RoleAdmin, Kind: "session"}
-	if s.DB != nil {
-		_ = db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
-			var id uuid.UUID
-			var role string
-			if err := tx.QueryRowContext(ctx,
-				`SELECT id, role FROM users WHERE org_id = $1 AND email = $2 LIMIT 1`, orgID, email,
-			).Scan(&id, &role); err != nil {
-				return err
-			}
-			p.UserID = id
-			p.Role = role
-			return nil
-		})
-	}
-	return p
-}
-
-func (s *Server) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	portalUser := os.Getenv("PORTAL_USERNAME")
-	portalPass := os.Getenv("PORTAL_PASSWORD")
-	portalConfigured := portalUser != "" && portalPass != ""
-
-	var req localLoginReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	orgID, tenantConfigured := portalTenant()
-
-	// Two local-login paths: the shared portal-admin credential (env) and
-	// per-user passwords on the users table. Both need a configured tenant to
-	// build a principal.
-	var principal auth.Principal
-	authed := false
-
-	if portalConfigured {
-		// Both comparisons run regardless of username match (no timing leak).
-		adminUser := constantTimeEquals(req.Username, portalUser)
-		adminPass := constantTimeEquals(req.Password, portalPass)
-		if adminUser && adminPass {
-			if !tenantConfigured {
-				http.Error(w, "portal tenant (FIDES_API_ORG_ID) is not configured", http.StatusServiceUnavailable)
-				return
-			}
-			principal = *s.resolvePortalPrincipal(r.Context(), orgID, req.Username)
-			authed = true
-		}
-	}
-
-	if !authed && tenantConfigured {
-		if p, ok := s.localUserLogin(r.Context(), orgID, req.Username, req.Password); ok {
-			principal = p
-			authed = true
-		}
-	}
-
-	if !authed {
-		if !portalConfigured && !tenantConfigured {
-			http.Error(w, "local authentication is not configured", http.StatusForbidden)
-			return
-		}
-		http.Error(w, "invalid username or password", http.StatusUnauthorized)
-		return
-	}
-
-	sessionToken, err := s.Sessions.Create(principal, 12*time.Hour, time.Now())
-	if err != nil {
-		http.Error(w, "failed to establish session", http.StatusInternalServerError)
-		return
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    sessionToken,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int((12 * time.Hour).Seconds()),
-	})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"success"}`))
-}
-
-type generatePolicyReq struct {
-	Framework   string `json:"framework"`
-	Description string `json:"description"`
-}
-
-func (s *Server) handleAIGeneratePolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req generatePolicyReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	var rawResponse string
-	var err error
-
-	if s.LLM != nil {
-		rawResponse, err = s.LLM.GeneratePolicy(r.Context(), req.Framework, req.Description)
-	} else {
-		rawResponse = fmt.Sprintf(`{
-  "name": "%s-compliance-policy",
-  "description": "LLM Generated Policy for %s compliance: %s",
-  "rules": {
-    "controls": [
-      {
-        "name": "vulnerability-check",
-        "attestation_type": "snyk-scan",
-        "jq_expressions": [
-          ".vulnerabilities.critical == 0"
-        ]
-      },
-      {
-        "name": "unit-test-verification",
-        "attestation_type": "junit",
-        "jq_expressions": [
-          ".failures == 0",
-          ".errors == 0"
-        ]
-      }
-    ]
-  }
-}`, req.Framework, req.Framework, req.Description)
-	}
-
-	if err != nil {
-		rawResponse = fmt.Sprintf(`{
-  "name": "%s-compliance-policy",
-  "description": "LLM Fallback Policy for %s compliance: %s",
-  "rules": {
-    "controls": [
-      {
-        "name": "vulnerability-check",
-        "attestation_type": "snyk-scan",
-        "jq_expressions": [
-          ".vulnerabilities.critical == 0"
-        ]
-      }
-    ]
-  }
-}`, req.Framework, req.Framework, req.Description)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(rawResponse))
-}
-
-// handleAILintPolicy reviews a policy's jq-rules JSON for syntax errors and best
-// practices and returns a corrected version. With an LLM configured it asks the
-// model to fix and explain; without one it falls back to a deterministic JSON
-// validity check + pretty-print so the button is always useful.
-func (s *Server) handleAILintPolicy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var req struct {
-		Rules string `json:"rules"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-	if strings.TrimSpace(req.Rules) == "" {
-		http.Error(w, "rules are required", http.StatusBadRequest)
-		return
-	}
-
-	// Deterministic baseline used both as the no-LLM fallback and to detect change.
-	var parsed any
-	validJSON := json.Unmarshal([]byte(req.Rules), &parsed) == nil
-
-	if s.LLM == nil {
-		if !validJSON {
-			writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false,
-				"notes": "Invalid JSON, and the AI reviewer is not configured. Fix the syntax (matching braces/brackets, quoted keys) and try again."})
-			return
-		}
-		pretty, _ := json.MarshalIndent(parsed, "", "  ")
-		writeJSON(w, map[string]any{"fixed": string(pretty), "changed": string(pretty) != req.Rules,
-			"notes": "AI reviewer not configured — validated and formatted the JSON. No best-practice rewrite performed."})
-		return
-	}
-
-	prompt := "You are reviewing a Fides compliance policy expressed as JSON containing jq rules. " +
-		"The expected shape is {\"controls\":[{\"name\":\"...\",\"attestation_type\":\"...\",\"jq_expressions\":[\"...\"]}]} " +
-		"(a bare {\"jq\":[...]} form is also valid). Check for JSON syntax errors and jq best practices: " +
-		"valid structure, well-formed jq expressions, no duplicate/redundant rules, sensible names. " +
-		"Respond with ONLY a JSON object, no markdown fences: " +
-		"{\"fixed\": \"<the corrected policy as a JSON string>\", \"notes\": \"<short summary of what you changed, or why it's already fine>\"}.\n\nPolicy:\n" + req.Rules
-
-	resp, err := s.LLM.Chat(r.Context(), nil, prompt)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-	// Strip accidental markdown fences, then try to parse the model's {fixed,notes}.
-	clean := strings.TrimSpace(resp)
-	clean = strings.TrimPrefix(clean, "```json")
-	clean = strings.TrimPrefix(clean, "```")
-	clean = strings.TrimSuffix(clean, "```")
-	clean = strings.TrimSpace(clean)
-	var out struct {
-		Fixed string `json:"fixed"`
-		Notes string `json:"notes"`
-	}
-	if json.Unmarshal([]byte(clean), &out) == nil && strings.TrimSpace(out.Fixed) != "" {
-		writeJSON(w, map[string]any{"fixed": out.Fixed, "notes": out.Notes, "changed": out.Fixed != req.Rules})
-		return
-	}
-	// Model didn't return the expected envelope — surface its text as notes and
-	// keep the user's input unchanged.
-	writeJSON(w, map[string]any{"fixed": req.Rules, "changed": false, "notes": strings.TrimSpace(resp)})
-}
-
-type aiChatReq struct {
-	Message string           `json:"message"`
-	History []ai.ChatMessage `json:"history"`
-}
-
-type aiChatResp struct {
-	Response string `json:"response"`
-}
-
-func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req aiChatReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		badRequest(w, err)
-		return
-	}
-
-	ctx := r.Context()
-	userMsg := req.Message
-	orgID, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	var answer string
-	var executionOutput string
-
-	var flowName, flowDesc string
-	if n, _ := fmt.Sscanf(userMsg, "create flow %s description %s", &flowName, &flowDesc); n >= 1 {
-		flowID := uuid.New()
-		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName, flowDesc)
-		if err != nil {
-			executionOutput = fmt.Sprintf("\n*(Failed to create flow: %v)*", err)
-		} else {
-			executionOutput = fmt.Sprintf("\n*(Flow '%s' successfully created with ID: %s)*", flowName, flowID)
-		}
-	} else if n, _ := fmt.Sscanf(userMsg, "create flow %s", &flowName); n == 1 {
-		flowID := uuid.New()
-		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, 'Created via LLM Assistant', '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName)
-		if err != nil {
-			executionOutput = fmt.Sprintf("\n*(Failed to create flow: %v)*", err)
-		} else {
-			executionOutput = fmt.Sprintf("\n*(Flow '%s' successfully created with ID: %s)*", flowName, flowID)
-		}
-	}
-
-	// Deterministic commands are answered directly (fast, no LLM). Only freeform
-	// questions hit the LLM, and with a timeout so a slow/unreachable model
-	// returns a friendly message instead of hanging until the gateway 504s.
-	lower := strings.ToLower(strings.TrimSpace(userMsg))
-	switch {
-	case flowName != "":
-		answer = fmt.Sprintf("I've created a new compliance pipeline flow named **%s** for tracking your software components.", flowName)
-	case lower == "list flows" || lower == "show flows":
-		rows, _ := s.q(ctx).QueryContext(ctx, "SELECT name, COALESCE(description, '') FROM flows WHERE org_id = $1", orgID)
-		defer rows.Close()
-		answer = "Here are the currently configured compliance flows in Fides:\n\n"
-		for rows.Next() {
-			var name, desc string
-			if err := rows.Scan(&name, &desc); err != nil {
-				continue
-			}
-			answer += fmt.Sprintf("- **%s**: %s\n", name, desc)
-		}
-		// A failed iteration must not read as a short result.
-		if err := rows.Err(); err != nil {
-			internalError(w, err)
-			return
-		}
-	case lower == "find failing trails" || lower == "failing builds":
-		query := `SELECT t.name, f.name, att.name, att.type_name
-		          FROM attestations att
-		          JOIN trails t ON att.trail_id = t.id
-		          JOIN flows f ON t.flow_id = f.id
-		          WHERE att.is_compliant = false AND f.org_id = $1`
-		rows, _ := s.q(ctx).QueryContext(ctx, query, orgID)
-		defer rows.Close()
-		answer = "### Non-Compliant Trails Alert\nI scanned the trails database and found the following non-compliant build items:\n\n"
-		found := false
-		for rows.Next() {
-			var tName, fName, attName, typeName string
-			if err := rows.Scan(&tName, &fName, &attName, &typeName); err != nil {
-				continue
-			}
-			answer += fmt.Sprintf("- **Flow `%s` / Build `%s`**: Failed control `%s` (Type: `%s`)\n", fName, tName, attName, typeName)
-			found = true
-		}
-		// A failed iteration must not read as a short result.
-		if err := rows.Err(); err != nil {
-			internalError(w, err)
-			return
-		}
-		if !found {
-			answer = "Great news! All recorded build trails are fully compliant against current policies."
-		}
-	case s.LLM != nil:
-		lctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		defer cancel()
-		a, err := s.LLM.Chat(lctx, req.History, userMsg)
-		if err != nil {
-			answer = "The assistant model didn't respond in time, or the LLM isn't reachable. You can still use commands like `list flows` or `find failing trails`, or check **Settings → Infrastructure → LLM Configuration**.\n\n_" + err.Error() + "_"
-		} else {
-			answer = a
-		}
-	default:
-		answer = "Hello! I am **Fides**, your compliance & audit conversational assistant. I can help you configure flows and trails, search failing builds, audit artifacts, and verify SOC 2 or ISO 27001 readiness.\n\nTry asking me:\n- `create flow frontend-service` (Creates a pipeline flow)\n- `list flows` (Displays registered pipelines)\n- `find failing trails` (Audits failing CI/CD builds)"
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(aiChatResp{
-		Response: answer + executionOutput,
-	})
-}
-
-type setPasswordReq struct {
-	Password string `json:"password"`
 }
 
 // handleAdmissionValidate is the Kubernetes ValidatingAdmissionWebhook entry

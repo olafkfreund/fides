@@ -2,7 +2,6 @@ package api
 
 import (
 	"database/sql"
-	"encoding/json"
 	"net/http"
 	"time"
 )
@@ -24,9 +23,13 @@ func (s *Server) handleServiceNowEvents(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	rows, err := s.q(r.Context()).QueryContext(r.Context(),
-		`SELECT event_type, status, attempts, COALESCE(last_error, ''), created_at, delivered_at
-		 FROM integration_events WHERE org_id = $1 ORDER BY created_at DESC LIMIT 50`, orgID)
+	page, ok := newListPage(w, r, orgID, timeKey("created_at"), uuidKey("id"), true)
+	if !ok {
+		return
+	}
+	rows, err := s.queryPage(r, page,
+		`SELECT event_type, status, attempts, COALESCE(last_error, ''), created_at, delivered_at /* page keys */
+		 FROM integration_events WHERE org_id = $1`, orgID)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -54,6 +57,5 @@ func (s *Server) handleServiceNowEvents(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
+	page.write(w, out)
 }
