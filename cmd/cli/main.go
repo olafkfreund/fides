@@ -113,6 +113,8 @@ func main() {
 		handleModel(config, os.Args[2:])
 	case "change-gate":
 		handleChangeGate(config, os.Args[2:])
+	case "cra":
+		handleCRA(config, os.Args[2:])
 	case "report":
 		handleReport(config, os.Args[2:])
 	case "approve":
@@ -199,6 +201,7 @@ func printUsage() {
 	fmt.Println("  dashboard        Interactive terminal dashboard of live server stats (TUI)")
 	fmt.Println("  sbom diff        Diff two local SBOM files (added/removed/changed components) [--json]")
 	fmt.Println("  vuln diff        Diff two scan reports; gate on NEW CVEs (--format trivy|snyk|sarif) [--fail-on-new]")
+	fmt.Println("  cra              Manage CRA reporting cases (list|get|create|correct|export|submit)")
 	fmt.Println("  version          Print the fides CLI version")
 	fmt.Println()
 	fmt.Println("Environment Variables:")

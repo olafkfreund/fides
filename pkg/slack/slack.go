@@ -70,6 +70,17 @@ func (s *Sink) Deliver(ctx context.Context, ev events.Event) error {
 
 func formatMessage(ev events.Event) string {
 	switch ev.Type {
+	case events.CRADeadlineDueSoon, events.CRADeadlineOverdue:
+		var deadline events.CRADeadline
+		if err := json.Unmarshal(ev.Payload, &deadline); err != nil {
+			return "*Fides: CRA deadline* (details unreadable)"
+		}
+		status := "due soon"
+		if ev.Type == events.CRADeadlineOverdue {
+			status = "overdue"
+		}
+		return fmt.Sprintf("*Fides: CRA %s %s* for case `%s` (deadline %s).",
+			deadline.Stage, status, deadline.CaseID, deadline.DueAt.UTC().Format(time.RFC3339))
 	case "snapshot.noncompliant":
 		var p struct {
 			EnvironmentID string   `json:"environment_id"`
