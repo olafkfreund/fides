@@ -71,6 +71,7 @@ var mutationRoutes = []mutationRoute{
 	{"POST /api/v1/attestations", "", `{"trail_id":"$trail","name":"fixture evidence","type_name":"fixture","payload":"{}"}`, writerOnly, 201, "attestations", true},
 	{"POST /api/v1/snapshots", "", `{"environment_id":"$env","artifacts":[]}`, writerOnly, 201, "environment_snapshots", true},
 	{"POST /api/v1/environments", "", `{"name":"created-environment","type":"k8s"}`, adminOnly, 201, "environments", false},
+	{"PATCH /api/v1/environments/{id}", "env", `{"name":"renamed-environment","type":"cloud-run"}`, adminOnly, 200, "environments", true},
 	{"POST /api/v1/environments/{id}/archive", "env", `{}`, adminOnly, 200, "environments", true},
 	{"POST /api/v1/environments/{id}/unarchive", "env", `{}`, adminOnly, 200, "environments", true},
 	{"POST /api/v1/policies", "", `{"id":"$policy","yaml":"{\"jq\":[\"true\"]}"}`, adminOnly, 200, "policies", true},

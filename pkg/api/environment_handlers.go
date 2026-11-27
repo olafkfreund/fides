@@ -28,13 +28,13 @@ import (
 
 type createEnvironmentReq struct {
 	Name        string `json:"name"`
-	Type        string `json:"type"` // docker | k8s | ecs | lambda | s3 | server
+	Type        string `json:"type"` // Includes docker, k8s, ecs, lambda, cloud-run, azure-apps, s3 and server.
 	Description string `json:"description"`
 }
 
 // handleCreateEnvironment creates (or upserts by name) an environment for the
 // caller's org. Idempotent on (org_id, name) so re-running a setup script or the
-// reporter bootstrap is safe. Tenant scope comes from the principal (H2/IDOR).
+// reporter bootstrap is safe. Create-only callers opt out of the upsert.
 func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request) {
 	orgID, ok := principalOrg(r)
 	if !ok {
@@ -54,13 +54,15 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	err := s.q(r.Context()).QueryRowContext(r.Context(),
 		`INSERT INTO environments (id, org_id, name, type, description)
 		 VALUES ($1, $2, $3, $4, $5)
-		 -- Re-registering an environment by name un-archives it. Creating one is
-		 -- a statement that it is in use, and the alternative is a silent trap:
-		 -- the caller gets 201 and an id, then wonders why it is absent from
-		 -- coverage and from the environment list.
-		 ON CONFLICT (org_id, name) DO UPDATE SET type = EXCLUDED.type, description = EXCLUDED.description, archived = FALSE
+		 ON CONFLICT (org_id, name) DO UPDATE
+		 SET type = EXCLUDED.type, description = EXCLUDED.description, archived = FALSE
+		 WHERE NOT $6
 		 RETURNING id`,
-		uuid.New(), orgID, req.Name, req.Type, req.Description).Scan(&id)
+		uuid.New(), orgID, req.Name, req.Type, req.Description, r.URL.Query().Get("create_only") == "true").Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "environment name already exists", http.StatusConflict)
+		return
+	}
 	if err != nil {
 		internalError(w, err)
 		return
@@ -70,6 +72,83 @@ func (s *Server) handleCreateEnvironment(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(map[string]any{
 		"id": id, "name": req.Name, "type": req.Type, "description": req.Description,
 	})
+}
+
+type environmentRecord struct {
+	createEnvironmentReq
+	ID       uuid.UUID `json:"id"`
+	Archived bool      `json:"archived"`
+}
+
+func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	row := s.q(ctx).QueryRowContext(ctx, `
+		SELECT id, name, type, COALESCE(description, ''), archived
+		FROM environments WHERE id = $1 AND org_id = $2`, id, orgID)
+	writeEnvironmentRecord(w, row)
+}
+
+func (s *Server) handleUpdateEnvironment(w http.ResponseWriter, r *http.Request) {
+	orgID, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, "invalid environment id", http.StatusBadRequest)
+		return
+	}
+	var req struct {
+		Name        *string `json:"name"`
+		Type        *string `json:"type"`
+		Description *string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		badRequest(w, err)
+		return
+	}
+	if (req.Name != nil && strings.TrimSpace(*req.Name) == "") ||
+		(req.Type != nil && strings.TrimSpace(*req.Type) == "") {
+		http.Error(w, "name and type cannot be blank", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	row := s.q(ctx).QueryRowContext(ctx, `
+		UPDATE environments
+		SET name = COALESCE($3, name), type = COALESCE($4, type), description = COALESCE($5, description)
+		WHERE id = $1 AND org_id = $2
+		RETURNING id, name, type, COALESCE(description, ''), archived`,
+		id, orgID, req.Name, req.Type, req.Description)
+	writeEnvironmentRecord(w, row)
+}
+
+func writeEnvironmentRecord(w http.ResponseWriter, row *sql.Row) {
+	var env environmentRecord
+	var pqErr *pq.Error
+	err := row.Scan(&env.ID, &env.Name, &env.Type, &env.Description, &env.Archived)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		http.Error(w, "environment not found", http.StatusNotFound)
+	case errors.As(err, &pqErr) && pqErr.Code == "23505":
+		http.Error(w, "environment name already exists", http.StatusConflict)
+	case pqErr != nil && pqErr.Code == "22001":
+		http.Error(w, "environment name or type is too long", http.StatusBadRequest)
+	case err != nil:
+		internalError(w, err)
+	default:
+		writeJSON(w, env)
+	}
 }
 
 type environmentRuntimeArtifact struct {

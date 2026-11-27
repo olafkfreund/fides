@@ -168,7 +168,7 @@ func printUsage() {
 	fmt.Println("  replay           Submit queued evidence using its original Fides endpoint and credential")
 	fmt.Println("  assert           Check compliance by artifact digest (--sha256)")
 	fmt.Println("  verify-image     Verify a container image's cosign signature (deploy gate; exits 2 on failure)")
-	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda) and send to Fides")
+	fmt.Println("  snapshot         Snapshot a runtime (docker|k8s|ecs|lambda|cloud-run|azure-apps|s3) and send to Fides")
 	fmt.Println("  servicenow       Configure ServiceNow (config|get|change-check|anchor-deployment)")
 	fmt.Println("  git-provider     Configure a GitHub/GitLab provider (config)")
 	fmt.Println("  webhook          Configure an outbound signed webhook (config)")

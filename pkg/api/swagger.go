@@ -544,6 +544,77 @@ const SwaggerJSON = `{
             "$ref": "#/components/parameters/CollectionName"
           }
         ]
+      },
+      "post": {
+        "summary": "Create or re-register an environment",
+        "description": "Requires Admin. By default, an existing name is updated and unarchived.",
+        "parameters": [
+          {
+            "name": "create_only",
+            "in": "query",
+            "description": "Require a new name, including when the existing environment is archived.",
+            "schema": { "type": "boolean", "default": false }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  { "$ref": "#/components/schemas/EnvironmentFields" },
+                  { "required": ["name", "type"] }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Insufficient role" },
+          "409": { "description": "Environment name already exists" }
+        }
+      }
+    },
+    "/environments/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "summary": "Get an environment by UUID",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment UUID" },
+          "401": { "description": "Authentication required" },
+          "404": { "description": "Environment not found in the authenticated organization" }
+        }
+      },
+      "patch": {
+        "summary": "Update an environment by UUID",
+        "description": "Requires Admin. Omitted fields retain their values. Updates preserve archive status and snapshot history.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EnvironmentFields" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Environment" },
+          "400": { "description": "Invalid environment UUID or fields" },
+          "401": { "description": "Authentication required" },
+          "403": { "description": "Insufficient role" },
+          "404": { "description": "Environment not found in the authenticated organization" },
+          "409": { "description": "Environment name already exists" }
+        }
       }
     },
     "/tenant/settings": {
@@ -3667,6 +3738,17 @@ const SwaggerJSON = `{
   },
   "components": {
     "schemas": {
+      "EnvironmentFields": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": {
+            "type": "string",
+            "description": "Runtime type. Common values include docker, k8s, ecs, lambda, cloud-run, azure-apps, s3 and server."
+          },
+          "description": { "type": "string" }
+        }
+      },
       "AttestationType": {
         "type": "object",
         "required": [
@@ -3803,6 +3885,24 @@ const SwaggerJSON = `{
       }
     },
     "responses": {
+      "Environment": {
+        "description": "Environment metadata",
+        "content": {
+          "application/json": {
+            "schema": {
+              "allOf": [
+                { "$ref": "#/components/schemas/EnvironmentFields" },
+                {
+                  "properties": {
+                    "id": { "type": "string", "format": "uuid" },
+                    "archived": { "type": "boolean", "description": "Included when reading or updating by UUID." }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
       "AttestationType": {
         "description": "Tenant attestation type",
         "content": {
