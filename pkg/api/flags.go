@@ -171,7 +171,7 @@ func (s *Server) evaluateAttestationTypeCompliance(ctx context.Context, orgID uu
 	if len(rules) == 0 {
 		return true, nil
 	}
-	ok, _, err := s.PolicyEngine.EvaluateAttestation(payload, rules)
+	ok, _, err := s.PolicyEngine.EvaluateAttestation(ctx, payload, rules)
 	if err != nil {
 		return false, err
 	}

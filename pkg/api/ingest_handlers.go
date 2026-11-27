@@ -189,7 +189,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// Evaluate JQ rules
 	isCompliant := true
 	if len(rules) > 0 {
-		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(req.Payload, rules)
+		ok, failedRules, err := s.PolicyEngine.EvaluateAttestation(r.Context(), req.Payload, rules)
 		if err != nil {
 			internalError(w, err)
 			return

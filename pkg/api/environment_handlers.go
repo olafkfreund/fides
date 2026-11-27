@@ -594,7 +594,7 @@ func (s *Server) handleVerifyEnvironmentCompliance(w http.ResponseWriter, r *htt
 	}
 
 	// Evaluate rules deterministically using PolicyEngine
-	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(output, req.Rules)
+	compliant, failedRules, err := s.PolicyEngine.EvaluateAttestation(r.Context(), output, req.Rules)
 	if err != nil {
 		internalError(w, err)
 		return
