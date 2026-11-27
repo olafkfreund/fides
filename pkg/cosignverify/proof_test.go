@@ -72,6 +72,12 @@ func TestVerifyOfflinePinnedKey(t *testing.T) {
 		t.Fatalf("valid keyed proof: verdict=%+v error=%v", verdict, err)
 	}
 
+	conflictingTrust := opts
+	conflictingTrust.Signer = "unverified@example.test"
+	if _, err := v.VerifyOffline(makeProof(sig), conflictingTrust); err == nil {
+		t.Fatal("offline verifier accepted both a pinned key and a keyless identity")
+	}
+
 	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	otherKey = proofValue(t, otherKey, err)
 	altered := bytes.Clone(sig)

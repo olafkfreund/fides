@@ -114,6 +114,10 @@ func (s *SigstoreVerifier) VerifyOffline(proof *Proof, opts OfflineOptions) (*Ve
 	if err != nil || len(digest) != sha256.Size {
 		return nil, errors.New("cosignverify: expected a SHA-256 digest in hex")
 	}
+	opts.Digest = hex.EncodeToString(digest)
+	if opts.KeyPath != "" && (opts.TrustedRootPath != "" || opts.Signer != "" || opts.Issuer != "") {
+		return nil, errors.New("cosignverify: choose either a pinned key or a trusted root, signer, and issuer")
+	}
 
 	var b *bundle.Bundle
 	if proof.Registry == nil {
@@ -142,11 +146,6 @@ func (s *SigstoreVerifier) VerifyOffline(proof *Proof, opts OfflineOptions) (*Ve
 		if err != nil {
 			return nil, fmt.Errorf("cosignverify: load trusted root: %w", err)
 		}
-	} else {
-		if opts.TrustedRootPath != "" {
-			return nil, errors.New("cosignverify: choose either a pinned key or a trusted root")
-		}
-		opts.Signer, opts.Issuer = "", ""
 	}
 
 	return verifyBundle(Options{
