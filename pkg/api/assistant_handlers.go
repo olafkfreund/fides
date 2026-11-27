@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"fides/pkg/ai"
+	"fides/pkg/auth"
 )
 
 func (s *Server) handleListAIAssessments(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +214,9 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 
 	var flowName, flowDesc string
 	if n, _ := fmt.Sscanf(userMsg, "create flow %s description %s", &flowName, &flowDesc); n >= 1 {
+		if !requireMutationRole(w, r, auth.RoleAdmin) {
+			return
+		}
 		flowID := uuid.New()
 		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName, flowDesc)
@@ -222,6 +226,9 @@ func (s *Server) handleAIChat(w http.ResponseWriter, r *http.Request) {
 			executionOutput = fmt.Sprintf("\n*(Flow '%s' successfully created with ID: %s)*", flowName, flowID)
 		}
 	} else if n, _ := fmt.Sscanf(userMsg, "create flow %s", &flowName); n == 1 {
+		if !requireMutationRole(w, r, auth.RoleAdmin) {
+			return
+		}
 		flowID := uuid.New()
 		query := `INSERT INTO flows (id, org_id, name, description, tags, created_at, updated_at) VALUES ($1, $2, $3, 'Created via LLM Assistant', '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err := s.q(ctx).ExecContext(ctx, query, flowID, orgID, flowName)

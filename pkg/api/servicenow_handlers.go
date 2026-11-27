@@ -178,6 +178,9 @@ func (s *Server) handleServiceNowChangeCheck(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "valid trail_id is required", http.StatusBadRequest)
 		return
 	}
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
 	if req.ChangeNumber == "" && req.CI == "" {
 		http.Error(w, "change_number or ci is required", http.StatusBadRequest)
 		return
