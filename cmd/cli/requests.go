@@ -58,12 +58,16 @@ func getPage(client *http.Client, token, url string) ([]byte, *http.Response, er
 }
 
 func postRequest(config CLIConfig, path string, data interface{}) (string, error) {
+	return jsonRequest(config, http.MethodPost, path, data)
+}
+
+func jsonRequest(config CLIConfig, method, path string, data any) (string, error) {
 	body, err := json.Marshal(data)
 	if err != nil {
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", config.ServerURL+path, bytes.NewBuffer(body)) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
+	req, err := http.NewRequest(method, config.ServerURL+path, bytes.NewBuffer(body)) // #nosec G704 -- request targets the operator-configured Fides server (FIDES_SERVER_URL)
 	if err != nil {
 		return "", err
 	}

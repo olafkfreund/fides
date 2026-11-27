@@ -7,6 +7,14 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## Custom attestation schemas
+
+Apply the database migrations before upgrading the server if auto-migration
+is disabled. A previously stored schema that cannot be compiled now makes
+new attestations of that type non-compliant. A tenant administrator can update
+the type with a valid Draft 2020-12 schema or clear its schema. Historical
+attestations retain their original verdicts and payloads.
+
 ## Per-sink outbox delivery
 
 Drain and stop every old dispatcher before enabling the new dispatchers.

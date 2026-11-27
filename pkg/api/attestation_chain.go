@@ -19,6 +19,13 @@ import (
 // appendAttestation serializes chain appends for a trail. Ordinary ingestion
 // supplies ingestOrg to store its signing fields and optionally enqueue its event.
 func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation, ingestOrg *uuid.UUID) error {
+	if att.ValidationErrors == nil {
+		att.ValidationErrors = []models.AttestationValidationError{}
+	}
+	reasons, err := json.Marshal(att.ValidationErrors)
+	if err != nil {
+		return err
+	}
 	canonical := ledger.CanonicalJSON(att.Payload)
 	tx, err := db.BeginTx(ctx, s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -44,14 +51,14 @@ func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation,
 	ordinary := ingestOrg != nil
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant,
-		 signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
+		 signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at, validation_errors)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7,
 		 CASE WHEN $8 THEN $9::varchar END, CASE WHEN $8 THEN $10::text END,
 		 CASE WHEN $8 THEN $11::varchar END, CASE WHEN $8 THEN $12::text END, $13, $14,
-		 GREATEST(clock_timestamp(), $15::timestamptz + interval '1 microsecond'))
+		 GREATEST(clock_timestamp(), $15::timestamptz + interval '1 microsecond'), $16)
 		 RETURNING created_at`,
 		att.ID, att.TrailID, att.ArtifactSHA256, att.Name, att.TypeName, att.Payload, att.IsCompliant,
-		ordinary, att.SignedBy, att.Signature, att.SignatureAlgorithm, att.ManifestationReason, contentHash, prevHash, prevTime).
+		ordinary, att.SignedBy, att.Signature, att.SignatureAlgorithm, att.ManifestationReason, contentHash, prevHash, prevTime, string(reasons)).
 		Scan(&att.CreatedAt)
 	if err != nil {
 		return err

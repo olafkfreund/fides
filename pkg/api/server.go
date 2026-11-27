@@ -176,7 +176,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/artifacts", s.handleListArtifacts)
 
 	// Attestation Type API
+	mux.HandleFunc("GET /api/v1/attestation-types", s.handleListAttestationTypes)
 	mux.HandleFunc("POST /api/v1/attestation-types", withMutationRole(auth.RoleAdmin, s.handleCreateAttestationType))
+	mux.HandleFunc("GET /api/v1/attestation-types/{id}", s.handleGetAttestationType)
+	mux.HandleFunc("PATCH /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handlePatchAttestationType))
+	mux.HandleFunc("DELETE /api/v1/attestation-types/{id}", withMutationRole(auth.RoleAdmin, s.handleDeleteAttestationType))
 
 	// Attestation API
 	mux.HandleFunc("POST /api/v1/attestations", withMutationRole(auth.RoleWriter, s.handleReportAttestation))
