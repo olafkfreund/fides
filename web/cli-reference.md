@@ -53,15 +53,16 @@ HTTP `400` for a non-empty `policy` query parameter.
 | `fides snapshot k8s --env <id> [--namespace <ns>]` | Kubernetes (via kubectl) |
 | `fides snapshot ecs --env <id> --cluster <name>` | AWS ECS (via aws CLI) |
 | `fides snapshot lambda --env <id>` | AWS Lambda (via aws CLI) |
+| `fides snapshot cloud-run --env <id> --service <name> --region <region> [--project <project>]` | Cloud Run serving revisions (via gcloud) |
+| `fides snapshot azure-apps --env <id> --resource-group <group> --app <name>` | Azure App Service or Functions app (via Azure CLI) |
+| `fides snapshot s3 --env <id> --bucket <name> [--prefix <prefix>]` | S3 object content manifest (via AWS SDK) |
 
-### What a snapshot will and will not report
+### Runtime evidence and incomplete reads
 
-A snapshot artifact is an **observation of what is running**. When the runtime
-cannot tell Fides the digest, the container is skipped with a warning on stderr
-rather than reported with a substitute value. A digest that is not the running
-image's can never equal a CI-registered artifact or an allowlist entry, so it
-becomes a shadow change no correct action can clear — an environment pinned at
-non-compliant for a reason its operator cannot fix.
+Snapshot digests identify the runtime artifacts or object contents the
+collector can verify. Docker, Kubernetes, ECS, and Lambda skip individual
+entries whose digest cannot be verified. Cloud Run, Azure App Service, and
+S3 fail the command if collection is incomplete.
 
 Two AWS cases where that happens, both outside Fides' control:
 

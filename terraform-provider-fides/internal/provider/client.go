@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,6 +35,10 @@ func NewClient(endpoint, token string) *Client {
 
 // do performs a request and returns the body and response headers.
 func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, error) {
+	return c.doContext(context.Background(), method, endpoint, body)
+}
+
+func (c *Client) doContext(ctx context.Context, method, endpoint string, body any) ([]byte, http.Header, error) {
 	var rdr io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -42,7 +47,7 @@ func (c *Client) do(method, endpoint string, body any) ([]byte, http.Header, err
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, endpoint, rdr)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, rdr)
 	if err != nil {
 		return nil, nil, err
 	}
