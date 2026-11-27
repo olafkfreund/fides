@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"sync"
@@ -10,6 +11,21 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestDispatchBatchCanceledClaim(t *testing.T) {
+	pool, err := sql.Open("postgres", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	n, err := NewDispatcher(pool).DispatchBatch(ctx)
+	if n != 0 || !errors.Is(err, context.Canceled) {
+		t.Fatalf("DispatchBatch = (%d, %v), want (0, context.Canceled)", n, err)
+	}
+}
 
 type recordingSink struct {
 	name      string

@@ -68,4 +68,34 @@ func TestAIChatListFlowsScopedByOrg(t *testing.T) {
 	if strings.Contains(resp.Response, "bravo-flow") {
 		t.Fatalf("cross-tenant leak: org B's flow visible to org A: %q", resp.Response)
 	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/ai/chat", strings.NewReader(`{"message":"find failing trails"}`)).WithContext(ctx)
+	rec = httptest.NewRecorder()
+	s.handleAIChat(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "{\"response\":\"Great news! All recorded build trails are fully compliant against current policies.\"}\n" {
+		t.Fatalf("find failing trails: HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAIChatQueryError(t *testing.T) {
+	pool, err := sql.Open("postgres", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	s := &Server{DB: pool}
+	ctx, cancel := context.WithCancel(auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: uuid.New(), Role: auth.RoleAdmin}))
+	cancel()
+	for _, message := range []string{"list flows", "find failing trails"} {
+		t.Run(message, func(t *testing.T) {
+			body, _ := json.Marshal(aiChatReq{Message: message})
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/chat", bytes.NewReader(body)).WithContext(ctx)
+			rec := httptest.NewRecorder()
+			s.handleAIChat(rec, req)
+			if rec.Code != http.StatusInternalServerError || rec.Body.String() != "internal server error\n" {
+				t.Fatalf("ai chat: HTTP %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
 }

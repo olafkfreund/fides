@@ -91,7 +91,6 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		internalError(w, err)
 		return
 	}
-	defer rows.Close()
 
 	// Complete detailed Environment view model mapping to what frontend app.js expects
 	type RuntimeArtifact struct {
@@ -131,13 +130,12 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		ev.ShadowChanges = []string{}
 		list = append(list, &ev)
 	}
+	rows.Close()
 	// A failed iteration must not read as a short result.
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		internalError(w, err)
 		return
 	}
-	rows.Close()
 
 	// Enrich each environment now that the outer cursor is closed.
 	for _, ev := range list {
@@ -156,8 +154,8 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 		            WHERE sa.snapshot_id = $1`
 		saRows, err := s.q(r.Context()).QueryContext(r.Context(), querySA, latestSnapID)
 		if err != nil {
-			defer saRows.Close()
-			continue
+			internalError(w, err)
+			return
 		}
 		var running []RuntimeArtifact
 		for saRows.Next() {
@@ -166,12 +164,12 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 				running = append(running, ra)
 			}
 		}
+		saRows.Close()
 		// A failed iteration must not read as a short result.
 		if err := saRows.Err(); err != nil {
 			internalError(w, err)
 			return
 		}
-		saRows.Close()
 
 		for _, ra := range running {
 			ev.Running = append(ev.Running, ra)

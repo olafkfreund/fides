@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"fides/pkg/auth"
+	"fides/pkg/db"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -31,7 +33,7 @@ import (
 // request.
 //
 // This test spins up a real, non-superuser-scoped Postgres role (RLS is not
-// enforced for the table owner/superuser), applies schema.sql +
+// enforced for the table owner/superuser), applies migrations +
 // schema-rls.sql exactly as production does, and drives the handler over
 // real HTTP. It also proves the secondary finding from the issue: once the
 // snapshot write succeeds under the correct tenant context, the environment
@@ -70,7 +72,9 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 			t.Fatalf("exec failed: %v\nSQL: %.100s", err, q)
 		}
 	}
-	mustExec(readRepo("schema.sql"))
+	if err := db.Migrate(context.Background(), super); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
 	mustExec(readRepo("schema-rls.sql"))
 	mustExec(`DO $$ BEGIN
 	            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'fides_snap_app') THEN
@@ -152,6 +156,11 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 		t.Fatalf("expected exactly 1 environment_snapshots row for id=%s, got %d", reported.SnapshotID, count)
 	}
 
+	digest := uuid.NewString()
+	mustExec(`INSERT INTO artifacts (sha256, org_id, name, type) VALUES ($1,$2,'registered-image','docker')`, digest, orgID)
+	mustExec(`INSERT INTO snapshot_artifacts (snapshot_id, artifact_sha256, service_name, runtime_digest)
+	          VALUES ($1,$2,'web',$2)`, reported.SnapshotID, digest)
+
 	// Secondary finding from the issue: does GET /api/v1/environments now
 	// surface the snapshot (LastSnapshot / "last_reported_at")? It should,
 	// since it derives from the same environment_snapshots row via the same
@@ -169,6 +178,12 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 	var envs []struct {
 		ID           string `json:"id"`
 		LastSnapshot string `json:"lastSnapshot"`
+		Running      []struct {
+			Service    string `json:"service"`
+			SHA256     string `json:"sha256"`
+			Registered bool   `json:"registered"`
+			Name       string `json:"name"`
+		} `json:"running"`
 	}
 	if err := json.NewDecoder(getResp.Body).Decode(&envs); err != nil {
 		t.Fatalf("decode environments: %v", err)
@@ -180,9 +195,37 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 			if e.LastSnapshot == "No snapshot reported yet" || e.LastSnapshot == "" {
 				t.Fatalf("expected environment %s to show a reported snapshot time, got %q", envID, e.LastSnapshot)
 			}
+			if len(e.Running) != 1 || e.Running[0].Service != "web" || e.Running[0].SHA256 != digest ||
+				!e.Running[0].Registered || e.Running[0].Name != "registered-image" {
+				t.Fatalf("unexpected running artifacts: %+v", e.Running)
+			}
 		}
 	}
 	if !found {
 		t.Fatalf("environment %s not present in GET /api/v1/environments response", envID)
+	}
+
+	mustExec(`REVOKE SELECT ON snapshot_artifacts FROM fides_snap_app`)
+	defer mustExec(`GRANT SELECT ON snapshot_artifacts TO fides_snap_app`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, release, err := db.ScopedConn(ctx, appPool, orgID.String())
+	if err != nil {
+		t.Fatalf("ScopedConn: %v", err)
+	}
+	defer release()
+	ctx = db.WithQuerier(ctx, conn)
+	ctx = auth.WithPrincipal(ctx, &auth.Principal{OrgID: orgID, Role: auth.RoleAdmin})
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	srv.handleListEnvironments(rec, req)
+	if rec.Code != http.StatusInternalServerError || rec.Body.String() != "internal server error\n" {
+		t.Fatalf("GET environments after revoking snapshot artifact access: HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var scopedOrg string
+	if err := conn.QueryRowContext(ctx, "SELECT current_setting('app.current_org')").Scan(&scopedOrg); err != nil || scopedOrg != orgID.String() {
+		t.Fatalf("scoped follow-up query = (%q, %v), want (%q, nil)", scopedOrg, err, orgID)
 	}
 }
