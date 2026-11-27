@@ -575,28 +575,25 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 
 		// Check for drift (failing compliance controls in build trail)
 		queryAtt := `SELECT name, is_compliant FROM attestations WHERE trail_id = $1`
-		rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-
-		for rows.Next() {
-			var attName string
-			var compliant bool
-			if err := rows.Scan(&attName, &compliant); err != nil {
-				_ = rows.Close()
-				internalError(w, err)
-				return
+		if err := func() error {
+			rows, err := tx.QueryContext(r.Context(), queryAtt, dbTrailID)
+			if err != nil {
+				return err
 			}
-			if !compliant {
-				drifts = append(drifts, fmt.Sprintf("service %s running drifted artifact %s (failing control: %s)", a.ServiceName, a.SHA256, attName))
-				isCompliant = false
+			defer rows.Close()
+			for rows.Next() {
+				var attName string
+				var compliant bool
+				if err := rows.Scan(&attName, &compliant); err != nil {
+					return err
+				}
+				if !compliant {
+					drifts = append(drifts, fmt.Sprintf("service %s running drifted artifact %s (failing control: %s)", a.ServiceName, a.SHA256, attName))
+					isCompliant = false
+				}
 			}
-		}
-		_ = rows.Close()
-		// A failed iteration must not read as a short result.
-		if err := rows.Err(); err != nil {
+			return rows.Err()
+		}(); err != nil {
 			internalError(w, err)
 			return
 		}

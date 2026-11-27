@@ -230,7 +230,7 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	request := func(method, path, token, body string, want int) *http.Response {
+	request := func(method, path, token, body string, want int, dst any) {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, method, ts.URL+path, strings.NewReader(body))
 		if err != nil {
@@ -242,32 +242,33 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { resp.Body.Close() })
+		defer resp.Body.Close()
 		if resp.StatusCode != want {
 			t.Fatalf("%s %s: status = %d, want %d", method, path, resp.StatusCode, want)
 		}
-		return resp
+		if dst != nil {
+			if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	for _, tc := range []struct{ token, sha, packageName string }{
 		{tokenA, shaA, "flow-a"}, {tokenB, shaB, "flow-b"},
 	} {
-		resp := request(http.MethodGet, "/api/v1/artifacts", tc.token, "", http.StatusOK)
 		var artifacts []struct {
 			SHA    string   `json:"sha256"`
 			Status string   `json:"sbom_status"`
 			SBOM   []string `json:"sbom"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&artifacts); err != nil {
-			t.Fatal(err)
-		}
+		request(http.MethodGet, "/api/v1/artifacts", tc.token, "", http.StatusOK, &artifacts)
 		if len(artifacts) != 1 || artifacts[0].SHA != tc.sha || artifacts[0].Status != "Compliant" ||
 			len(artifacts[0].SBOM) != 1 || artifacts[0].SBOM[0] != tc.packageName {
 			t.Fatalf("unexpected tenant artifacts: %+v", artifacts)
 		}
 	}
-	request(http.MethodPost, "/api/v1/tenant/settings", tokenA, `{"storage":{"storage_driver":"s3"}}`, http.StatusOK)
-	request(http.MethodPost, "/api/v1/controls/import-framework", tokenA, `{"framework":"SOC2"}`, http.StatusCreated)
+	request(http.MethodPost, "/api/v1/tenant/settings", tokenA, `{"storage":{"storage_driver":"s3"}}`, http.StatusOK, nil)
+	request(http.MethodPost, "/api/v1/controls/import-framework", tokenA, `{"framework":"SOC2"}`, http.StatusCreated, nil)
 	var driver string
 	if err := super.QueryRowContext(ctx, `SELECT storage_driver FROM tenant_storage_settings WHERE org_id = $1`, orgA).Scan(&driver); err != nil || driver != "s3" {
 		t.Fatalf("saved storage driver = %q, error = %v", driver, err)
