@@ -3,7 +3,7 @@ package api
 import "golang.org/x/sys/unix"
 
 func limitSchemaWorkerResources() error {
-	for resource, maxValue := range map[int]uint64{unix.RLIMIT_DATA: 192 << 20, unix.RLIMIT_CPU: 2} {
+	for resource, maxValue := range map[int]uint64{unix.RLIMIT_DATA: schemaWorkerDataLimit, unix.RLIMIT_CPU: 2} {
 		var limit unix.Rlimit
 		if err := unix.Getrlimit(resource, &limit); err != nil {
 			return err

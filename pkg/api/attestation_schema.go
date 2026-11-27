@@ -78,7 +78,7 @@ func runAttestationSchema(ctx context.Context, schema string, payload *string) (
 	workerCtx, cancel := context.WithTimeout(ctx, schemaWorkerDeadline)
 	defer cancel()
 	cmd := exec.CommandContext(workerCtx, executable, "--attestation-schema-worker") // #nosec G204 -- executable is this process; argument is fixed.
-	cmd.Env = []string{schemaWorkerMode + "=1", "GOMAXPROCS=1"}
+	cmd.Env = []string{schemaWorkerMode + "=1", "GOMAXPROCS=1", "GORACE=atexit_sleep_ms=0"}
 	cmd.Stdin = bytes.NewReader(input)
 	var output bytes.Buffer
 	cmd.Stdout = &output

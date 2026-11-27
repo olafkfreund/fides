@@ -24,7 +24,7 @@ Line references are from the reviewed base. Refresh them after dependent changes
 
 ### Implementation decisions
 
-1. Use `github.com/santhosh-tekuri/jsonschema/v6` for Draft 2020-12. Its validator has no cancellation API, so the server performs compilation and validation in bounded child processes of the server executable. Each child has a deadline, with CPU and data-memory limits on Linux. The same evaluator covers direct reports, flag changes and ServiceNow checks that already evaluate tenant rules.
+1. Use `github.com/santhosh-tekuri/jsonschema/v6` for Draft 2020-12. Its validator has no cancellation API, so the server performs compilation and validation in bounded child processes of the server executable. Each child has a deadline, with CPU and data-memory limits on Linux. Race-instrumented builds reserve more data memory for the race detector. The same evaluator covers direct reports, flag changes and ServiceNow checks that already evaluate tenant rules.
 2. `PATCH` preserves an omitted schema and clears one set to JSON null or an empty string. Check the size of the PostgreSQL-normalized definition before storing a schema. Existing JSON Schema values remain subject to validation. Validation reasons use the new `0029_attestation_validation_errors.sql` migration and sit alongside the payload. Existing ledger hashes keep their current format.
 3. Use the validator's default Go regular-expression engine. Document its syntax for `pattern` and `patternProperties`.
 
