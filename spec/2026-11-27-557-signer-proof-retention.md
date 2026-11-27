@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 557
 intent: intent/2026-11-27-557-signer-proof-retention.md
 ---
