@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 541
 spec: spec/2026-11-27-541-outbound-destination-policy.md
 coders:
