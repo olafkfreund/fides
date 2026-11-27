@@ -19,6 +19,23 @@ import (
 // appendAttestation serializes chain appends for a trail. Ordinary ingestion
 // supplies ingestOrg to store its signing fields and optionally enqueue its event.
 func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation, ingestOrg *uuid.UUID) error {
+	if q, ok := db.QuerierFromContext(ctx); ok {
+		if tx, ok := q.(*sql.Tx); ok {
+			return insertAttestation(ctx, tx, att, ingestOrg)
+		}
+	}
+	tx, err := db.BeginTx(ctx, s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := insertAttestation(ctx, tx, att, ingestOrg); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func insertAttestation(ctx context.Context, tx *sql.Tx, att *models.Attestation, ingestOrg *uuid.UUID) error {
 	if att.ValidationErrors == nil {
 		att.ValidationErrors = []models.AttestationValidationError{}
 	}
@@ -27,11 +44,6 @@ func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation,
 		return err
 	}
 	canonical := ledger.CanonicalJSON(att.Payload)
-	tx, err := db.BeginTx(ctx, s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 
 	// Read the head in a separate statement so it sees the last lock holder's commit.
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('attestation-chain:' || $1::text, 0))`, att.TrailID.String()); err != nil {
@@ -75,7 +87,7 @@ func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation,
 			return err
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // handleVerifyTrailChain verifies a trail's attestation hash chain, detecting any

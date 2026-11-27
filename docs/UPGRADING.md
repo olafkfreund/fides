@@ -7,6 +7,13 @@ are not listed here; the release notes cover those.
 Fides is `v0.x`. Anything may change, and this document is where the changes
 that can bite an existing deployment get written down.
 
+## Offline evidence recording
+
+Apply migration `0030_recording_operations.sql` before starting the new server
+if auto-migration is disabled. Upgrade all servers behind the Fides endpoint
+before enabling CLI fail-open. Keep the recording table and queued files when
+rolling back. Resume replay with a server that supports idempotent recording.
+
 ## Custom attestation schemas
 
 Apply the database migrations before upgrading the server if auto-migration

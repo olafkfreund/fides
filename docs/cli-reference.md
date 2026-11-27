@@ -45,6 +45,33 @@ because named policy selection is unsupported. A non-empty `--policy` exits
 `1`. The underlying `GET /api/v1/compliance` route takes `sha256` and returns
 HTTP `400` for a non-empty `policy` query parameter.
 
+### Record evidence during a server outage
+
+Set `FIDES_FAIL_OPEN=true` or use `--fail-open` on a supported recording
+command. Supported commands include `trail start`, `artifact report`, direct
+and file-based `attest` commands, `attest authorship`, and `model register`,
+`model attest`, and `model inference-log`. A temporary connection failure or
+HTTP `502`, `503`, or `504` can trigger queuing. An authentication or request
+error remains a failure. The command only returns success after it durably
+saves the request and attachment bytes and prints a warning to stderr.
+
+Run `fides replay` with the same Fides server URL and credential after service
+returns. The queue stores a credential fingerprint. Drain the queue before
+rotating the credential. Replay confirms the record before removing it from
+the queue. Pass the `offline:<UUID>` from `trail start --quiet` to other
+supported recording commands. Replay submits the trail first and resolves the
+reference to the server UUID.
+
+The queue defaults to `fides/recordings` under the user's config directory.
+Set `FIDES_SPOOL_DIR` to an absolute directory owned by the CLI user with
+mode `0700`. Keep it on a persistent, private volume if CI uses disposable
+runners. The queue can contain sensitive evidence. Retain it until replay
+succeeds. Use a server version that supports idempotent recording before
+enabling fail-open.
+
+Gate commands such as `assert` and `change-gate` still fail when they cannot
+obtain a verdict.
+
 ## Runtime snapshots
 
 | Command | Purpose |

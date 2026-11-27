@@ -2,15 +2,18 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,13 +45,12 @@ type reportAttestationReq struct {
 }
 
 func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request) {
-	contentType := r.Header.Get("Content-Type")
+	contentType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 
 	var req reportAttestationReq
-	var fileReaders []io.Reader
-	var fileNames []string
+	var files []*multipart.FileHeader
 
-	if contentType == "application/json" || contentType == "" {
+	if contentType == "application/json" || r.Header.Get("Content-Type") == "" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			badRequest(w, err)
 			return
@@ -71,21 +73,92 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		req.SignatureAlgorithm = r.FormValue("signature_algorithm")
 		req.ManifestationReason = r.FormValue("manifestation_reason")
 
-		files := r.MultipartForm.File["attachments"]
-		for _, fHeaders := range files {
-			f, err := fHeaders.Open()
-			if err != nil {
-				internalError(w, err)
-				return
-			}
-			defer f.Close()
-			fileReaders = append(fileReaders, f)
-			fileNames = append(fileNames, fHeaders.Filename)
+		defer func() { _ = r.MultipartForm.RemoveAll() }()
+		files = r.MultipartForm.File["attachments"]
+	}
+
+	isEncrypted := r.FormValue("encrypted") == "true" || r.Header.Get("X-Fides-Encrypted") == "true"
+
+	var artifactSHA *string
+	if req.ArtifactSHA256 != "" {
+		artifactSHA = &req.ArtifactSHA256
+	}
+
+	// trail_id is normally required, but `fides attest sbom` may omit --trail
+	// and rely on the artifact's own trail (every artifact is reported against
+	// exactly one trail via `fides artifact report`).
+	callerOrg, ok := principalOrg(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	trailID, err := s.resolveAttestationTrailID(r.Context(), callerOrg, req.TrailID, artifactSHA)
+	if err != nil {
+		var targetErr attestationTargetError
+		if errors.As(err, &targetErr) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			internalError(w, err)
+		}
+		return
+	}
+	// trail_id is caller-supplied. This endpoint WRITES compliance evidence, so
+	// without this a tenant could attest onto another tenant's trail.
+	if !s.requireTrailInOrg(w, r, trailID) {
+		return
+	}
+
+	if len(r.Header.Values("Idempotency-Key")) != 0 && req.TrailID != "" && artifactSHA != nil {
+		var owned bool
+		err := s.q(r.Context()).QueryRowContext(r.Context(),
+			`SELECT EXISTS(SELECT 1 FROM artifacts WHERE sha256 = $1 AND org_id = $2)`, *artifactSHA, callerOrg).Scan(&owned)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if !owned {
+			http.Error(w, "artifact not found", http.StatusNotFound)
+			return
 		}
 	}
 
-	// Payload Decryption Step
-	isEncrypted := r.FormValue("encrypted") == "true" || r.Header.Get("X-Fides-Encrypted") == "true"
+	type attachmentDigest struct {
+		Name string
+		Size int64
+		Hash string
+	}
+	digests := make([]attachmentDigest, 0, len(files))
+	readers := make([]multipart.File, 0, len(files))
+	for _, header := range files {
+		file, err := header.Open()
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		defer file.Close()
+		hash := sha256.New()
+		size, err := io.Copy(hash, file)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			internalError(w, err)
+			return
+		}
+		readers = append(readers, file)
+		digests = append(digests, attachmentDigest{header.Filename, size, hex.EncodeToString(hash.Sum(nil))})
+	}
+	op, r := s.beginRecording(w, r, struct {
+		Request     reportAttestationReq
+		Encrypted   bool
+		Attachments []attachmentDigest
+	}{req, isEncrypted, digests}, len(files) != 0)
+	if op == nil {
+		return
+	}
+	defer op.rollback()
+
 	if isEncrypted {
 		encryptionKey := os.Getenv("FIDES_ENCRYPTION_KEY")
 		if encryptionKey == "" {
@@ -107,30 +180,6 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	if !json.Valid([]byte(req.Payload)) {
 		http.Error(w, "invalid attestation payload JSON", http.StatusBadRequest)
-		return
-	}
-
-	var artifactSHA *string
-	if req.ArtifactSHA256 != "" {
-		artifactSHA = &req.ArtifactSHA256
-	}
-
-	// trail_id is normally required, but `fides attest sbom` may omit --trail
-	// and rely on the artifact's own trail (every artifact is reported against
-	// exactly one trail via `fides artifact report`).
-	callerOrg, ok := principalOrg(r)
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	trailID, err := s.resolveAttestationTrailID(r.Context(), callerOrg, req.TrailID, artifactSHA)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	// trail_id is caller-supplied. This endpoint WRITES compliance evidence, so
-	// without this a tenant could attest onto another tenant's trail.
-	if !s.requireTrailInOrg(w, r, trailID) {
 		return
 	}
 
@@ -178,59 +227,64 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// `fides attest sbom` normalizes the SBOM client-side (see pkg/evidence.
-	// ParseSBOM) and uploads it as a "sbom-cyclonedx" attestation (the evidence
-	// type the built-in control frameworks require); persist its component list
-	// so `fides search components` can answer "which artifacts contain
-	// component X". Best-effort: a parse/insert failure here does not fail the
-	// attestation itself, since it is already durably recorded. Attestations
-	// recorded via the generic `fides attest --type sbom-cyclonedx` path (a raw,
-	// non-normalized CycloneDX payload) are also matched here but simply fail
-	// this best-effort parse (no "components" field in the expected shape).
+	// Index the findings alongside the evidence when this request owns a transaction.
 	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil {
 		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
+			if op.tx != nil {
+				internalError(w, err)
+				return
+			}
 			log.Printf("failed to persist sbom components: %v", err)
 		}
 	}
-
-	// Vulnerability-scan attestations (trivy/snyk/sarif) carry CVE IDs only as
-	// findings[] strings; extract them into artifact_vulnerabilities so the
-	// CVE->environment impact query can answer "which environments ship CVE-X".
-	// Best-effort, like SBOM components above.
 	if vulnScanTypes[req.TypeName] && artifactSHA != nil {
 		if err := s.persistVulnerabilities(r.Context(), orgID, *artifactSHA, attestation.ID, req.TypeName, attestation.Payload); err != nil {
+			if op.tx != nil {
+				internalError(w, err)
+				return
+			}
 			log.Printf("failed to persist vulnerabilities: %v", err)
 		}
 	}
 
-	// Upload attachments to Object Store and save mapping
-	for i, reader := range fileReaders {
-		// Use only the base name of the client-supplied filename to prevent
-		// path traversal (e.g. "../../etc/passwd") in the storage key.
-		safeName := filepath.Base(filepath.Clean("/" + fileNames[i]))
-		key := fmt.Sprintf("%s/%s", attestation.ID, safeName)
-		bucket := os.Getenv("AWS_S3_BUCKET")
-		if bucket == "" {
-			bucket = "fides-evidence"
+	bucket := os.Getenv("AWS_S3_BUCKET")
+	if bucket == "" {
+		bucket = "fides-evidence"
+	}
+	prefix := attestation.ID.String()
+	if op.keyed {
+		// A rolled-back upload can be retried at the same key. A different
+		// payload cannot overwrite any object belonging to the earlier attempt.
+		prefix = fmt.Sprintf("recordings/%s/%s/%x", orgID, op.operationID, op.fingerprint)
+	}
+	for i, file := range readers {
+		if s.Storage == nil {
+			internalError(w, errors.New("attachment storage is not configured"))
+			return
 		}
-		path, err := s.Storage.Upload(r.Context(), bucket, key, reader, "application/octet-stream")
+		digest := digests[i]
+		key := fmt.Sprintf("%s/%d-%s", prefix, i, digest.Hash)
+		const contentType = "application/octet-stream"
+		path, err := s.Storage.Upload(r.Context(), bucket, key, file, contentType)
 		if err != nil {
 			internalError(w, err)
 			return
 		}
 
-		attachmentID := uuid.New()
-		queryAttach := `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
-		                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
-		_, err = s.q(r.Context()).ExecContext(r.Context(), queryAttach, attachmentID, attestation.ID, fileNames[i], 0, "hash", path, "application/octet-stream", time.Now())
-		if err != nil {
-			log.Printf("Failed to record attachment in DB: %v", err)
+		const query = `INSERT INTO evidence_attachments (id, attestation_id, file_name, file_size, file_hash, storage_path, content_type, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
+		if _, err := s.q(r.Context()).ExecContext(r.Context(), query, uuid.New(), attestation.ID, digest.Name,
+			digest.Size, digest.Hash, path, contentType, time.Now()); err != nil {
+			internalError(w, err)
+			return
 		}
+	}
+	if !op.created(w, r.Context(), attestation) {
+		return
 	}
 
 	// Trigger async LLM Evaluation if provider config exists
 	if s.LLM != nil {
-		llmOrgID, _ := principalOrg(r)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 			defer cancel()
@@ -246,7 +300,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			assID := uuid.New()
 			queryAss := `INSERT INTO llm_assessments (id, attestation_id, model_provider, model_name, prompt_template_version, assessment_raw, compliance_score, findings, created_at)
 			             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
-			werr := db.WithOrgScope(ctx, s.DB, llmOrgID.String(), func(tx *sql.Tx) error {
+			werr := db.WithOrgScope(ctx, s.DB, orgID.String(), func(tx *sql.Tx) error {
 				_, e := tx.ExecContext(ctx, queryAss, assID, attestation.ID, "local", "llama3", "v1", assessment, score, "[]", time.Now())
 				return e
 			})
@@ -255,11 +309,9 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 			}
 		}()
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(attestation)
 }
+
+type attestationTargetError struct{ error }
 
 // resolveAttestationTrailID parses trailIDStr, or — when it is empty — resolves
 // the trail from the reported artifact, so `fides attest sbom` can omit
@@ -268,12 +320,12 @@ func (s *Server) resolveAttestationTrailID(ctx context.Context, orgID uuid.UUID,
 	if trailIDStr != "" {
 		id, err := uuid.Parse(trailIDStr)
 		if err != nil {
-			return uuid.UUID{}, fmt.Errorf("invalid trail_id")
+			return uuid.UUID{}, attestationTargetError{errors.New("invalid trail_id")}
 		}
 		return id, nil
 	}
 	if artifactSHA == nil {
-		return uuid.UUID{}, fmt.Errorf("trail_id or artifact_sha256 is required")
+		return uuid.UUID{}, attestationTargetError{errors.New("trail_id or artifact_sha256 is required")}
 	}
 	var trailID uuid.NullUUID
 	// Scoped by org: sha256 is the artifacts PRIMARY KEY, so a digest is global
@@ -282,13 +334,13 @@ func (s *Server) resolveAttestationTrailID(ctx context.Context, orgID uuid.UUID,
 	err := s.q(ctx).QueryRowContext(ctx,
 		`SELECT trail_id FROM artifacts WHERE sha256 = $1 AND org_id = $2`, *artifactSHA, orgID).Scan(&trailID)
 	if err == sql.ErrNoRows {
-		return uuid.UUID{}, fmt.Errorf("artifact %s not found", *artifactSHA)
+		return uuid.UUID{}, attestationTargetError{fmt.Errorf("artifact %s not found", *artifactSHA)}
 	}
 	if err != nil {
 		return uuid.UUID{}, err
 	}
 	if !trailID.Valid {
-		return uuid.UUID{}, fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)
+		return uuid.UUID{}, attestationTargetError{fmt.Errorf("artifact %s has no associated trail; provide --trail explicitly", *artifactSHA)}
 	}
 	return trailID.UUID, nil
 }
@@ -306,7 +358,9 @@ func (s *Server) persistSBOMComponents(ctx context.Context, orgID uuid.UUID, art
 		} `json:"components"`
 	}
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		return fmt.Errorf("parse sbom payload: %w", err)
+		// Raw CycloneDX attestations are valid evidence even when they cannot be indexed.
+		log.Printf("parse sbom payload: %v", err)
+		return nil
 	}
 	for _, c := range parsed.Components {
 		if c.Name == "" {

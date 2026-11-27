@@ -21,14 +21,15 @@ var vulnScanTypes = map[string]bool{"trivy": true, "snyk": true, "sarif": true}
 // persistVulnerabilities extracts CVE IDs from a vulnerability-scan attestation
 // payload (trivy/snyk/sarif, see pkg/evidence) and stores them linked to the
 // artifact, powering the CVE->environment impact query. CVEs otherwise live
-// only as findings[] strings in the payload. Best-effort, like SBOM components:
-// a parse/insert failure does not fail the already-recorded attestation.
+// only as findings[] strings in the payload. Reports without that shape are
+// still retained as attestations.
 func (s *Server) persistVulnerabilities(ctx context.Context, orgID uuid.UUID, artifactSHA string, attestationID uuid.UUID, source, payload string) error {
 	var parsed struct {
 		Findings []string `json:"findings"`
 	}
 	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
-		return err
+		log.Printf("parse vulnerability findings: %v", err)
+		return nil
 	}
 	seen := map[string]bool{}
 	for _, f := range parsed.Findings {

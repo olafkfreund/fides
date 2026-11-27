@@ -96,7 +96,7 @@ func TestUploadMultipartBodyCarriesFieldsAndAttachment(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	respBody, err := uploadMultipart(cfg(srv), "trail-1", "deadbeef", "snyk-scan", "snyk",
-		`{"vulns":0}`, []string{attachment}, true)
+		`{"vulns":0}`, []attestationAttachment{{path: attachment}}, true)
 	if err != nil {
 		t.Fatalf("uploadMultipart: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestUploadMultipartNotEncrypted(t *testing.T) {
 
 func TestUploadMultipartMissingAttachmentErrors(t *testing.T) {
 	srv, _ := recordingServer(t, `{}`)
-	_, err := uploadMultipart(cfg(srv), "t", "", "n", "ty", "p", []string{"/no/such/file"}, false)
+	_, err := uploadMultipart(cfg(srv), "t", "", "n", "ty", "p", []attestationAttachment{{path: "/no/such/file"}}, false)
 	if err == nil {
 		t.Fatal("expected an error opening a missing attachment")
 	}

@@ -125,6 +125,42 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 		t.Fatalf("OrgB should see only flow-b via RLS, got %v", got)
 	}
 
+	t.Run("keyed recording under RLS", func(t *testing.T) {
+		var active bool
+		if err := appPool.QueryRow(`SELECT row_security_active('recording_operations')`).Scan(&active); err != nil || !active {
+			t.Fatalf("recording RLS active = %v, error = %v", active, err)
+		}
+		var flowID uuid.UUID
+		if err := super.QueryRow(`SELECT id FROM flows WHERE org_id = $1 AND name = 'flow-a'`, orgA).Scan(&flowID); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if _, err := super.Exec(`DELETE FROM trails WHERE flow_id = $1 AND name = 'rls-keyed-recording'`, flowID); err != nil {
+				t.Error(err)
+			}
+		})
+		body := fmt.Sprintf(`{"flow_id":%q,"name":"rls-keyed-recording"}`, flowID)
+		key := uuid.NewString()
+		var first string
+		for range 2 {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/trails", strings.NewReader(body))
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: tokenA})
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Idempotency-Key", key)
+			rec := httptest.NewRecorder()
+			srv.Routes().ServeHTTP(rec, req)
+			current := expectRecording(t, rec, http.StatusCreated)
+			if first != "" && current != first {
+				t.Fatal("keyed recording changed its committed response")
+			}
+			first = current
+		}
+		var visible int
+		if err := appPool.QueryRow(`SELECT count(*) FROM recording_operations`).Scan(&visible); err != nil || visible != 0 {
+			t.Fatalf("unscoped connection sees %d recordings, error = %v", visible, err)
+		}
+	})
+
 	t.Run("concurrent scoped snapshots", func(t *testing.T) {
 		var rlsActive bool
 		if err := appPool.QueryRow(`SELECT row_security_active('environment_snapshots')`).Scan(&rlsActive); err != nil || !rlsActive {
