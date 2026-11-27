@@ -364,7 +364,7 @@ jobs:
           # Same pin as go-build.yml: the govulncheck gate there is the reason
           # the version is pinned at all, and two Go versions in one repo is a
           # difference nobody wants to debug later.
-          go-version: '1.26.6'
+          go-version: '1.26.11'
           check-latest: true
 
       - name: Build the fides CLI from this commit
