@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 520
 intent: intent/2026-11-27-520-bounded-list-pagination.md
 ---
