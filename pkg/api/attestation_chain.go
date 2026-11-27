@@ -4,29 +4,71 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
 
 	"github.com/google/uuid"
 
+	"fides/pkg/db"
+	"fides/pkg/events"
 	"fides/pkg/ledger"
+	"fides/pkg/models"
 )
 
-// attestationChain computes the content_hash and prev_hash for a new attestation
-// being added to a trail (the append-only tamper-evidence chain). prev_hash is
-// the content_hash of the trail's most recent chained attestation.
-func (s *Server) attestationChain(ctx context.Context, trailID uuid.UUID, name, typeName, payload string, isCompliant bool) (contentHash, prevHash string, err error) {
-	err = s.q(ctx).QueryRowContext(ctx,
-		`SELECT COALESCE(content_hash, '') FROM attestations
-		 WHERE trail_id = $1 AND content_hash IS NOT NULL
-		 ORDER BY created_at DESC, id DESC LIMIT 1`, trailID).Scan(&prevHash)
-	if err == sql.ErrNoRows {
-		prevHash, err = "", nil
-	}
+// appendAttestation serializes chain appends for a trail. Ordinary ingestion
+// supplies ingestOrg to store its signing fields and optionally enqueue its event.
+func (s *Server) appendAttestation(ctx context.Context, att *models.Attestation, ingestOrg *uuid.UUID) error {
+	canonical := ledger.CanonicalJSON(att.Payload)
+	tx, err := db.BeginTx(ctx, s.DB, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return "", "", err
+		return err
 	}
-	canonical := ledger.CanonicalJSON(payload)
-	return ledger.ContentHash(trailID.String(), name, typeName, canonical, isCompliant, prevHash), prevHash, nil
+	defer tx.Rollback()
+
+	// Read the head in a separate statement so it sees the last lock holder's commit.
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('attestation-chain:' || $1::text, 0))`, att.TrailID.String()); err != nil {
+		return err
+	}
+	var prevHash string
+	var prevTime sql.NullTime
+	err = tx.QueryRowContext(ctx,
+		`SELECT content_hash, created_at FROM attestations
+		 WHERE trail_id = $1 AND content_hash IS NOT NULL
+		 ORDER BY created_at DESC, id DESC LIMIT 1`, att.TrailID).Scan(&prevHash, &prevTime)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
+	contentHash := ledger.ContentHash(att.TrailID.String(), att.Name, att.TypeName, canonical, att.IsCompliant, prevHash)
+	ordinary := ingestOrg != nil
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant,
+		 signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7,
+		 CASE WHEN $8 THEN $9::varchar END, CASE WHEN $8 THEN $10::text END,
+		 CASE WHEN $8 THEN $11::varchar END, CASE WHEN $8 THEN $12::text END, $13, $14,
+		 GREATEST(clock_timestamp(), $15::timestamptz + interval '1 microsecond'))
+		 RETURNING created_at`,
+		att.ID, att.TrailID, att.ArtifactSHA256, att.Name, att.TypeName, att.Payload, att.IsCompliant,
+		ordinary, att.SignedBy, att.Signature, att.SignatureAlgorithm, att.ManifestationReason, contentHash, prevHash, prevTime).
+		Scan(&att.CreatedAt)
+	if err != nil {
+		return err
+	}
+
+	if ordinary && os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		if err := events.Enqueue(ctx, tx, *ingestOrg, "compliance.evaluated", map[string]any{
+			"trail_id": att.TrailID.String(),
+			// Status messages use the display name. Control matching uses the type.
+			"attestation":      att.Name,
+			"attestation_type": att.TypeName,
+			"compliant":        att.IsCompliant,
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // handleVerifyTrailChain verifies a trail's attestation hash chain, detecting any

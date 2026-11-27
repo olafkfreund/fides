@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,8 @@ import (
 	"fides/pkg/auth"
 	"fides/pkg/crypto"
 	"fides/pkg/db"
+	"fides/pkg/ledger"
+	"fides/pkg/models"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -251,6 +254,48 @@ func TestRLSEndToEndTenantIsolation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+
+	var flag struct {
+		TrailID uuid.UUID `json:"trail_id"`
+	}
+	request(http.MethodPost, "/api/v1/flags/changed", tokenA,
+		`{"flag_key":"checkout","environment":"prod","old_state":"off","new_state":"on","actor":"olaf","source":"unleash"}`,
+		http.StatusCreated, &flag)
+	// A future-dated head forces the database clock's monotonicity guard.
+	var flagTime time.Time
+	if err := super.QueryRowContext(ctx, `UPDATE attestations SET created_at = clock_timestamp() + interval '1 hour'
+		WHERE trail_id = $1 AND type_name = 'flag.changed' AND signed_by IS NULL RETURNING created_at`,
+		flag.TrailID).Scan(&flagTime); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FIDES_EVENTS_ENABLED", "true")
+	body := fmt.Sprintf(`{"trail_id":%q,"name":"build-check","type_name":"ordinary","payload":"{}","signed_by":"ci","signature":"sig","signature_algorithm":"test","manifestation_reason":"approved"}`, flag.TrailID.String())
+	var att models.Attestation
+	request(http.MethodPost, "/api/v1/attestations", tokenA, body, http.StatusCreated, &att)
+	if want := flagTime.Add(time.Microsecond); !att.CreatedAt.Equal(want) {
+		t.Fatalf("appended timestamp = %s, want %s", att.CreatedAt, want)
+	}
+
+	mustExec("REVOKE INSERT ON integration_events FROM fides_e2e_app")
+	defer mustExec("GRANT INSERT ON integration_events TO fides_e2e_app")
+	request(http.MethodPost, "/api/v1/attestations", tokenA, body, http.StatusInternalServerError, nil)
+
+	var verdict ledger.Verdict
+	request(http.MethodGet, "/api/v1/trails/"+flag.TrailID.String()+"/verify-chain", tokenA, "", http.StatusOK, &verdict)
+	if !verdict.Valid || verdict.Count != 2 {
+		t.Fatalf("expected a valid 2-link mixed chain after rollback, got %+v", verdict)
+	}
+	var signed, queued int
+	err = super.QueryRowContext(ctx, `SELECT
+		(SELECT count(*) FROM attestations WHERE id = $1 AND signed_by = 'ci' AND signature = 'sig'
+		 AND signature_algorithm = 'test' AND manifestation_reason = 'approved'),
+		(SELECT count(*) FROM integration_events WHERE org_id = $2 AND event_type = 'compliance.evaluated'
+		 AND payload->>'trail_id' = $3 AND payload->>'attestation' = 'build-check'
+		 AND payload->>'attestation_type' = 'ordinary' AND payload->>'compliant' = 'true')`,
+		att.ID, orgA, flag.TrailID.String()).Scan(&signed, &queued)
+	if err != nil || signed != 1 || queued != 1 {
+		t.Fatalf("expected one signed attestation and one matching outbox event, got %d and %d, error = %v", signed, queued, err)
 	}
 
 	for _, tc := range []struct{ token, sha, packageName string }{

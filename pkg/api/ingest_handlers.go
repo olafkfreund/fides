@@ -228,59 +228,11 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		Signature:           req.Signature,
 		SignatureAlgorithm:  req.SignatureAlgorithm,
 		ManifestationReason: req.ManifestationReason,
-		CreatedAt:           time.Now(),
 	}
 
-	ctx := r.Context()
-	var tx *sql.Tx
-	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		tx, err = db.BeginTx(ctx, s.DB, nil)
-		if err != nil {
-			internalError(w, err)
-			return
-		}
-		defer tx.Rollback()
-		ctx = db.WithQuerier(ctx, tx)
-	}
-
-	contentHash, prevHash, err := s.attestationChain(ctx, attestation.TrailID, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant)
-	if err != nil {
+	if err := s.appendAttestation(r.Context(), attestation, &orgID); err != nil {
 		internalError(w, err)
 		return
-	}
-	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
-	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-	_, err = s.q(ctx).ExecContext(ctx, queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, contentHash, prevHash, attestation.CreatedAt)
-	if err != nil {
-		internalError(w, err)
-		return
-	}
-
-	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
-	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
-	if tx != nil {
-		if err := events.Enqueue(ctx, tx, orgID, "compliance.evaluated", map[string]any{
-			"trail_id": attestation.TrailID.String(),
-			// Both, because they are not the same thing and consumers want
-			// different ones. "attestation" is the human label a Slack
-			// message or commit status shows. "attestation_type" is what
-			// controls.required_types is matched against -- the change gate
-			// has always joined on type_name, so anything resolving controls
-			// must too. They are equal for almost every attestation on the
-			// live estate, which is exactly why the difference goes unnoticed
-			// until it does not: "pull-request" is stored with type_name
-			// "pull_request".
-			"attestation":      attestation.Name,
-			"attestation_type": attestation.TypeName,
-			"compliant":        attestation.IsCompliant,
-		}); err != nil {
-			internalError(w, err)
-			return
-		}
-		if err := tx.Commit(); err != nil {
-			internalError(w, err)
-			return
-		}
 	}
 
 	// `fides attest sbom` normalizes the SBOM client-side (see pkg/evidence.
