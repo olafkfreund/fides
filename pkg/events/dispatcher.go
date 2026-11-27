@@ -6,12 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // Sink receives delivered events. Implementations (webhooks, ServiceNow, CI/CD
-// gates) MUST be idempotent — an event may be redelivered after a partial or
-// failed fan-out.
+// gates) should deduplicate by Event.DeliveryID across retries.
 type Sink interface {
 	Name() string
 	Deliver(ctx context.Context, ev Event) error
@@ -27,7 +30,7 @@ type Dispatcher struct {
 	Interval    time.Duration // poll interval
 	BaseBackoff time.Duration // first retry delay; doubles each attempt
 	MaxBackoff  time.Duration
-	LeaseFor    time.Duration // how long a claimed event is hidden from other workers
+	LeaseFor    time.Duration // how long a claimed delivery is hidden from other workers
 }
 
 // NewDispatcher builds a Dispatcher with sensible defaults.
@@ -72,95 +75,174 @@ func (d *Dispatcher) Run(ctx context.Context) {
 			if n, err := d.DispatchBatch(ctx); err != nil {
 				log.Printf("events: dispatch batch error: %v", err)
 			} else if n > 0 {
-				log.Printf("events: processed %d event(s)", n)
+				log.Printf("events: processed %d delivery result(s)", n)
 			}
 		}
 	}
 }
 
-// claimSQL atomically leases due pending events: it hides them from other
-// workers for LeaseFor and returns them for delivery (FOR UPDATE SKIP LOCKED
-// makes this safe across multiple dispatcher instances).
+// Mark each parent scheduled atomically with creating its entire delivery set.
+const scheduleSQL = `
+WITH unscheduled AS (
+    SELECT e.id, e.attempts, e.next_attempt_at
+    FROM integration_events e
+    WHERE e.status = 'pending' AND e.next_attempt_at <= now()
+      AND NOT e.deliveries_scheduled
+    ORDER BY e.created_at, e.id
+    LIMIT $2 FOR UPDATE OF e SKIP LOCKED
+), scheduled AS (
+    UPDATE integration_events e SET deliveries_scheduled = true
+    FROM unscheduled u WHERE e.id = u.id
+    RETURNING e.id, e.attempts, e.next_attempt_at
+)
+INSERT INTO integration_event_deliveries(event_id, sink, attempts, next_attempt_at)
+SELECT e.id, s.name, e.attempts, e.next_attempt_at
+FROM scheduled e CROSS JOIN unnest($1::text[]) AS s(name)`
+
 const claimSQL = `
 WITH due AS (
-    SELECT id FROM integration_events
-    WHERE status = 'pending' AND next_attempt_at <= now()
-    ORDER BY created_at
-    FOR UPDATE SKIP LOCKED
-    LIMIT $1
+    SELECT d.event_id, d.sink, d.attempts
+    FROM integration_event_deliveries d
+    WHERE d.status = 'pending' AND d.next_attempt_at <= now()
+      AND d.sink = ANY($1::text[])
+    ORDER BY d.next_attempt_at, d.event_id, d.sink
+    LIMIT 1 FOR UPDATE SKIP LOCKED
 )
-UPDATE integration_events e
-   SET next_attempt_at = now() + ($2 * interval '1 second')
-  FROM due
- WHERE e.id = due.id
-RETURNING e.id, e.org_id, e.event_type, e.payload, e.attempts, e.created_at`
+UPDATE integration_event_deliveries d
+SET lease_token = $2, next_attempt_at = now() + ($3 * interval '1 microsecond'),
+    attempts = d.attempts + (d.attempts < $4)::int
+FROM due, integration_events e
+WHERE d.event_id = due.event_id AND d.sink = due.sink AND e.id = d.event_id
+RETURNING e.id, e.org_id, e.event_type, e.payload, d.attempts, e.created_at, d.sink, due.attempts < $4`
 
-// DispatchBatch claims a batch and delivers it. Returns the number processed.
-// Exported so tests can drive a single cycle deterministically.
+// DispatchBatch processes at most BatchSize deliveries. Each lease starts just
+// before its send so time spent on earlier sends cannot expire it.
 func (d *Dispatcher) DispatchBatch(ctx context.Context) (int, error) {
-	rows, err := d.db.QueryContext(ctx, claimSQL, d.BatchSize, int(d.LeaseFor.Seconds()))
-	if err != nil {
-		return 0, fmt.Errorf("claim: %w", err)
-	}
-	defer rows.Close()
-	var batch []Event
-	for rows.Next() {
-		var ev Event
-		if err := rows.Scan(&ev.ID, &ev.OrgID, &ev.Type, &ev.Payload, &ev.Attempts, &ev.CreatedAt); err != nil {
-			return 0, fmt.Errorf("scan: %w", err)
-		}
-		batch = append(batch, ev)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-
-	for _, ev := range batch {
-		if derr := d.deliver(ctx, ev); derr != nil {
-			d.recordFailure(ctx, ev, derr)
-		} else {
-			d.recordSuccess(ctx, ev)
+	if len(d.sinks) == 0 {
+		return 0, nil
+	}
+	sinks := make(map[string]Sink, len(d.sinks))
+	names := make([]string, 0, len(d.sinks))
+	for _, sink := range d.sinks {
+		name := sink.Name()
+		if _, exists := sinks[name]; name == "" || exists {
+			return 0, fmt.Errorf("events: invalid or duplicate sink name %q", name)
+		}
+		sinks[name] = sink
+		names = append(names, name)
+	}
+	if d.LeaseFor < 2*time.Microsecond {
+		return 0, fmt.Errorf("events: lease must be at least two microseconds")
+	}
+	if _, err := d.db.ExecContext(ctx, scheduleSQL, pq.Array(names), d.BatchSize); err != nil {
+		return 0, fmt.Errorf("schedule deliveries: %w", err)
+	}
+	for n := 0; n < d.BatchSize; n++ {
+		deadline := time.Now().Add(min(30*time.Second, d.LeaseFor/2))
+		ev, name, token, send, err := d.claim(ctx, names)
+		if errors.Is(err, sql.ErrNoRows) {
+			return n, nil
+		}
+		if err != nil {
+			return n, fmt.Errorf("claim delivery: %w", err)
+		}
+		// A worker may have lost its last acknowledgement. Reclaim it to
+		// settle the exhausted delivery without starting another send.
+		sendErr := errors.New("last delivery attempt expired without acknowledgement")
+		if send {
+			sendCtx, cancel := context.WithDeadline(ctx, deadline)
+			sendErr = sendCtx.Err()
+			if sendErr == nil {
+				sendErr = sinks[name].Deliver(sendCtx, ev)
+			}
+			cancel()
+		}
+		if err := d.recordResult(ctx, ev, name, token, sendErr); err != nil {
+			return n, fmt.Errorf("record delivery %s: %w", ev.DeliveryID, err)
 		}
 	}
-	return len(batch), nil
+	return d.BatchSize, nil
 }
 
-// deliver fans the event out to every sink; any failure fails the event.
-func (d *Dispatcher) deliver(ctx context.Context, ev Event) error {
-	var errs []error
-	for _, s := range d.sinks {
-		if err := s.Deliver(ctx, ev); err != nil {
-			errs = append(errs, fmt.Errorf("sink %s: %w", s.Name(), err))
+func (d *Dispatcher) claim(ctx context.Context, names []string) (Event, string, uuid.UUID, bool, error) {
+	var ev Event
+	var name string
+	var send bool
+	token := uuid.New()
+	err := d.db.QueryRowContext(ctx, claimSQL, pq.Array(names), token, d.LeaseFor.Microseconds(), d.MaxAttempts).
+		Scan(&ev.ID, &ev.OrgID, &ev.Type, &ev.Payload, &ev.Attempts, &ev.CreatedAt, &name, &send)
+	ev.DeliveryID = ev.ID.String() + "/" + name
+	return ev, name, token, send, err
+}
+
+func (d *Dispatcher) recordResult(ctx context.Context, ev Event, sink string, token uuid.UUID, sendErr error) error {
+	status := StatusDelivered
+	var lastError any
+	var delay time.Duration
+	if sendErr != nil {
+		lastError = sendErr.Error()
+		status = StatusDead
+		if ev.Attempts < d.MaxAttempts {
+			status = StatusPending
+			delay = d.backoff(ev.Attempts)
+			if delay > 0 {
+				delay -= rand.N(delay/2 + 1) // #nosec G404 -- retry jitter does not require cryptographic randomness.
+			}
 		}
 	}
-	return errors.Join(errs...)
-}
 
-func (d *Dispatcher) recordSuccess(ctx context.Context, ev Event) {
-	_, err := d.db.ExecContext(ctx,
-		`UPDATE integration_events SET status = 'delivered', delivered_at = now(), attempts = attempts + 1, last_error = NULL WHERE id = $1`,
-		ev.ID)
+	tx, err := d.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		log.Printf("events: mark delivered %s: %v", ev.ID, err)
+		return err
 	}
-}
-
-func (d *Dispatcher) recordFailure(ctx context.Context, ev Event, derr error) {
-	attempts := ev.Attempts + 1
-	if attempts >= d.MaxAttempts {
-		if _, err := d.db.ExecContext(ctx,
-			`UPDATE integration_events SET status = 'dead', attempts = $2, last_error = $3 WHERE id = $1`,
-			ev.ID, attempts, derr.Error()); err != nil {
-			log.Printf("events: mark dead %s: %v", ev.ID, err)
-		}
-		log.Printf("events: event %s dead-lettered after %d attempts: %v", ev.ID, attempts, derr)
-		return
+	defer tx.Rollback()
+	// Serialize sibling results before taking the snapshot for aggregation.
+	var id uuid.UUID
+	err = tx.QueryRowContext(ctx, `SELECT id FROM integration_events WHERE id = $1 FOR UPDATE`, ev.ID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
 	}
-	next := d.backoff(attempts)
-	if _, err := d.db.ExecContext(ctx,
-		`UPDATE integration_events SET status = 'pending', attempts = $2, last_error = $3, next_attempt_at = now() + ($4 * interval '1 second') WHERE id = $1`,
-		ev.ID, attempts, derr.Error(), int(next.Seconds())); err != nil {
-		log.Printf("events: mark retry %s: %v", ev.ID, err)
+	if err != nil {
+		return err
 	}
+	result, err := tx.ExecContext(ctx, `
+UPDATE integration_event_deliveries
+SET status = $4, last_error = $5, lease_token = NULL,
+    next_attempt_at = clock_timestamp() + ($6 * interval '1 microsecond')
+WHERE event_id = $1 AND sink = $2 AND lease_token = $3
+  AND status = 'pending' AND next_attempt_at > clock_timestamp()`,
+		ev.ID, sink, token, status, lastError, delay.Microseconds())
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed == 0 {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+WITH summary AS (
+    SELECT CASE WHEN bool_or(status = 'pending') THEN 'pending'
+                WHEN bool_or(status = 'dead') THEN 'dead'
+                ELSE 'delivered' END AS status,
+           max(attempts) AS attempts, max(last_error) AS last_error,
+           min(next_attempt_at) FILTER (WHERE status = 'pending') AS next_attempt_at
+    FROM integration_event_deliveries WHERE event_id = $1
+)
+UPDATE integration_events e
+SET status = s.status, attempts = s.attempts, last_error = s.last_error,
+    delivered_at = CASE WHEN s.status = 'delivered' THEN now() END,
+    next_attempt_at = COALESCE(s.next_attempt_at, e.next_attempt_at)
+FROM summary s WHERE e.id = $1`, ev.ID)
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if status == StatusDead {
+		log.Printf("events: delivery %s dead-lettered after %d attempts: %v", ev.DeliveryID, ev.Attempts, sendErr)
+	}
+	return nil
 }

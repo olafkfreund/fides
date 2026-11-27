@@ -40,13 +40,14 @@ func TestSignMatchesManualHMAC(t *testing.T) {
 }
 
 func TestDeliverSignsAndPosts(t *testing.T) {
-	var gotSig, gotTs, gotID, gotType string
+	var gotSig, gotTs, gotID, gotType, gotDeliveryID string
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSig = r.Header.Get("X-Fides-Signature")
 		gotTs = r.Header.Get("X-Fides-Timestamp")
 		gotID = r.Header.Get("X-Fides-Event-Id")
 		gotType = r.Header.Get("X-Fides-Event-Type")
+		gotDeliveryID = r.Header.Get("X-Fides-Delivery-Id")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -57,12 +58,13 @@ func TestDeliverSignsAndPosts(t *testing.T) {
 	sink.now = func() time.Time { return time.Unix(1700000000, 0) }
 
 	ev := events.Event{ID: uuid.New(), OrgID: uuid.New(), Type: "snapshot.noncompliant", Payload: []byte(`{"x":1}`)}
+	ev.DeliveryID = ev.ID.String() + "/webhook"
 	if err := sink.Deliver(context.Background(), ev); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	if gotID != ev.ID.String() || gotType != ev.Type {
-		t.Fatalf("headers mismatch: id=%s type=%s", gotID, gotType)
+	if gotID != ev.ID.String() || gotType != ev.Type || gotDeliveryID != ev.DeliveryID {
+		t.Fatalf("headers mismatch: id=%s type=%s delivery=%s", gotID, gotType, gotDeliveryID)
 	}
 	if gotTs != "1700000000" {
 		t.Fatalf("timestamp header = %s", gotTs)

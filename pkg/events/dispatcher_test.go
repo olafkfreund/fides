@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -52,27 +51,6 @@ func (r *recordingSink) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.delivered)
-}
-
-func TestDeliverFanOut(t *testing.T) {
-	d := &Dispatcher{sinks: []Sink{&recordingSink{name: "a"}, &recordingSink{name: "b"}}}
-	if err := d.deliver(context.Background(), Event{ID: uuid.New()}); err != nil {
-		t.Fatalf("expected all sinks to succeed, got %v", err)
-	}
-}
-
-func TestDeliverFailsIfAnySinkFails(t *testing.T) {
-	d := &Dispatcher{sinks: []Sink{
-		&recordingSink{name: "ok"},
-		&recordingSink{name: "bad", failFirst: 1},
-	}}
-	err := d.deliver(context.Background(), Event{ID: uuid.New()})
-	if err == nil {
-		t.Fatalf("expected an error when one sink fails")
-	}
-	if !strings.Contains(err.Error(), "bad") {
-		t.Fatalf("error should name the failing sink, got %v", err)
-	}
 }
 
 func TestBackoffIsMonotonicAndCapped(t *testing.T) {

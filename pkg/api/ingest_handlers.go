@@ -177,7 +177,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// Fetch rules for verification, scoped to the caller's org: attestation_types
 	// is org-scoped (UNIQUE(org_id,name)), so an unscoped lookup could apply
 	// another tenant's JQ rules for a same-named type (#326).
-	orgID, _ := principalOrg(r)
+	orgID := callerOrg
 	var rules []string
 	queryType := `SELECT jq_rules FROM attestation_types WHERE name = $1 AND org_id = $2 LIMIT 1`
 	err = s.q(r.Context()).QueryRowContext(r.Context(), queryType, req.TypeName, orgID).Scan(pq.Array(&rules))
@@ -231,14 +231,26 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 		CreatedAt:           time.Now(),
 	}
 
-	contentHash, prevHash, err := s.attestationChain(r.Context(), attestation.TrailID, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant)
+	ctx := r.Context()
+	var tx *sql.Tx
+	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
+		tx, err = db.BeginTx(ctx, s.DB, nil)
+		if err != nil {
+			internalError(w, err)
+			return
+		}
+		defer tx.Rollback()
+		ctx = db.WithQuerier(ctx, tx)
+	}
+
+	contentHash, prevHash, err := s.attestationChain(ctx, attestation.TrailID, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant)
 	if err != nil {
 		internalError(w, err)
 		return
 	}
 	queryInsert := `INSERT INTO attestations (id, trail_id, artifact_sha256, name, type_name, payload, is_compliant, signed_by, signature, signature_algorithm, manifestation_reason, content_hash, prev_hash, created_at)
 	                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
-	_, err = s.q(r.Context()).ExecContext(r.Context(), queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, contentHash, prevHash, attestation.CreatedAt)
+	_, err = s.q(ctx).ExecContext(ctx, queryInsert, attestation.ID, attestation.TrailID, attestation.ArtifactSHA256, attestation.Name, attestation.TypeName, attestation.Payload, attestation.IsCompliant, attestation.SignedBy, attestation.Signature, attestation.SignatureAlgorithm, attestation.ManifestationReason, contentHash, prevHash, attestation.CreatedAt)
 	if err != nil {
 		internalError(w, err)
 		return
@@ -246,26 +258,28 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 
 	// Emit a compliance.evaluated event so CI/CD commit-status gates can publish
 	// the verdict to the trail's commit (opt-in via FIDES_EVENTS_ENABLED).
-	orgID, hasOrg := principalOrg(r)
-	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" {
-		if hasOrg {
-			if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "compliance.evaluated", map[string]any{
-				"trail_id": attestation.TrailID.String(),
-				// Both, because they are not the same thing and consumers want
-				// different ones. "attestation" is the human label a Slack
-				// message or commit status shows. "attestation_type" is what
-				// controls.required_types is matched against -- the change gate
-				// has always joined on type_name, so anything resolving controls
-				// must too. They are equal for almost every attestation on the
-				// live estate, which is exactly why the difference goes unnoticed
-				// until it does not: "pull-request" is stored with type_name
-				// "pull_request".
-				"attestation":      attestation.Name,
-				"attestation_type": attestation.TypeName,
-				"compliant":        attestation.IsCompliant,
-			}); err != nil {
-				log.Printf("failed to enqueue compliance.evaluated event: %v", err)
-			}
+	if tx != nil {
+		if err := events.Enqueue(ctx, tx, orgID, "compliance.evaluated", map[string]any{
+			"trail_id": attestation.TrailID.String(),
+			// Both, because they are not the same thing and consumers want
+			// different ones. "attestation" is the human label a Slack
+			// message or commit status shows. "attestation_type" is what
+			// controls.required_types is matched against -- the change gate
+			// has always joined on type_name, so anything resolving controls
+			// must too. They are equal for almost every attestation on the
+			// live estate, which is exactly why the difference goes unnoticed
+			// until it does not: "pull-request" is stored with type_name
+			// "pull_request".
+			"attestation":      attestation.Name,
+			"attestation_type": attestation.TypeName,
+			"compliant":        attestation.IsCompliant,
+		}); err != nil {
+			internalError(w, err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			internalError(w, err)
+			return
 		}
 	}
 
@@ -278,7 +292,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// recorded via the generic `fides attest --type sbom-cyclonedx` path (a raw,
 	// non-normalized CycloneDX payload) are also matched here but simply fail
 	// this best-effort parse (no "components" field in the expected shape).
-	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil && hasOrg {
+	if req.TypeName == "sbom-cyclonedx" && artifactSHA != nil {
 		if err := s.persistSBOMComponents(r.Context(), orgID, *artifactSHA, attestation.ID, attestation.Payload); err != nil {
 			log.Printf("failed to persist sbom components: %v", err)
 		}
@@ -288,7 +302,7 @@ func (s *Server) handleReportAttestation(w http.ResponseWriter, r *http.Request)
 	// findings[] strings; extract them into artifact_vulnerabilities so the
 	// CVE->environment impact query can answer "which environments ship CVE-X".
 	// Best-effort, like SBOM components above.
-	if vulnScanTypes[req.TypeName] && artifactSHA != nil && hasOrg {
+	if vulnScanTypes[req.TypeName] && artifactSHA != nil {
 		if err := s.persistVulnerabilities(r.Context(), orgID, *artifactSHA, attestation.ID, req.TypeName, attestation.Payload); err != nil {
 			log.Printf("failed to persist vulnerabilities: %v", err)
 		}
@@ -599,14 +613,8 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		internalError(w, err)
-		return
-	}
-
 	// Emit an integration event for downstream gates/alerts (opt-in via
-	// FIDES_EVENTS_ENABLED). Best-effort: the snapshot is already committed, so a
-	// failure here must not fail the request.
+	// FIDES_EVENTS_ENABLED), atomically with the snapshot.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && (len(shadows) > 0 || len(drifts) > 0) {
 		payload := map[string]any{
 			"environment_id": envID.String(),
@@ -615,19 +623,26 @@ func (s *Server) handleReportSnapshot(w http.ResponseWriter, r *http.Request) {
 			"shadows":        shadows,
 			"drifts":         drifts,
 		}
-		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.noncompliant", payload); err != nil {
-			log.Printf("failed to enqueue snapshot.noncompliant event: %v", err)
+		if err := events.Enqueue(r.Context(), tx, orgID, "snapshot.noncompliant", payload); err != nil {
+			internalError(w, err)
+			return
 		}
 	}
 
-	// Emit a snapshot.reported event on every snapshot (CMDB sync consumes this).
+	// Emit snapshot.reported when there is a service inventory for CMDB sync.
 	if os.Getenv("FIDES_EVENTS_ENABLED") == "true" && len(services) > 0 {
-		if err := events.Enqueue(r.Context(), s.q(r.Context()), orgID, "snapshot.reported", map[string]any{
+		if err := events.Enqueue(r.Context(), tx, orgID, "snapshot.reported", map[string]any{
 			"environment": envID.String(),
 			"services":    services,
 		}); err != nil {
-			log.Printf("failed to enqueue snapshot.reported event: %v", err)
+			internalError(w, err)
+			return
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		internalError(w, err)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -2,13 +2,12 @@
 // at-least-once delivery of integration events (webhooks, ServiceNow, CI/CD
 // gates) to pluggable sinks.
 //
-// Producers call Enqueue within the same transaction as the change that caused
+// Producers can call Enqueue within the same transaction as the change that caused
 // the event, so the event is persisted atomically with that change. A
-// background Dispatcher leases pending rows, delivers them to all registered
-// sinks, and retries with exponential backoff until success or dead-letter.
+// background Dispatcher freezes the registered sink set on first scheduling
+// and retries each delivery independently until success or dead-letter.
 //
-// Delivery is at-least-once and fans out to every sink; a single sink failure
-// retries the whole event, so sinks MUST be idempotent (e.g. key by event ID).
+// A lost acknowledgement can repeat a send. Sinks can deduplicate by delivery ID.
 package events
 
 import (
@@ -31,12 +30,13 @@ const (
 
 // Event is one outbox record.
 type Event struct {
-	ID        uuid.UUID
-	OrgID     uuid.UUID
-	Type      string
-	Payload   json.RawMessage
-	Attempts  int
-	CreatedAt time.Time
+	ID         uuid.UUID
+	DeliveryID string // stable across attempts for this event and sink
+	OrgID      uuid.UUID
+	Type       string
+	Payload    json.RawMessage
+	Attempts   int
+	CreatedAt  time.Time
 }
 
 // Execer is satisfied by *sql.DB, *sql.Tx, and *sql.Conn, so an event can be

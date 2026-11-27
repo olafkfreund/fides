@@ -14,6 +14,7 @@ import (
 
 	"fides/pkg/auth"
 	"fides/pkg/db"
+	"fides/pkg/events"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -130,6 +131,85 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 		return resp
 	}
 
+	t.Run("transactional outbox", func(t *testing.T) {
+		t.Setenv("FIDES_EVENTS_ENABLED", "true")
+		flow, trail := uuid.New(), uuid.New()
+		mustExec(`INSERT INTO flows(id, org_id, name) VALUES ($1, $2, 'outbox')`, flow, orgID)
+		mustExec(`INSERT INTO trails(id, flow_id, name) VALUES ($1, $2, 'outbox')`, trail, flow)
+		post := func(path string, body any, want int) {
+			t.Helper()
+			raw, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, err := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: token})
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != want {
+				t.Fatalf("POST %s: got %d, want %d", path, resp.StatusCode, want)
+			}
+		}
+		snapshot := map[string]any{
+			"environment_id": envID,
+			"artifacts":      []map[string]string{{"sha256": uuid.NewString(), "service_name": "outbox"}},
+		}
+		attestation := reportAttestationReq{TrailID: trail.String(), Name: "outbox", TypeName: "outbox", Payload: "{}"}
+		check := func(wantWrites, wantEvents int) {
+			t.Helper()
+			var attestations, snapshots, artifacts, eventCount int
+			err := super.QueryRow(`SELECT
+				(SELECT count(*) FROM attestations WHERE trail_id = $1),
+				(SELECT count(*) FROM environment_snapshots WHERE environment_id = $2),
+				(SELECT count(*) FROM snapshot_artifacts a JOIN environment_snapshots s ON s.id = a.snapshot_id WHERE s.environment_id = $2),
+				(SELECT count(*) FROM integration_events WHERE org_id = $3)`,
+				trail, envID, orgID).Scan(&attestations, &snapshots, &artifacts, &eventCount)
+			if err != nil || attestations != wantWrites || snapshots != wantWrites || artifacts != wantWrites || eventCount != wantEvents {
+				t.Fatalf("attestations=%d snapshots=%d artifacts=%d events=%d: %v", attestations, snapshots, artifacts, eventCount, err)
+			}
+		}
+
+		const grantInsert = "GRANT INSERT ON integration_events TO fides_snap_app"
+		mustExec("REVOKE INSERT ON integration_events FROM fides_snap_app")
+		defer mustExec(grantInsert)
+		post("/api/v1/attestations", attestation, http.StatusInternalServerError)
+		post("/api/v1/snapshots", snapshot, http.StatusInternalServerError)
+		check(0, 0)
+
+		mustExec(grantInsert)
+		post("/api/v1/attestations", attestation, http.StatusCreated)
+		post("/api/v1/snapshots", snapshot, http.StatusCreated)
+		check(1, 3)
+
+		mustExec("REVOKE DELETE ON integration_events, integration_event_deliveries FROM fides_snap_app")
+		defer mustExec("GRANT DELETE ON integration_events, integration_event_deliveries TO fides_snap_app")
+		sink := &outboxTestSink{}
+		dispatcher := events.NewDispatcher(appPool, sink)
+		if _, err := dispatcher.DispatchBatch(context.Background()); err != nil {
+			t.Fatalf("dispatch as restricted app role: %v", err)
+		}
+		var delivered int
+		if err := super.QueryRow(`SELECT count(*) FROM integration_events e
+			JOIN integration_event_deliveries d ON d.event_id = e.id
+			WHERE e.org_id = $1 AND e.status = 'delivered' AND d.status = 'delivered'`, orgID).Scan(&delivered); err != nil || delivered != 3 {
+			t.Fatalf("delivered with the restricted app role: %d, %v", delivered, err)
+		}
+
+		mustExec("REVOKE INSERT ON integration_events FROM fides_snap_app")
+		t.Setenv("FIDES_EVENTS_ENABLED", "false")
+		post("/api/v1/attestations", attestation, http.StatusCreated)
+		post("/api/v1/snapshots", snapshot, http.StatusCreated)
+		check(2, 3)
+		mustExec(`DELETE FROM environment_snapshots WHERE environment_id = $1`, envID)
+	})
+
 	// This is the exact repro from the issue: POST with an empty artifacts
 	// array against a real, RLS-enabled environment_snapshots table. Before
 	// the fix, this returns 500 with a 42501 RLS violation logged server-side.
@@ -229,3 +309,8 @@ func TestReportSnapshotSatisfiesTenantRLSIntegration(t *testing.T) {
 		t.Fatalf("scoped follow-up query = (%q, %v), want (%q, nil)", scopedOrg, err, orgID)
 	}
 }
+
+type outboxTestSink struct{}
+
+func (*outboxTestSink) Name() string                                { return "restricted-role-test" }
+func (*outboxTestSink) Deliver(context.Context, events.Event) error { return nil }
