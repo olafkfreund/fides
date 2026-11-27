@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 issue: 554
 spec: spec/2026-11-27-554-reporter-dependencies.md
 ---
